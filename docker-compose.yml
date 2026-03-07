@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scorched
+      POSTGRES_PASSWORD: scorched
+      POSTGRES_DB: scorched
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scorched"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tradebot:
+    build: .
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      # Override DATABASE_URL to use the internal service name, not localhost
+      DATABASE_URL: postgresql+asyncpg://scorched:scorched@postgres:5432/scorched
+    volumes:
+      - ./logs:/app/logs
+      - ./strategy.json:/app/strategy.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRADEBOT // DASHBOARD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0c0f;
+    --surface:  #0f1217;
+    --border:   #253040;
+    --border2:  #344558;
+    --text:     #b8cce0;
+    --text-dim: #6a8099;
+    --text-hi:  #e8f2fc;
+    --amber:    #e8a030;
+    --amber-dim:#7a5018;
+    --green:    #2ec87a;
+    --green-dim:#134d30;
+    --red:      #e84040;
+    --red-dim:  #5a1818;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --fs-base: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: var(--fs-base);
+    line-height: 1.5;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  body.fs-s { zoom: 0.85; }
+  body.fs-m { zoom: 1; }
+  body.fs-l { zoom: 1.15; }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 20px; }
+  .logo { font-size:15px; font-weight: 600; color: var(--amber); letter-spacing: 0.15em; text-transform: uppercase; }
+  .logo span { color: var(--text-dim); font-weight: 300; }
+  .status-pill { display: flex; align-items: center; gap: 6px; font-size:12px; color: var(--text-dim); letter-spacing: 0.1em; }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  .status-dot.offline { background: var(--red); animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .topbar-right { display: flex; align-items: center; gap: 16px; font-size:13px; color: var(--text-dim); }
+  .refresh-btn {
+    background: none; border: 1px solid var(--border2); color: var(--text);
+    font-family: var(--mono); font-size:12px; padding: 4px 10px;
+    cursor: pointer; letter-spacing: 0.1em; transition: all 0.15s;
+  }
+  .refresh-btn:hover { border-color: var(--amber); color: var(--amber); }
+  .refresh-btn.spinning { opacity: 0.5; pointer-events: none; }
+  .grid {
+    display: grid;
+    grid-template-columns: 280px 1fr 260px;
+    grid-template-rows: auto auto auto 1fr auto;
+    gap: 1px;
+    background: var(--border);
+    min-height: calc(100vh - 41px);
+  }
+  .panel { background: var(--bg); padding: 16px; position: relative; }
+  .panel-label {
+    font-size:11px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-label::after { content:''; flex:1; height:1px; background:var(--border); margin-left:10px; }
+  .panel-performance { grid-column: 1; grid-row: 1; }
+  .big-number { font-size:36px; font-weight: 600; color: var(--text-hi); line-height: 1; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .big-label { font-size:11px; color: var(--text-dim); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 16px; }
+  .stat-row { display:flex; justify-content:space-between; align-items:baseline; padding:5px 0; border-bottom:1px solid var(--border); }
+  .stat-row:last-child { border-bottom:none; }
+  .stat-key { color: var(--text-dim); font-size:12px; letter-spacing: 0.05em; }
+  .stat-val { font-size:14px; color: var(--text-hi); font-weight: 500; }
+  .gain { color: var(--green); }
+  .loss { color: var(--red); }
+  .return-bar { margin: 14px 0 4px; height: 4px; background: var(--border2); border-radius: 2px; overflow: hidden; }
+  .return-bar-fill { height:100%; border-radius:2px; transition:width 0.8s ease; background:var(--green); }
+  .return-bar-fill.negative { background: var(--red); }
+  .panel-positions { grid-column: 2; grid-row: 1 / 3; }
+  .panel-analysis { grid-column: 2; grid-row: 3; border-top: 1px solid var(--border); overflow-y: auto; max-height: 320px; }
+  .analysis-text { font-family: var(--sans); font-size:13px; color: var(--text); line-height: 1.7; font-weight: 300; white-space: pre-wrap; }
+  .analysis-section { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .analysis-section:last-child { border-bottom: none; margin-bottom: 0; }
+  .analysis-section-label { font-size:11px; letter-spacing: 0.12em; color: var(--amber); text-transform: uppercase; font-family: var(--mono); margin-bottom: 5px; display: block; }
+  .candidates-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .candidate-chip { font-size:12px; font-weight: 600; letter-spacing: 0.08em; padding: 2px 7px; border: 1px solid var(--border2); color: var(--text-hi); background: rgba(200,216,232,0.04); }
+  .position-card { border:1px solid var(--border); padding:12px; margin-bottom:8px; position:relative; transition:border-color 0.15s; }
+  .position-card:hover { border-color: var(--border2); }
+  .position-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--green); }
+  .pos-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; }
+  .pos-symbol { font-size:20px; font-weight:600; color:var(--text-hi); letter-spacing:0.05em; }
+  .pos-action-badge { font-size:11px; letter-spacing:0.15em; padding:2px 6px; }
+  .pos-action-badge.short-term { border:1px solid var(--amber-dim); color:var(--amber); background:rgba(232,160,48,0.06); }
+  .pos-action-badge.long-term  { border:1px solid var(--green-dim); color:var(--green); background:rgba(46,200,122,0.06); }
+  .pos-meta { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:10px; }
+  .pos-meta-key { font-size:11px; color:var(--text-dim); letter-spacing:0.08em; text-transform:uppercase; margin-bottom:2px; }
+  .pos-meta-val { font-size:14px; color:var(--text-hi); font-weight:500; }
+  .pos-reasoning { font-family:var(--sans); font-size:13px; color:var(--text); line-height:1.6; padding-top:8px; border-top:1px solid var(--border); font-weight:300; }
+  .pos-reasoning-label { color:var(--text-dim); font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-family:var(--mono); font-weight:400; display:block; margin-bottom:3px; }
+  .tax-tag { display:inline-block; font-size:11px; padding:1px 5px; letter-spacing:0.08em; margin-top:4px; }
+  .tax-tag.short_term { background:var(--amber-dim); color:var(--amber); border:1px solid var(--amber-dim); }
+  .tax-tag.long_term { background:var(--green-dim); color:var(--green); border:1px solid var(--green-dim); }
+  .empty-state { color:var(--text-dim); font-size:13px; padding:24px 0; text-align:center; border:1px dashed var(--border); }
+  .panel-closed { grid-column: 2; grid-row: 4; border-top: 1px solid var(--border); }
+  .closed-row { display:grid; grid-template-columns:60px 40px 1fr 80px 70px; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .closed-row:last-child { border-bottom:none; }
+  .closed-symbol { font-weight:600; color:var(--text-hi); letter-spacing:0.05em; }
+  .closed-action { font-size:11px; letter-spacing:0.1em; padding:1px 4px; }
+  .closed-action.sell { color:var(--red); border:1px solid var(--red-dim); background:rgba(232,64,64,0.05); }
+  .closed-action.buy { color:var(--green); border:1px solid var(--green-dim); background:rgba(46,200,122,0.05); }
+  .closed-date { color:var(--text-dim); font-size:12px; }
+  .closed-gain { font-weight:500; text-align:right; }
+  .closed-tax { font-size:11px; color:var(--text-dim); text-align:right; letter-spacing:0.05em; }
+  .panel-tax { grid-column: 3; grid-row: 1; }
+  .tax-block { margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border); }
+  .tax-block:last-child { border-bottom:none; margin-bottom:0; }
+  .tax-block-label { font-size:11px; letter-spacing:0.12em; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px; }
+  .tax-block-row { display:flex; justify-content:space-between; font-size:13px; padding:2px 0; }
+  .panel-playbook { grid-column: 1; grid-row: 5; overflow-y: auto; max-height: 400px; }
+  .playbook-version { font-size:11px; color:var(--text-dim); letter-spacing:0.1em; margin-bottom:10px; }
+  .pb-h1 { font-family:var(--mono); font-size:13px; font-weight:600; color:var(--amber); letter-spacing:0.1em; text-transform:uppercase; margin:12px 0 6px; border-bottom:1px solid var(--amber-dim); padding-bottom:3px; }
+  .pb-h2 { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--text-hi); letter-spacing:0.08em; margin:10px 0 4px; }
+  .pb-li { padding-left:12px; position:relative; color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.6; margin-bottom:3px; font-weight:300; }
+  .pb-li::before { content:'›'; position:absolute; left:0; color:var(--amber-dim); }
+  .pb-p { margin-bottom:6px; font-size:13px; color:var(--text); font-family:var(--sans); font-weight:300; line-height:1.6; }
+  .pb-spacer { height:6px; }
+  .panel-recs { grid-column: 1; grid-row: 2 / 4; overflow-y: auto; }
+  .panel-costs { grid-column: 1; grid-row: 4; border-top: 1px solid var(--border); }
+  .strategy-settings-btn {
+    display: inline-block; padding: 4px 12px;
+    border: 1px solid var(--amber-dim); border-radius: 3px;
+    color: var(--amber); font-family: var(--mono); font-size:12px;
+    letter-spacing: 0.08em; text-decoration: none; text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .strategy-settings-btn:hover { border-color: var(--amber); background: rgba(232,160,48,0.06); }
+  .cost-bar-wrap { margin: 6px 0 10px; }
+  .cost-bar-track { height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+  .cost-bar-fill { height: 100%; background: var(--amber); border-radius: 2px; transition: width 0.6s ease; }
+  .cost-breakdown { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .cost-chip { font-size:11px; color: var(--text-dim); letter-spacing: 0.06em; }
+  .rec-card { border:1px solid var(--border); padding:10px; margin-bottom:8px; }
+  .rec-card.buy { border-left:2px solid var(--green); }
+  .rec-card.sell { border-left:2px solid var(--red); }
+  .rec-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .rec-symbol { font-size:17px; font-weight:600; color:var(--text-hi); }
+  .rec-badge { font-size:11px; letter-spacing:0.15em; padding:2px 6px; }
+  .rec-badge.buy { color:var(--green); border:1px solid var(--green-dim); background:rgba(46,200,122,0.06); }
+  .rec-badge.sell { color:var(--red); border:1px solid var(--red-dim); background:rgba(232,64,64,0.06); }
+  .rec-price-row { display:flex; justify-content:space-between; margin-bottom:6px; }
+  .rec-price { font-size:14px; color:var(--text-hi); }
+  .rec-price-label { color:var(--text-dim); font-size:11px; }
+  .rec-confidence { font-size:11px; letter-spacing:0.08em; }
+  .rec-confidence.high { color:var(--green); }
+  .rec-confidence.medium { color:var(--amber); }
+  .rec-confidence.low { color:var(--red); }
+  .rec-reasoning { font-family:var(--sans); font-size:12px; color:var(--text); line-height:1.55; font-weight:300; margin-bottom:5px; }
+  .rec-risk { font-size:11px; color:var(--text-dim); font-family:var(--sans); font-style:italic; }
+  .rec-status { display:inline-block; font-size:11px; padding:1px 5px; letter-spacing:0.08em; margin-top:6px; }
+  .rec-status.pending { color:var(--amber); border:1px solid var(--amber-dim); background:rgba(232,160,48,0.05); }
+  .rec-status.confirmed { color:var(--green); border:1px solid var(--green-dim); background:rgba(46,200,122,0.05); }
+  .rec-status.rejected { color:var(--text-dim); border:1px solid var(--border); }
+  .skeleton { background:linear-gradient(90deg,var(--border) 25%,var(--border2) 50%,var(--border) 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:2px; display:inline-block; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .sk-line { height:12px; margin-bottom:6px; }
+  .sk-big { height:32px; margin-bottom:8px; }
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-track { background:var(--bg); }
+  ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--text-dim); }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+  .loaded { animation: fadeIn 0.25s ease forwards; }
+  .report-card { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .report-card-header { font-size:11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .report-card-period { font-size:11px; color: var(--text-dim); letter-spacing: 0.05em; margin-bottom: 4px; }
+  .report-card-days { font-size:13px; color: var(--amber); font-weight: 500; letter-spacing: 0.05em; margin-bottom: 10px; }
+  .rc-col-header { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; padding: 0 0 4px; margin-bottom: 2px; border-bottom: 1px solid var(--border2); }
+  .rc-col-label { font-size:10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); }
+  .rc-col-label.right { text-align: right; }
+  .rc-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .rc-row:last-child { border-bottom: none; }
+  .rc-row.portfolio-row { margin-bottom: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border2); background: rgba(232,160,48,0.04); margin: 0 -6px; padding: 6px; }
+  .rc-name { font-size:12px; color: var(--text-dim); letter-spacing: 0.04em; }
+  .rc-name.portfolio-name { color: var(--amber); font-weight: 600; font-size: 13px; }
+  .rc-ret { font-size:13px; font-weight: 500; text-align: right; min-width: 52px; }
+  .rc-delta { font-size:11px; text-align: right; min-width: 62px; letter-spacing: 0.04em; font-weight: 500; }
+  .rc-delta.beating { color: var(--green); }
+  .rc-delta.lagging { color: var(--red); }
+  .font-size-toggle { display: flex; gap: 2px; }
+  .fs-btn {
+    background: none; border: 1px solid var(--border); color: var(--text-dim);
+    font-family: var(--mono); font-size:11px; padding: 2px 7px;
+    cursor: pointer; letter-spacing: 0.08em; transition: all 0.15s;
+  }
+  .fs-btn:hover { border-color: var(--text-dim); color: var(--text); }
+  .fs-btn.active { border-color: var(--amber); color: var(--amber); background: rgba(232,160,48,0.08); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="logo">TRADEBOT <span>// SIMULATED</span></div>
+    <div class="status-pill">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">CONNECTING</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="font-size-toggle">
+      <button class="fs-btn" data-size="s" onclick="setFontSize('s')" title="Small font">S</button>
+      <button class="fs-btn" data-size="m" onclick="setFontSize('m')" title="Medium font">M</button>
+      <button class="fs-btn" data-size="l" onclick="setFontSize('l')" title="Large font">L</button>
+    </div>
+    <span id="clock"></span>
+    <button class="refresh-btn" id="refresh-btn" onclick="loadAll()">↺ REFRESH</button>
+    <a href="/strategy" class="strategy-settings-btn">Strategy Settings</a>
+  </div>
+</header>
+
+<div class="grid">
+  <div class="panel panel-performance">
+    <div class="panel-label">Portfolio</div>
+    <div id="perf-content">
+      <div class="skeleton sk-big" style="width:80%"></div>
+      <div class="skeleton sk-line" style="width:50%"></div>
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:100%"></div>
+    </div>
+    <div id="benchmarks-content"></div>
+  </div>
+
+  <div class="panel panel-positions">
+    <div class="panel-label">Open Positions</div>
+    <div id="positions-content">
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:85%"></div>
+      <div class="skeleton sk-line" style="width:90%"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-tax">
+    <div class="panel-label">Tax Summary</div>
+    <div id="tax-content">
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:80%"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-recs">
+    <div class="panel-label">Today's Picks</div>
+    <div id="recs-content">
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:90%"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-analysis">
+    <div class="panel-label">Today's Analysis</div>
+    <div id="analysis-content">
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:90%"></div>
+      <div class="skeleton sk-line" style="width:95%"></div>
+      <div class="skeleton sk-line" style="width:80%"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-closed">
+    <div class="panel-label">Recent Closed</div>
+    <div id="closed-content">
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:85%"></div>
+      <div class="skeleton sk-line" style="width:70%"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-costs">
+    <div class="panel-label">Token Costs</div>
+    <div id="costs-content">
+      <div class="skeleton sk-line" style="width:80%"></div>
+      <div class="skeleton sk-line" style="width:60%"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-playbook">
+    <div class="panel-label">Strategy Playbook</div>
+    <div id="playbook-content">
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:80%"></div>
+      <div class="skeleton sk-line" style="width:90%"></div>
+      <div class="skeleton sk-line" style="width:60%"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// NOTE: All API-sourced strings are passed through escapeHtml() before any
+// innerHTML assignment, preventing XSS from untrusted server content.
+
+const API = '/api/v1';
+
+// ── Font Size Toggle ─────────────────────────────────────────────────────────
+function setFontSize(size) {
+  document.body.classList.remove('fs-s', 'fs-m', 'fs-l');
+  document.body.classList.add('fs-' + size);
+  document.querySelectorAll('.fs-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.size === size);
+  });
+  localStorage.setItem('tradebot-font-size', size);
+}
+// Restore saved font size on load
+(function() {
+  const saved = localStorage.getItem('tradebot-font-size') || 'm';
+  setFontSize(saved);
+})();
+
+// ── Safety: escape all user/API content before DOM insertion ─────────────────
+function esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ── Formatters ───────────────────────────────────────────────────────────────
+const fmt$ = (n) => {
+  const v = parseFloat(n);
+  if (isNaN(v)) return '—';
+  return '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+};
+const fmtGain$ = (n) => {
+  const v = parseFloat(n);
+  if (isNaN(v)) return '—';
+  const sign = v < 0 ? '-' : '+';
+  return sign + '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+};
+const fmtPct = (n) => {
+  const v = parseFloat(n);
+  if (isNaN(v)) return '—';
+  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+};
+const gainCls = (n) => parseFloat(n) >= 0 ? 'gain' : 'loss';
+const fmtDate = (d) => {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'2-digit'});
+};
+
+async function apiFetch(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+  return r.json();
+}
+
+// ── Clock ────────────────────────────────────────────────────────────────────
+function updateClock() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-US', {hour12:false}) + ' ET';
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Performance ──────────────────────────────────────────────────────────────
+function renderPerformance(p) {
+  const ret = parseFloat(p.all_time_return_pct);
+  const barPct = Math.min(Math.abs(ret) * 4, 100);
+  const el = document.getElementById('perf-content');
+  el.className = 'loaded';
+
+  // Build using DOM to avoid innerHTML with API data concerns
+  const wrap = document.createDocumentFragment();
+
+  const bigNum = document.createElement('div');
+  bigNum.className = 'big-number ' + gainCls(ret);
+  bigNum.textContent = fmtPct(ret);
+  wrap.appendChild(bigNum);
+
+  const bigLbl = document.createElement('div');
+  bigLbl.className = 'big-label';
+  bigLbl.textContent = 'All-time return';
+  wrap.appendChild(bigLbl);
+
+  const bar = document.createElement('div');
+  bar.className = 'return-bar';
+  const fill = document.createElement('div');
+  fill.className = 'return-bar-fill' + (ret < 0 ? ' negative' : '');
+  fill.style.width = barPct + '%';
+  bar.appendChild(fill);
+  wrap.appendChild(bar);
+
+  const rows = [
+    ['Total value', fmt$(p.total_value), ''],
+    ['Cash', fmt$(p.cash_balance), ''],
+    ['Positions', fmt$(p.total_positions_value), ''],
+    ['Unrealized P&L', fmt$(p.total_unrealized_gain), gainCls(p.total_unrealized_gain)],
+    ['Starting capital', fmt$(p.starting_capital), ''],
+  ];
+  rows.forEach(([key, val, cls]) => {
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    const k = document.createElement('span');
+    k.className = 'stat-key';
+    k.textContent = key;
+    const v = document.createElement('span');
+    v.className = 'stat-val ' + cls;
+    v.textContent = val;
+    row.appendChild(k);
+    row.appendChild(v);
+    wrap.appendChild(row);
+  });
+
+  el.textContent = '';
+  el.appendChild(wrap);
+}
+
+// ── Report Card ───────────────────────────────────────────────────────────────
+function renderBenchmarks(data) {
+  const el = document.getElementById('benchmarks-content');
+  el.className = 'loaded';
+  el.textContent = '';
+
+  const card = document.createElement('div');
+  card.className = 'report-card';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'report-card-header';
+  hdr.textContent = 'Report Card';
+  card.appendChild(hdr);
+
+  // Start date + days running
+  const sinceDate = new Date(data.since_date + 'T00:00:00');
+  const since = sinceDate.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+  const period = document.createElement('div');
+  period.className = 'report-card-period';
+  period.textContent = 'Simulation started ' + since;
+  card.appendChild(period);
+
+  const daysSinceStart = Math.floor((Date.now() - sinceDate.getTime()) / 86400000);
+  const daysEl = document.createElement('div');
+  daysEl.className = 'report-card-days';
+  daysEl.textContent = daysSinceStart + ' day' + (daysSinceStart !== 1 ? 's' : '') + ' running';
+  card.appendChild(daysEl);
+
+  // Column headers
+  const colHeader = document.createElement('div');
+  colHeader.className = 'rc-col-header';
+  const ch1 = document.createElement('span');
+  ch1.className = 'rc-col-label';
+  ch1.textContent = '';
+  const ch2 = document.createElement('span');
+  ch2.className = 'rc-col-label right';
+  ch2.textContent = 'Return';
+  const ch3 = document.createElement('span');
+  ch3.className = 'rc-col-label right';
+  ch3.textContent = 'vs Bot';
+  colHeader.appendChild(ch1);
+  colHeader.appendChild(ch2);
+  colHeader.appendChild(ch3);
+  card.appendChild(colHeader);
+
+  // Portfolio row (highlighted)
+  const portRet = parseFloat(data.portfolio_return_pct);
+  const portRow = document.createElement('div');
+  portRow.className = 'rc-row portfolio-row';
+  const portName = document.createElement('span');
+  portName.className = 'rc-name portfolio-name';
+  portName.textContent = '⚡ TRADEBOT';
+  const portRetEl = document.createElement('span');
+  portRetEl.className = 'rc-ret ' + gainCls(portRet);
+  portRetEl.textContent = fmtPct(portRet);
+  const portSpacer = document.createElement('span');
+  portSpacer.className = 'rc-delta';
+  portSpacer.textContent = '—';
+  portSpacer.style.color = 'var(--text-dim)';
+  portRow.appendChild(portName);
+  portRow.appendChild(portRetEl);
+  portRow.appendChild(portSpacer);
+  card.appendChild(portRow);
+
+  // Benchmark rows
+  data.benchmarks.forEach(b => {
+    const bRet = parseFloat(b.return_pct);
+    const diff = portRet - bRet;  // positive = bot is winning
+    const row = document.createElement('div');
+    row.className = 'rc-row';
+
+    const name = document.createElement('span');
+    name.className = 'rc-name';
+    name.textContent = b.name;
+
+    const ret = document.createElement('span');
+    ret.className = 'rc-ret ' + gainCls(bRet);
+    ret.textContent = fmtPct(bRet);
+
+    const delta = document.createElement('span');
+    // positive diff = bot beats index = green; negative = bot lags = red
+    const botWinning = diff >= 0;
+    delta.className = 'rc-delta ' + (botWinning ? 'beating' : 'lagging');
+    const sign = diff >= 0 ? '+' : '';
+    delta.textContent = (botWinning ? '▲ ' : '▼ ') + sign + diff.toFixed(2) + '%';
+
+    row.appendChild(name);
+    row.appendChild(ret);
+    row.appendChild(delta);
+    card.appendChild(row);
+  });
+
+  el.appendChild(card);
+}
+
+// ── Open Positions ───────────────────────────────────────────────────────────
+async function renderPositions(positions) {
+  const el = document.getElementById('positions-content');
+  el.className = 'loaded';
+
+  if (!positions.length) {
+    el.textContent = '';
+    const e = document.createElement('div');
+    e.className = 'empty-state';
+    e.textContent = 'NO OPEN POSITIONS';
+    el.appendChild(e);
+    return;
+  }
+
+  // Fetch buy reasoning from recent sessions
+  const reasoningMap = {};
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    const sessions = await apiFetch('/recommendations?limit=5');
+    for (const s of sessions) {
+      const detail = await apiFetch('/recommendations/' + s.id);
+      detail.recommendations.forEach(r => {
+        if (r.action === 'buy' && !reasoningMap[r.symbol]) {
+          reasoningMap[r.symbol] = r.reasoning;
+        }
+      });
+      if (positions.every(p => reasoningMap[p.symbol])) break;
+    }
+  } catch(e) {}
+
+  el.textContent = '';
+
+  positions.forEach(pos => {
+    const gain = parseFloat(pos.unrealized_gain);
+    const card = document.createElement('div');
+    card.className = 'position-card';
+
+    // Header
+    const hdr = document.createElement('div');
+    hdr.className = 'pos-header';
+    const sym = document.createElement('div');
+    sym.className = 'pos-symbol';
+    sym.textContent = pos.symbol;
+    const badge = document.createElement('span');
+    const isLongTerm = pos.tax_category === 'long_term';
+    badge.className = 'pos-action-badge ' + (isLongTerm ? 'long-term' : 'short-term');
+    badge.textContent = isLongTerm ? 'LONG-TERM' : 'SHORT-TERM';
+    hdr.appendChild(sym);
+    hdr.appendChild(badge);
+    card.appendChild(hdr);
+
+    // Meta grid
+    const meta = document.createElement('div');
+    meta.className = 'pos-meta';
+    const metaItems = [
+      ['Price', fmt$(pos.current_price)],
+      ['Mkt Value', fmt$(pos.market_value)],
+      ['P&L', fmtGain$(gain) + ' (' + fmtPct(pos.unrealized_gain_pct) + ')', gainCls(gain)],
+      ['Shares', parseFloat(pos.shares).toFixed(2)],
+      ['Avg Cost', fmt$(pos.avg_cost_basis)],
+      ['Held', pos.days_held + 'd'],
+    ];
+    metaItems.forEach(([k, v, cls]) => {
+      const item = document.createElement('div');
+      item.className = 'pos-meta-item';
+      const key = document.createElement('div');
+      key.className = 'pos-meta-key';
+      key.textContent = k;
+      const val = document.createElement('div');
+      val.className = 'pos-meta-val' + (cls ? ' ' + cls : '');
+      val.textContent = v;
+      item.appendChild(key);
+      item.appendChild(val);
+      meta.appendChild(item);
+    });
+    card.appendChild(meta);
+
+    // Reasoning
+    const reasoning = reasoningMap[pos.symbol];
+    if (reasoning) {
+      const box = document.createElement('div');
+      box.className = 'pos-reasoning';
+      const lbl = document.createElement('span');
+      lbl.className = 'pos-reasoning-label';
+      lbl.textContent = 'Buy Thesis';
+      const txt = document.createTextNode(reasoning);
+      box.appendChild(lbl);
+      box.appendChild(txt);
+      card.appendChild(box);
+    }
+
+    // Tax footer (est. tax note on gains only)
+    if (gain > 0) {
+      const footer = document.createElement('div');
+      footer.style.marginTop = '8px';
+      const taxNote = document.createElement('span');
+      taxNote.style.cssText = 'font-size:11px;color:var(--text-dim)';
+      taxNote.textContent = 'est. tax: ' + fmt$(pos.estimated_tax_on_gain) + ' · post-tax: ' + fmtGain$(pos.estimated_post_tax_gain);
+      footer.appendChild(taxNote);
+      card.appendChild(footer);
+    }
+    el.appendChild(card);
+  });
+}
+
+// ── Closed Trades ────────────────────────────────────────────────────────────
+function renderClosed(history) {
+  const el = document.getElementById('closed-content');
+  el.className = 'loaded';
+  el.textContent = '';
+
+  const sells = history.filter(h => h.action === 'sell').slice(0, 8);
+
+  if (!sells.length) {
+    const e = document.createElement('div');
+    e.className = 'empty-state';
+    e.style.padding = '12px 0';
+    e.textContent = 'NO CLOSED TRADES YET';
+    el.appendChild(e);
+    return;
+  }
+
+  sells.forEach(h => {
+    const gain = parseFloat(h.realized_gain) || 0;
+    const row = document.createElement('div');
+    row.className = 'closed-row';
+
+    const sym = document.createElement('span');
+    sym.className = 'closed-symbol';
+    sym.textContent = h.symbol;
+
+    const act = document.createElement('span');
+    act.className = 'closed-action ' + h.action;
+    act.textContent = h.action.toUpperCase();
+
+    const dt = document.createElement('span');
+    dt.className = 'closed-date';
+    dt.textContent = fmtDate(h.executed_at);
+
+    const g = document.createElement('span');
+    g.className = 'closed-gain ' + gainCls(gain);
+    g.textContent = (gain >= 0 ? '+' : '') + fmt$(gain);
+
+    const tx = document.createElement('span');
+    tx.className = 'closed-tax';
+    tx.textContent = h.tax_category === 'short_term' ? 'ST' : h.tax_category === 'long_term' ? 'LT' : '—';
+
+    [sym, act, dt, g, tx].forEach(c => row.appendChild(c));
+    el.appendChild(row);
+  });
+}
+
+// ── Tax Summary ──────────────────────────────────────────────────────────────
+function renderTax(tax) {
+  const el = document.getElementById('tax-content');
+  el.className = 'loaded';
+  el.textContent = '';
+
+  const blocks = [
+    {
+      label: 'Short-term (37%)',
+      rows: [
+        ['Realized gain', fmtGain$(tax.short_term.realized_gain), gainCls(tax.short_term.realized_gain)],
+        ['Est. tax', fmt$(tax.short_term.estimated_tax), ''],
+        ['Post-tax', fmtGain$(tax.short_term.estimated_post_tax_gain), gainCls(tax.short_term.estimated_post_tax_gain)],
+      ]
+    },
+    {
+      label: 'Long-term (20%)',
+      rows: [
+        ['Realized gain', fmtGain$(tax.long_term.realized_gain), gainCls(tax.long_term.realized_gain)],
+        ['Est. tax', fmt$(tax.long_term.estimated_tax), ''],
+        ['Post-tax', fmtGain$(tax.long_term.estimated_post_tax_gain), gainCls(tax.long_term.estimated_post_tax_gain)],
+      ]
+    },
+    {
+      label: 'Combined',
+      rows: [
+        ['Total gain', fmtGain$(tax.total_realized_gain), gainCls(tax.total_realized_gain)],
+        ['Total tax due', fmt$(tax.total_estimated_tax), ''],
+        ['Net gain', fmtGain$(tax.total_post_tax_gain), gainCls(tax.total_post_tax_gain)],
+      ]
+    },
+  ];
+
+  blocks.forEach(block => {
+    const div = document.createElement('div');
+    div.className = 'tax-block';
+    const lbl = document.createElement('div');
+    lbl.className = 'tax-block-label';
+    lbl.textContent = block.label;
+    div.appendChild(lbl);
+    block.rows.forEach(([k, v, cls]) => {
+      const row = document.createElement('div');
+      row.className = 'tax-block-row';
+      const key = document.createElement('span');
+      key.className = 'stat-key';
+      key.textContent = k;
+      const val = document.createElement('span');
+      val.className = cls || '';
+      val.textContent = v;
+      row.appendChild(key);
+      row.appendChild(val);
+      div.appendChild(row);
+    });
+    el.appendChild(div);
+  });
+}
+
+// ── Today's Recs ─────────────────────────────────────────────────────────────
+async function renderRecs() {
+  const el = document.getElementById('recs-content');
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    const sessions = await apiFetch('/recommendations?session_date=' + today + '&limit=1');
+
+    el.className = 'loaded';
+    el.textContent = '';
+
+    if (!sessions.length) {
+      const e = document.createElement('div');
+      e.className = 'empty-state';
+      e.textContent = 'NO PICKS TODAY';
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:11px;color:var(--text-dim);margin-top:4px';
+      hint.textContent = 'Run get_recommendations';
+      e.appendChild(hint);
+      el.appendChild(e);
+      return;
+    }
+
+    const detail = await apiFetch('/recommendations/' + sessions[0].id);
+
+    if (!detail.recommendations.length) {
+      const e = document.createElement('div');
+      e.className = 'empty-state';
+      e.textContent = 'NO TRADES TODAY';
+      el.appendChild(e);
+      if (detail.research_summary) {
+        const box = document.createElement('div');
+        box.className = 'pos-reasoning';
+        box.style.cssText = 'margin-top:10px;border:none;padding:0';
+        const lbl = document.createElement('span');
+        lbl.className = 'pos-reasoning-label';
+        lbl.textContent = 'Summary';
+        box.appendChild(lbl);
+        box.appendChild(document.createTextNode(detail.research_summary));
+        el.appendChild(box);
+      }
+      return;
+    }
+
+    detail.recommendations.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'rec-card ' + r.action;
+
+      const hdr = document.createElement('div');
+      hdr.className = 'rec-header';
+      const sym = document.createElement('span');
+      sym.className = 'rec-symbol';
+      sym.textContent = r.symbol;
+      const badge = document.createElement('span');
+      badge.className = 'rec-badge ' + r.action;
+      badge.textContent = r.action.toUpperCase();
+      hdr.appendChild(sym);
+      hdr.appendChild(badge);
+      card.appendChild(hdr);
+
+      const priceRow = document.createElement('div');
+      priceRow.className = 'rec-price-row';
+
+      const pLeft = document.createElement('div');
+      const pLbl = document.createElement('div');
+      pLbl.className = 'rec-price-label';
+      pLbl.textContent = 'TARGET';
+      const pVal = document.createElement('div');
+      pVal.className = 'rec-price';
+      pVal.textContent = fmt$(r.suggested_price);
+      pLeft.appendChild(pLbl);
+      pLeft.appendChild(pVal);
+
+      const pRight = document.createElement('div');
+      pRight.style.textAlign = 'right';
+      const pLbl2 = document.createElement('div');
+      pLbl2.className = 'rec-price-label';
+      pLbl2.textContent = 'QTY / COST';
+      const pVal2 = document.createElement('div');
+      pVal2.className = 'rec-price';
+      pVal2.textContent = parseFloat(r.quantity).toFixed(0) + ' sh · ' + fmt$(r.estimated_cost);
+      pRight.appendChild(pLbl2);
+      pRight.appendChild(pVal2);
+
+      priceRow.appendChild(pLeft);
+      priceRow.appendChild(pRight);
+      card.appendChild(priceRow);
+
+      const reasoning = document.createElement('div');
+      reasoning.className = 'rec-reasoning';
+      reasoning.textContent = r.reasoning;
+      card.appendChild(reasoning);
+
+      if (r.key_risks) {
+        const risk = document.createElement('div');
+        risk.className = 'rec-risk';
+        risk.textContent = '⚠ ' + r.key_risks;
+        card.appendChild(risk);
+      }
+
+      const footer = document.createElement('div');
+      footer.style.marginTop = '6px';
+      const conf = document.createElement('span');
+      conf.className = 'rec-confidence ' + (r.confidence || 'medium');
+      conf.textContent = (r.confidence || 'medium').toUpperCase() + ' CONF';
+      footer.appendChild(conf);
+      card.appendChild(footer);
+
+      el.appendChild(card);
+    });
+  } catch(e) {
+    el.className = 'loaded';
+    el.textContent = '';
+    const err = document.createElement('div');
+    err.className = 'empty-state';
+    err.style.color = 'var(--red)';
+    err.textContent = 'FETCH ERROR: ' + e.message;
+    el.appendChild(err);
+  }
+}
+
+// ── Today's Analysis ─────────────────────────────────────────────────────────
+async function renderAnalysis() {
+  const el = document.getElementById('analysis-content');
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    const sessions = await apiFetch('/recommendations?session_date=' + today + '&limit=1');
+    el.className = 'loaded';
+    el.textContent = '';
+
+    if (!sessions.length) {
+      const e = document.createElement('div');
+      e.className = 'empty-state';
+      e.textContent = 'No analysis yet today';
+      el.appendChild(e);
+      return;
+    }
+
+    // Fetch full session to get analysis_text
+    const detail = await apiFetch('/recommendations/' + sessions[0].id + '/analysis');
+    const analysisText = detail.analysis_text || '';
+
+    if (!analysisText) {
+      const e = document.createElement('div');
+      e.className = 'empty-state';
+      e.textContent = 'Analysis not available';
+      el.appendChild(e);
+      return;
+    }
+
+    // Split on [THINKING] / [ANALYSIS] markers if present
+    const hasThinking = analysisText.includes('[THINKING]');
+    let thinking = '', analysis = analysisText;
+    if (hasThinking) {
+      const parts = analysisText.split('[ANALYSIS]');
+      thinking = parts[0].replace('[THINKING]', '').trim();
+      analysis = (parts[1] || '').trim();
+    }
+
+    // Render analysis section
+    const analysisSection = document.createElement('div');
+    analysisSection.className = 'analysis-section';
+    const analysisLbl = document.createElement('span');
+    analysisLbl.className = 'analysis-section-label';
+    analysisLbl.textContent = 'Market Analysis';
+    const analysisBody = document.createElement('div');
+    analysisBody.className = 'analysis-text';
+    analysisBody.textContent = analysis;
+    analysisSection.appendChild(analysisLbl);
+    analysisSection.appendChild(analysisBody);
+    el.appendChild(analysisSection);
+
+    // Render thinking section if present (collapsed by default)
+    if (thinking) {
+      const thinkSection = document.createElement('div');
+      thinkSection.className = 'analysis-section';
+      const thinkLbl = document.createElement('span');
+      thinkLbl.className = 'analysis-section-label';
+      thinkLbl.style.color = 'var(--text-dim)';
+      thinkLbl.textContent = 'Extended Thinking (raw)';
+      const thinkToggle = document.createElement('button');
+      thinkToggle.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:1px 6px;cursor:pointer;margin-left:8px;letter-spacing:0.1em';
+      thinkToggle.textContent = 'SHOW';
+      const thinkBody = document.createElement('div');
+      thinkBody.className = 'analysis-text';
+      thinkBody.style.cssText = 'display:none;margin-top:6px;font-size:12px;color:var(--text-dim);border-left:2px solid var(--border2);padding-left:8px';
+      thinkBody.textContent = thinking;
+      thinkToggle.onclick = () => {
+        const shown = thinkBody.style.display !== 'none';
+        thinkBody.style.display = shown ? 'none' : 'block';
+        thinkToggle.textContent = shown ? 'SHOW' : 'HIDE';
+      };
+      const thinkHeader = document.createElement('div');
+      thinkHeader.style.display = 'flex';
+      thinkHeader.style.alignItems = 'center';
+      thinkHeader.appendChild(thinkLbl);
+      thinkHeader.appendChild(thinkToggle);
+      thinkSection.appendChild(thinkHeader);
+      thinkSection.appendChild(thinkBody);
+      el.appendChild(thinkSection);
+    }
+
+  } catch(e) {
+    el.className = 'loaded';
+    el.textContent = '';
+    const err = document.createElement('div');
+    err.className = 'empty-state';
+    err.style.color = 'var(--text-dim)';
+    err.textContent = 'Analysis unavailable';
+    el.appendChild(err);
+  }
+}
+
+// ── Token Costs ───────────────────────────────────────────────────────────────
+function renderCosts(costs) {
+  const el = document.getElementById('costs-content');
+  el.className = 'loaded';
+  el.textContent = '';
+
+  const DAILY_TARGET = 1.00;
+
+  const periods = [
+    ['Today', costs.today],
+    ['7-day', costs.last_7_days],
+    ['30-day', costs.last_30_days],
+  ];
+
+  periods.forEach(([label, data]) => {
+    const cost = data.total_cost_usd || 0;
+    const isToday = label === 'Today';
+    const pct = isToday ? Math.min((cost / DAILY_TARGET) * 100, 100) : null;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'cost-bar-wrap';
+    wrap.style.paddingBottom = '8px';
+    wrap.style.borderBottom = '1px solid var(--border)';
+    wrap.style.marginBottom = '6px';
+
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex;justify-content:space-between;align-items:baseline';
+    const lbl = document.createElement('span');
+    lbl.className = 'stat-key';
+    lbl.textContent = label;
+    const val = document.createElement('span');
+    val.className = 'stat-val ' + (cost > DAILY_TARGET && isToday ? 'loss' : '');
+    val.textContent = '$' + cost.toFixed(4);
+    topRow.appendChild(lbl);
+    topRow.appendChild(val);
+    wrap.appendChild(topRow);
+
+    if (isToday && pct !== null) {
+      const track = document.createElement('div');
+      track.className = 'cost-bar-track';
+      const fill = document.createElement('div');
+      fill.className = 'cost-bar-fill';
+      fill.style.width = pct + '%';
+      if (pct > 80) fill.style.background = 'var(--red)';
+      track.appendChild(fill);
+      wrap.appendChild(track);
+
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:11px;color:var(--text-dim);margin-top:2px';
+      hint.textContent = pct.toFixed(0) + '% of $1.00/day target';
+      wrap.appendChild(hint);
+    }
+
+    // Breakdown by call type
+    if (data.by_call_type && Object.keys(data.by_call_type).length) {
+      const breakdown = document.createElement('div');
+      breakdown.className = 'cost-breakdown';
+      Object.entries(data.by_call_type).forEach(([type, d]) => {
+        const chip = document.createElement('span');
+        chip.className = 'cost-chip';
+        chip.textContent = type + ': $' + (d.cost_usd || 0).toFixed(4);
+        breakdown.appendChild(chip);
+      });
+      wrap.appendChild(breakdown);
+    }
+
+    el.appendChild(wrap);
+  });
+
+  // All-time
+  const allTime = document.createElement('div');
+  allTime.className = 'stat-row';
+  allTime.style.borderBottom = 'none';
+  const atKey = document.createElement('span');
+  atKey.className = 'stat-key';
+  atKey.textContent = 'All-time';
+  const atVal = document.createElement('span');
+  atVal.className = 'stat-val';
+  atVal.textContent = '$' + (costs.all_time.total_cost_usd || 0).toFixed(4);
+  allTime.appendChild(atKey);
+  allTime.appendChild(atVal);
+  el.appendChild(allTime);
+}
+
+// ── Playbook ─────────────────────────────────────────────────────────────────
+function renderPlaybook(pb) {
+  const el = document.getElementById('playbook-content');
+  el.className = 'loaded';
+  el.textContent = '';
+
+  const ver = document.createElement('div');
+  ver.className = 'playbook-version';
+  ver.textContent = 'v' + pb.version + ' · updated ' + fmtDate(pb.updated_at);
+  el.appendChild(ver);
+
+  // Parse markdown safely — all text set via textContent, never innerHTML
+  const lines = (pb.content || '').split('\n');
+  lines.forEach(line => {
+    let node;
+    if (line.startsWith('# ')) {
+      node = document.createElement('div');
+      node.className = 'pb-h1';
+      node.textContent = line.slice(2);
+    } else if (line.startsWith('## ')) {
+      node = document.createElement('div');
+      node.className = 'pb-h2';
+      node.textContent = line.slice(3);
+    } else if (line.startsWith('- ') || line.startsWith('* ')) {
+      node = document.createElement('div');
+      node.className = 'pb-li';
+      node.textContent = line.slice(2);
+    } else if (line.trim() === '') {
+      node = document.createElement('div');
+      node.className = 'pb-spacer';
+    } else {
+      node = document.createElement('div');
+      node.className = 'pb-p';
+      node.textContent = line;
+    }
+    el.appendChild(node);
+  });
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+async function loadAll() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  btn.textContent = '↺ LOADING';
+
+  // Health check
+  try {
+    const h = await fetch('/health');
+    const data = await h.json();
+    const dot = document.getElementById('status-dot');
+    const txt = document.getElementById('status-text');
+    if (data.db === 'connected') {
+      dot.classList.remove('offline');
+      txt.textContent = 'LIVE';
+    } else {
+      dot.classList.add('offline');
+      txt.textContent = 'DB ERROR';
+    }
+  } catch(e) {
+    document.getElementById('status-dot').classList.add('offline');
+    document.getElementById('status-text').textContent = 'OFFLINE';
+  }
+
+  const [portfolioR, historyR, taxR, playbookR, costsR, benchmarksR] = await Promise.allSettled([
+    apiFetch('/portfolio'),
+    apiFetch('/portfolio/history?limit=10'),
+    apiFetch('/portfolio/tax-summary'),
+    apiFetch('/playbook'),
+    apiFetch('/costs'),
+    apiFetch('/portfolio/benchmarks'),
+  ]);
+
+  if (portfolioR.status === 'fulfilled') {
+    renderPerformance(portfolioR.value);
+    await renderPositions(portfolioR.value.positions);
+  } else {
+    ['perf-content','positions-content'].forEach(id => {
+      const el = document.getElementById(id);
+      el.textContent = 'Could not load: ' + (portfolioR.reason?.message || 'unknown error');
+    });
+  }
+
+  if (benchmarksR.status === 'fulfilled') renderBenchmarks(benchmarksR.value);
+
+  if (historyR.status === 'fulfilled') renderClosed(historyR.value);
+  if (taxR.status === 'fulfilled') renderTax(taxR.value);
+  if (playbookR.status === 'fulfilled') renderPlaybook(playbookR.value);
+  else {
+    const el = document.getElementById('playbook-content');
+    el.textContent = 'Playbook unavailable';
+  }
+  if (costsR.status === 'fulfilled') renderCosts(costsR.value);
+
+  await Promise.all([renderRecs(), renderAnalysis()]);
+
+  btn.classList.remove('spinning');
+  btn.textContent = '↺ REFRESH';
+}
+
+
+loadAll();
+setInterval(loadAll, 300000);
+</script>
+</body>
+</html>

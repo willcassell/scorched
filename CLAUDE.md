@@ -1,0 +1,131 @@
+# Scorched — Claude Code Context
+
+## Commands
+
+```bash
+# Run locally (outside Docker, needs .env with DATABASE_URL)
+uvicorn scorched.main:app --reload --port 8000
+
+# Docker (preferred)
+docker compose up -d --build
+docker compose logs tradebot -f
+
+# Rebuild after code changes (keeps postgres data)
+docker compose up -d --build tradebot
+
+# Alembic migrations
+alembic upgrade head
+alembic revision --autogenerate -m "description"
+
+# Deploy to VM (from Mac — never overwrites .env on VM)
+rsync -av -e "ssh -i ~/Downloads/ssh-key-2026-02-19-private.key" \
+  --exclude='.venv' --exclude='.git' --exclude='__pycache__' \
+  --exclude='*.pyc' --exclude='.env' \
+  ~/Projects/claude/tradebot/ ubuntu@129.213.37.242:~/tradebot/
+
+# SSH to VM
+ssh -i ~/Downloads/ssh-key-2026-02-19-private.key ubuntu@129.213.37.242
+
+# Edit crontab on VM
+crontab -e
+```
+
+## Architecture
+
+FastAPI app (`src/scorched/main.py`) with two transports:
+- **MCP** at `/mcp` — Streamable HTTP, for any MCP client (currently unused in production; cron drives everything)
+- **REST** at `/api/v1/` — same logic via standard HTTP; cron jobs hit these endpoints directly
+
+The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator required:
+- `30 12 * * 1-5` UTC (8:30 AM ET, pre-DST: `30 13`) → POST `/api/v1/recommendations/generate`
+- `45 13 * * 1-5` UTC (9:45 AM ET, pre-DST: `45 14`) → POST `/api/v1/trades/confirm` for each pending rec
+- `05 21 * * 1-5` UTC (5:05 PM ET) → optional EOD summary via `/api/v1/market/summary`
+
+The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to mounted sub-apps. `mcp.session_manager.run()` is wired manually into FastAPI's own `lifespan` context manager. Don't break this.
+
+`streamable_http_path = "/"` must be set before calling `mcp.streamable_http_app()` — otherwise FastMCP registers its route at `/mcp` internally and the FastAPI mount at `/mcp` creates a `/mcp/mcp` double-prefix.
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `src/scorched/main.py` | FastAPI app + MCP mount + lifespan wiring |
+| `src/scorched/mcp_tools.py` | 7 MCP tool definitions (FastMCP) |
+| `src/scorched/services/recommender.py` | Claude pipeline (two-call: analysis → decision), NYSE holiday check, recommendation cache |
+| `src/scorched/services/research.py` | All data fetching: yfinance, FRED, Polygon, Alpha Vantage, EDGAR, momentum screener, options |
+| `src/scorched/services/portfolio.py` | apply_buy(), apply_sell(), get_portfolio_state() |
+| `src/scorched/services/playbook.py` | Playbook read/update (living strategy doc) |
+| `src/scorched/services/strategy.py` | load_strategy() — reads strategy.json (edited via dashboard) |
+| `src/scorched/tax.py` | ST/LT classification based on first_purchase_date |
+| `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
+| `src/scorched/models.py` | 7 SQLAlchemy ORM models |
+| `src/scorched/schemas.py` | Pydantic request/response schemas |
+| `src/scorched/config.py` | pydantic-settings Settings (env vars, tax rates, cash reserve %) |
+| `strategy.md` | Human-readable strategy reference (source of truth is strategy.json via dashboard) |
+| `analyst_guidance.md` | Signal interpretation tables + hard rules injected into both Claude prompts at runtime |
+| `alembic/versions/` | DB migrations — always generate, never hand-edit |
+
+## Claude Pipeline (recommender.py)
+
+Two API calls per day, both using `claude-sonnet-4-6`:
+
+**Call 1 — Analysis** (extended thinking, budget=8000 tokens):
+- System: `ANALYSIS_SYSTEM` — analyst persona, strategy injected
+- Input: market context + full research context (all data sources)
+- Output: `{"analysis": "...", "candidates": ["TICK1", ...]}`
+
+**Call 2 — Decision** (standard, no extended thinking):
+- System: `DECISION_SYSTEM` — trader persona, strategy + playbook injected
+- Input: analysis text + options data for candidates + current portfolio
+- Output: `{"research_summary": "...", "recommendations": [...]}`
+
+## Data Sources
+
+| Source | What it provides | Key? |
+|--------|-----------------|------|
+| yfinance | Price history, fundamentals, news, earnings dates, options chains, insider purchases | No |
+| FRED | Fed funds rate, 10Y/2Y yields, CPI, unemployment, retail sales, HY credit spread, PCE, industrial production | `FRED_API_KEY` |
+| Polygon.io | Better news headlines (preferred over yfinance news when available) | `POLYGON_API_KEY` |
+| Alpha Vantage | RSI(14) for screener picks only (≤20 symbols, free tier = 25 calls/day) | `ALPHA_VANTAGE_API_KEY` |
+| SEC EDGAR | Form 4 insider buy/sell data (free, no key) | No |
+| Momentum screener | Top 20 S&P 500 members by 5-day momentum (price > 20d MA, volume > 1M) | No |
+| Options (yfinance) | Put/call ratio, ATM IV, implied 30-day move — fetched only for candidates | No |
+
+## Settings (config.py)
+
+| Setting | Default | Notes |
+|---------|---------|-------|
+| `STARTING_CAPITAL` | $100,000 | Set in .env |
+| `SHORT_TERM_TAX_RATE` | 37% | Applied to gains held < 365 days |
+| `LONG_TERM_TAX_RATE` | 20% | Applied to gains held ≥ 365 days |
+| `min_cash_reserve_pct` | 10% | Hard floor; buys that violate this are skipped |
+| `FRED_API_KEY` | "" | Empty = FRED data skipped |
+| `ALPHA_VANTAGE_API_KEY` | "" | Empty = RSI data skipped |
+| `POLYGON_API_KEY` | "" | Empty = Polygon news skipped |
+| `settings_pin` | "" | If set, PUT /api/v1/strategy requires this PIN |
+
+## Gotchas
+
+- **yfinance is sync** — all yfinance calls in `research.py` are wrapped in `asyncio.run_in_executor`. Don't call yfinance directly in async context.
+- **Database seeding** happens at startup in `lifespan` — portfolio row is created if empty. Safe to run multiple times.
+- **`force: true` on recommendations** — NULLs out `token_usage.session_id` (nullable FK) before deleting the session, avoiding FK violation. Don't skip this step.
+- **Recommendation caching** — `get_recommendations` returns the existing session if one exists for today, unless `force=True`. This is intentional.
+- **NYSE holidays** — detected in `_is_market_open()` using `pandas_market_calendars`. Returns early before any DB or Claude work.
+- **VM cron times are UTC** — DST (US clocks spring forward ~March 8): ET shifts from UTC-5 → UTC-4. After DST, use `30 12` and `45 13`; before DST, `30 13` and `45 14`.
+- **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
+- **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
+- **Wash sale detection** — buys within 30 days of a same-symbol sell get a `⚠️ WASH SALE WARNING` prepended to `key_risks`.
+- **Model** is `claude-sonnet-4-6`. THINKING_BUDGET is 8000 tokens (~$0.024/day for Call 1).
+
+## Environment
+
+Required in `.env`:
+```
+ANTHROPIC_API_KEY=sk-ant-api03-...
+STARTING_CAPITAL=100000
+```
+
+`DATABASE_URL` is injected by Docker Compose. Only needed for local non-Docker runs:
+```
+DATABASE_URL=postgresql+asyncpg://scorched:scorched@localhost:5432/scorched
+```

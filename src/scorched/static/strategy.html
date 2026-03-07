@@ -1,0 +1,1355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Strategy Settings · Tradebot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0c0f;
+      --surface: #0f1217;
+      --border: #253040;
+      --border2: #344558;
+      --text: #b8cce0;
+      --text-dim: #6a8099;
+      --text-hi: #e8f2fc;
+      --amber: #e8a030;
+      --amber-dim: #7a5018;
+      --amber-glow: rgba(232, 160, 48, 0.08);
+      --amber-subtle: rgba(232, 160, 48, 0.12);
+      --green: #2ec87a;
+      --green-dim: #134d30;
+      --green-glow: rgba(46, 200, 122, 0.08);
+      --red: #e84040;
+      --red-dim: #5a1818;
+      --red-glow: rgba(232, 64, 64, 0.08);
+      --mono: 'IBM Plex Mono', monospace;
+      --sans: 'IBM Plex Sans', sans-serif;
+      --radius: 8px;
+      --radius-sm: 5px;
+      --header-h: 60px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: var(--header-h);
+      background: rgba(10, 12, 15, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      gap: 16px;
+    }
+
+    .header-back {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-dim);
+      text-decoration: none;
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      transition: color 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .header-back:hover { color: var(--amber); }
+    .header-back svg { opacity: 0.6; transition: opacity 0.15s, transform 0.15s; }
+    .header-back:hover svg { opacity: 1; transform: translateX(-2px); }
+
+    .header-center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .header-title {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-hi);
+    }
+
+    .unsaved-indicator {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      color: var(--amber);
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+    .unsaved-indicator.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .save-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 18px;
+      background: var(--amber);
+      color: #0a0c0f;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s, transform 0.1s;
+    }
+    .save-btn:hover { background: #f0aa38; transform: translateY(-1px); }
+    .save-btn:active { transform: translateY(0); }
+    .save-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .save-btn .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid rgba(0,0,0,0.3);
+      border-top-color: #0a0c0f;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    .save-btn.saving .spinner { display: block; }
+    .save-btn.saving .btn-label { display: none; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      padding: 12px 20px;
+      border-radius: var(--radius-sm);
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(46, 200, 122, 0.3); }
+    .toast.error { background: var(--red-dim); color: var(--red); border: 1px solid rgba(232, 64, 64, 0.3); }
+
+    /* ── Page layout ── */
+    .page {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 36px 24px 80px;
+    }
+
+    .page-intro {
+      margin-bottom: 32px;
+    }
+    .page-intro h1 {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text-hi);
+      letter-spacing: -0.01em;
+      margin-bottom: 6px;
+    }
+    .page-intro p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    /* ── Group card ── */
+    .group-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .group-header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .group-icon {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .group-icon.personality { background: rgba(232, 160, 48, 0.12); }
+    .group-icon.entry-exit  { background: rgba(46, 200, 122, 0.1); }
+    .group-icon.portfolio   { background: rgba(100, 149, 237, 0.1); }
+    .group-icon.market      { background: rgba(200, 120, 220, 0.1); }
+
+    .group-name {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-hi);
+    }
+    .group-count {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-left: auto;
+    }
+
+    /* ── Question block ── */
+    .question {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .question:last-child { border-bottom: none; }
+
+    .q-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-hi);
+      margin-bottom: 4px;
+    }
+    .q-note {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-style: italic;
+      margin-bottom: 12px;
+    }
+    .q-label + .q-note { margin-top: 2px; }
+    .q-label:not(+ .q-note) { margin-bottom: 12px; }
+
+    /* ── Option grid ── */
+    .options-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+    }
+    .options-grid.wide {
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    }
+
+    /* ── Option card ── */
+    .option-label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      position: relative;
+      overflow: hidden;
+    }
+    .option-label:hover { border-color: var(--border2); }
+
+    .option-label input[type="radio"],
+    .option-label input[type="checkbox"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .option-label.selected {
+      border-color: var(--amber);
+      background: var(--amber-glow);
+    }
+    .option-label.selected::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--amber);
+    }
+
+    .option-label.recommended {
+      border-left: 2px solid var(--green);
+    }
+    .option-label.recommended.selected {
+      border-left: 3px solid var(--amber);
+      background: var(--amber-glow);
+    }
+
+    .option-label.discouraged {
+      opacity: 0.65;
+    }
+
+    .option-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .option-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-hi);
+      font-family: var(--mono);
+    }
+
+    .badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 1px 5px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+    .badge-rec { background: rgba(46, 200, 122, 0.15); color: var(--green); }
+    .badge-caution { background: rgba(232, 64, 64, 0.12); color: var(--red); }
+
+    .option-desc {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.45;
+    }
+
+    /* ── Concentration (numeric preset) ── */
+    .conc-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 600px) {
+      .conc-grid { grid-template-columns: 1fr; }
+    }
+
+    .conc-field-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      font-family: var(--mono);
+      letter-spacing: 0.03em;
+    }
+
+    .conc-presets {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .preset-btn {
+      padding: 3px 9px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .preset-btn:hover { border-color: var(--amber); color: var(--amber); }
+    .preset-btn.active { background: var(--amber-subtle); border-color: var(--amber); color: var(--amber); font-weight: 600; }
+
+    .conc-input {
+      width: 100%;
+      padding: 6px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      transition: border-color 0.15s;
+    }
+    .conc-input:focus { outline: none; border-color: var(--amber); }
+
+    /* ── Notes ── */
+    .notes-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .notes-card .q-label { margin-bottom: 10px; }
+
+    .notes-textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 12px 14px;
+      resize: vertical;
+      min-height: 90px;
+      transition: border-color 0.15s;
+    }
+    .notes-textarea:focus { outline: none; border-color: var(--amber); }
+    .notes-textarea::placeholder { color: var(--text-dim); }
+
+    /* ── Preview ── */
+    .preview-details {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .preview-summary {
+      padding: 16px 24px;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      list-style: none;
+      transition: color 0.15s;
+      user-select: none;
+    }
+    .preview-summary::-webkit-details-marker { display: none; }
+    .preview-summary:hover { color: var(--text); }
+    .preview-summary .arrow {
+      transition: transform 0.2s;
+      display: inline-block;
+    }
+    details[open] .preview-summary .arrow { transform: rotate(90deg); }
+
+    .preview-body {
+      border-top: 1px solid var(--border);
+      padding: 20px 24px;
+    }
+    .preview-loading {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .preview-loading .spinner-sm {
+      width: 10px; height: 10px;
+      border: 1.5px solid var(--border);
+      border-top-color: var(--amber);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    .preview-pre {
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .preview-pre .prose-heading { color: var(--amber); }
+    .preview-pre .prose-bold { color: var(--text-hi); font-weight: 600; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .page { padding: 20px 16px 60px; }
+      .header { padding: 0 16px; }
+      .header-back span { display: none; }
+      .question { padding: 16px; }
+      .group-header { padding: 14px 16px; }
+      .options-grid, .options-grid.wide {
+        grid-template-columns: 1fr;
+      }
+      .notes-card, .preview-details { padding: 16px; }
+    }
+
+    /* ── PIN Modal ── */
+    .pin-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      backdrop-filter: blur(2px);
+    }
+    .pin-overlay.hidden { display: none; }
+    .pin-dialog {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .pin-title {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-hi);
+    }
+    .pin-input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-hi);
+      font-family: var(--mono);
+      font-size: 15px;
+      letter-spacing: 0.15em;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .pin-input:focus { border-color: var(--amber); }
+    .pin-error {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--red);
+      margin-top: -8px;
+    }
+    .pin-error.hidden { display: none; }
+    .pin-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .pin-btn-cancel {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      border-radius: var(--radius-sm);
+      padding: 7px 16px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .pin-btn-cancel:hover { border-color: var(--border2); color: var(--text); }
+    .pin-btn-save {
+      background: var(--amber);
+      border: none;
+      color: #000;
+      border-radius: var(--radius-sm);
+      padding: 7px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .pin-btn-save:hover { opacity: 0.85; }
+  </style>
+</head>
+<body>
+
+  <!-- Sticky header -->
+  <header class="header">
+    <a href="/" class="header-back">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Dashboard</span>
+    </a>
+
+    <div class="header-center">
+      <div class="header-title">Strategy Settings</div>
+      <div class="unsaved-indicator" id="unsavedIndicator">● unsaved changes</div>
+    </div>
+
+    <div class="header-right">
+      <button class="save-btn" id="saveBtn" onclick="saveStrategy()">
+        <div class="spinner"></div>
+        <span class="btn-label">Save</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Main content -->
+  <main class="page" id="formRoot">
+    <div class="page-intro">
+      <h1>Configure your trading strategy</h1>
+      <p>These settings shape every recommendation the bot makes. Changes take effect on the next recommendation run.</p>
+    </div>
+  </main>
+
+  <script>
+    // ─── Strategy options definition ──────────────────────────────────────────
+    const STRATEGY_OPTIONS = {
+      objective: {
+        group: "Core Personality",
+        label: "What should the bot optimize for?",
+        type: "radio",
+        options: [
+          { value: "growth",   label: "Growth",               desc: "Maximize portfolio growth — accept higher risk and volatility in pursuit of upside" },
+          { value: "balanced", label: "Balanced",             desc: "Balance growth and capital preservation — do not sacrifice safety for marginal gains", recommended: true },
+          { value: "income",   label: "Capital Preservation", desc: "Preserve capital first; growth is secondary — avoid speculative positions" },
+          { value: "learning", label: "Learning",             desc: "Prioritize learning — log full reasoning for every trade and track outcomes over time" },
+        ],
+      },
+      rec_style: {
+        group: "Core Personality",
+        label: "Daily recommendation style",
+        note: "This is the bot's core personality — it shapes every decision.",
+        type: "radio",
+        options: [
+          { value: "aggressive", label: "Aggressive", desc: "Always find 2–3 recs/day; stay fully deployed at all times", discouraged: true },
+          { value: "selective",  label: "Selective",  desc: "Only recommend when conviction is genuinely high; no manufactured setups" },
+          { value: "adaptive",   label: "Adaptive",   desc: "Match frequency to market conditions — active in strong markets, quiet in weak ones", recommended: true },
+          { value: "minimal",    label: "Minimal",    desc: "Cash-first; only act on exceptional setups — missing a trade is fine" },
+        ],
+      },
+      no_trade_threshold: {
+        group: "Core Personality",
+        label: "When should the bot choose no trade over a mediocre one?",
+        type: "radio",
+        options: [
+          { value: "always_trade",  label: "Always trade",  desc: "Always recommend something — never leave the day empty", discouraged: true },
+          { value: "high_bar",      label: "High bar",      desc: "Require clear, high-conviction setup before recommending anything" },
+          { value: "adaptive",      label: "Adaptive",      desc: "Judge based on both macro conditions and individual setup quality together", recommended: true },
+          { value: "cash_default",  label: "Cash default",  desc: "Default to cash — only override for exceptional setups; missed trades are acceptable" },
+        ],
+      },
+      rec_explanation: {
+        group: "Core Personality",
+        label: "How much should the bot explain its reasoning?",
+        type: "radio",
+        options: [
+          { value: "brief",    label: "Brief",    desc: "One sentence: catalyst + action, nothing more" },
+          { value: "standard", label: "Standard", desc: "3–4 sentences: catalyst, thesis, key risks", recommended: true },
+          { value: "detailed", label: "Detailed", desc: "Full breakdown: catalyst, entry criteria met, exit plan, all risks" },
+          { value: "teach",    label: "Teach me", desc: "Explain why this trade fits the declared strategy — connect dots to my goals" },
+        ],
+      },
+      hold_period: {
+        group: "Entry & Exit",
+        label: "Target holding period",
+        type: "radio",
+        options: [
+          { value: "intraday", label: "Intraday",  desc: "Same-day exits — close everything before market close" },
+          { value: "1-3d",     label: "1–3 days",  desc: "Very short-term — exit by end of third trading day" },
+          { value: "3-10d",    label: "3–10 days", desc: "Short-term swing — most positions closed within two calendar weeks", recommended: true },
+          { value: "2-6wk",    label: "2–6 weeks", desc: "Medium-term — allow thesis time to develop" },
+          { value: "3mo+",     label: "3 months+", desc: "Long-term holds — fundamentals and thesis durability over noise" },
+        ],
+      },
+      entry_style: {
+        group: "Entry & Exit",
+        label: "Entry types to prioritize",
+        note: "Check all that apply.",
+        type: "checkbox",
+        options: [
+          { value: "momentum_cont",     label: "Momentum continuation", desc: "Buy stocks already moving up strongly on high volume with a named catalyst" },
+          { value: "pullback_uptrend",  label: "Pullback in uptrend",   desc: "Buy temporary dips in stocks with a strong established trend" },
+          { value: "breakout",          label: "Breakout",              desc: "Buy when price moves decisively above key resistance on above-average volume" },
+          { value: "relative_strength", label: "Relative strength",     desc: "Favor stocks outperforming their sector or SPY over the trailing 5–20 days" },
+          { value: "value_catalyst",    label: "Value + catalyst",      desc: "Buy undervalued stocks only when there is a specific near-term re-rating event" },
+          { value: "mean_reversion",    label: "Mean reversion",        desc: "Buy oversold stocks with a strong historical tendency to snap back" },
+        ],
+      },
+      sell_discipline: {
+        group: "Entry & Exit",
+        label: "How should winners be exited?",
+        type: "radio",
+        options: [
+          { value: "full_target",   label: "Full exit at target", desc: "Sell the entire position when profit target is hit — do not hold for more" },
+          { value: "scale_out",     label: "Scale out",           desc: "Sell half at first target; hold the remainder for next target or trailing stop", recommended: true },
+          { value: "trailing_stop", label: "Trailing stop",       desc: "Let winners run — exit when price pulls back a set % from its high" },
+          { value: "time_based",    label: "Time-based exit",     desc: "Exit if not at target after the target holding period, regardless of thesis" },
+        ],
+      },
+      loss_management: {
+        group: "Entry & Exit",
+        label: "How should losers be handled?",
+        type: "radio",
+        options: [
+          { value: "hard_stop",         label: "Hard stop",    desc: "Exit the full position immediately when the stop-loss % is hit — no exceptions" },
+          { value: "time_price_hybrid", label: "Hybrid",       desc: "Exit at stop-loss % OR when flat/down after target holding period — whichever first", recommended: true },
+          { value: "thesis_based",      label: "Thesis-based", desc: "Hold through losses as long as the original catalyst is still valid" },
+          { value: "no_stop",           label: "No hard stop", desc: "Manage exits manually based on judgment", discouraged: true },
+        ],
+      },
+      partial_sell: {
+        group: "Entry & Exit",
+        label: "When should partial sells happen?",
+        type: "radio",
+        options: [
+          { value: "never",         label: "Never trim",      desc: "Hold full position until the final exit signal" },
+          { value: "at_target",     label: "At first target", desc: "Sell half at first profit target; hold the rest for further upside" },
+          { value: "adaptive",      label: "Adaptive",        desc: "Trim when risk/reward deteriorates — no need to hit a specific target", recommended: true },
+          { value: "always_ladder", label: "Always ladder",   desc: "Distribute exits at multiple price levels on the way up" },
+        ],
+      },
+      sizing_style: {
+        group: "Portfolio Controls",
+        label: "How should position sizes be determined?",
+        type: "radio",
+        options: [
+          { value: "equal_weight",        label: "Equal weight",        desc: "Same dollar amount for every trade regardless of conviction" },
+          { value: "conviction_weighted", label: "Conviction-weighted", desc: "More capital for high-conviction setups, less for speculative ones", recommended: true },
+          { value: "volatility_scaled",   label: "Volatility-scaled",   desc: "Smaller size for more volatile stocks — equal dollar risk across positions" },
+          { value: "kelly",               label: "Kelly-influenced",    desc: "Size based on historical win rate and average payoff ratio for similar setups" },
+        ],
+      },
+      concentration: {
+        group: "Portfolio Controls",
+        label: "Concentration limits",
+        note: "Maximum allocation per position, per sector, and total simultaneous holdings.",
+        type: "numeric_preset",
+        fields: [
+          { key: "max_position_pct", label: "Max % per position",        presets: [10, 15, 20, 25, 33], defaultPreset: 20, min: 5,  max: 100 },
+          { key: "max_sector_pct",   label: "Max % in one sector",       presets: [25, 33, 40, 50],     defaultPreset: 40, min: 10, max: 100 },
+          { key: "max_holdings",     label: "Max simultaneous holdings", presets: [3, 5, 7, 10],        defaultPreset: 5,  min: 1,  max: 30 },
+        ],
+      },
+      add_vs_rotate: {
+        group: "Portfolio Controls",
+        label: "When a trade is working, add to it or rotate to fresh setups?",
+        type: "radio",
+        options: [
+          { value: "add_winners", label: "Add to winners", desc: "Pyramid into positions that are working while thesis is intact" },
+          { value: "rotate",      label: "Rotate",         desc: "Take partial profits and redeploy into fresh, better setups" },
+          { value: "adaptive",    label: "Adaptive",       desc: "Add to a winner only if it has a clearly better expected value than alternatives", recommended: true },
+          { value: "never_add",   label: "Never add",      desc: "Keep all position sizes fixed from initial entry" },
+        ],
+      },
+      risk_guardrails: {
+        group: "Portfolio Controls",
+        label: "Portfolio-level risk rules",
+        note: "Check all that apply.",
+        type: "checkbox",
+        options: [
+          { value: "max_portfolio_dd",  label: "Drawdown pause",          desc: "Pause all new buys if portfolio is down >10% from its peak" },
+          { value: "weak_regime_cash",  label: "Cash in weak markets",    desc: "Move to >50% cash when market regime is weak or uncertain" },
+          { value: "no_correlated",     label: "No correlated positions", desc: "Never hold two highly correlated positions — they act as one doubled-up bet" },
+          { value: "earnings_blackout", label: "Earnings season pause",   desc: "No new positions during market-wide earnings season peaks (5-day window)" },
+          { value: "vix_pause",         label: "VIX spike pause",         desc: "Pause new buys when VIX spikes above 30" },
+        ],
+      },
+      market_regime: {
+        group: "Market & Context",
+        label: "How should the bot behave in different market conditions?",
+        type: "radio",
+        options: [
+          { value: "always_active", label: "Always active",      desc: "Find trades regardless of market direction — always look for opportunities", discouraged: true },
+          { value: "reduce_weak",   label: "Reduce in weakness", desc: "Smaller size in weak or mixed markets; full size only in clear uptrends" },
+          { value: "adaptive",      label: "Adaptive",           desc: "Assess regime daily — more aggressive in strong markets, cautious in weak ones", recommended: true },
+          { value: "cash_weak",     label: "Cash in weakness",   desc: "Go mostly to cash in weak or uncertain conditions; only trade confirmed uptrends" },
+        ],
+      },
+      event_risk: {
+        group: "Market & Context",
+        label: "How should earnings and event risk be handled?",
+        note: "Check all that apply.",
+        type: "checkbox",
+        options: [
+          { value: "reduce_before_earnings", label: "Reduce before earnings",   desc: "Trim existing positions by at least half before scheduled earnings" },
+          { value: "no_new_before_earnings", label: "No new buys pre-earnings", desc: "Do not open any new position if earnings within 5 trading days" },
+          { value: "exit_before_earnings",   label: "Exit before earnings",     desc: "Close all positions before their earnings dates — binary risk is unacceptable" },
+          { value: "hold_through_earnings",  label: "Hold through earnings",    desc: "Events are priced in; do not treat earnings as a special exit trigger" },
+          { value: "no_weekend",             label: "No weekend holds",         desc: "Sell before long weekends (3-day holidays) to avoid gap risk" },
+        ],
+      },
+      sectors: {
+        group: "Market & Context",
+        label: "Sector focus",
+        note: "Leave as 'No preference' to evaluate all sectors equally.",
+        type: "checkbox",
+        options: [
+          { value: "no_preference",   label: "No preference",          desc: "Evaluate all sectors equally on setup quality" },
+          { value: "technology",      label: "Technology",             desc: "Software, semiconductors, AI infrastructure" },
+          { value: "healthcare",      label: "Healthcare / Biotech",   desc: "Catalyst-driven opportunities" },
+          { value: "financials",      label: "Financials",             desc: "Banks, fintech, insurance" },
+          { value: "consumer",        label: "Consumer Discretionary", desc: "" },
+          { value: "energy",          label: "Energy",                 desc: "" },
+          { value: "industrials",     label: "Industrials",            desc: "" },
+          { value: "avoid_defensive", label: "Avoid defensives",       desc: "No utilities, REITs, or consumer staples" },
+        ],
+      },
+    };
+
+    // ─── Group metadata ────────────────────────────────────────────────────────
+    const GROUP_META = {
+      "Core Personality": { icon: "🧠", cls: "personality" },
+      "Entry & Exit":     { icon: "↕",  cls: "entry-exit" },
+      "Portfolio Controls": { icon: "⚖", cls: "portfolio" },
+      "Market & Context": { icon: "🌐", cls: "market" },
+    };
+
+    // ─── State ─────────────────────────────────────────────────────────────────
+    let _dirty = false;
+
+    function setDirty(val) {
+      _dirty = val;
+      const el = document.getElementById('unsavedIndicator');
+      if (el) {
+        el.classList.toggle('visible', val);
+      }
+    }
+
+    // ─── Form building ─────────────────────────────────────────────────────────
+    function buildForm() {
+      const root = document.getElementById('formRoot');
+
+      // Remove existing cards if any (re-build on hot reload)
+      root.querySelectorAll('.group-card, .notes-card, .preview-details').forEach(el => el.remove());
+
+      const intro = root.querySelector('.page-intro');
+
+      // Group questions by their group name
+      const groups = {};
+      const groupOrder = [];
+      for (const [key, cfg] of Object.entries(STRATEGY_OPTIONS)) {
+        if (!groups[cfg.group]) {
+          groups[cfg.group] = [];
+          groupOrder.push(cfg.group);
+        }
+        groups[cfg.group].push([key, cfg]);
+      }
+
+      for (const groupName of groupOrder) {
+        const questions = groups[groupName];
+        const meta = GROUP_META[groupName] || { icon: '·', cls: 'personality' };
+
+        const card = document.createElement('div');
+        card.className = 'group-card';
+
+        // Group header
+        const ghdr = document.createElement('div');
+        ghdr.className = 'group-header';
+
+        const gicon = document.createElement('div');
+        gicon.className = `group-icon ${meta.cls}`;
+        gicon.textContent = meta.icon;
+
+        const gname = document.createElement('div');
+        gname.className = 'group-name';
+        gname.textContent = groupName;
+
+        const gcount = document.createElement('div');
+        gcount.className = 'group-count';
+        gcount.textContent = `${questions.length} setting${questions.length !== 1 ? 's' : ''}`;
+
+        ghdr.appendChild(gicon);
+        ghdr.appendChild(gname);
+        ghdr.appendChild(gcount);
+        card.appendChild(ghdr);
+
+        for (const [key, cfg] of questions) {
+          card.appendChild(buildQuestion(key, cfg));
+        }
+
+        root.appendChild(card);
+      }
+
+      // Notes card
+      const notesCard = document.createElement('div');
+      notesCard.className = 'notes-card';
+
+      const notesLabel = document.createElement('div');
+      notesLabel.className = 'q-label';
+      notesLabel.textContent = 'Anything else? The bot reads this too.';
+      notesCard.appendChild(notesLabel);
+
+      const notesTA = document.createElement('textarea');
+      notesTA.className = 'notes-textarea';
+      notesTA.id = 'stratNotes';
+      notesTA.placeholder = 'Add any extra instructions, constraints, or preferences here…';
+      notesTA.addEventListener('input', () => setDirty(true));
+      notesCard.appendChild(notesTA);
+
+      root.appendChild(notesCard);
+
+      // Preview section
+      const details = document.createElement('details');
+      details.className = 'preview-details';
+      details.id = 'previewDetails';
+      details.addEventListener('toggle', onPreviewToggle);
+
+      const summary = document.createElement('summary');
+      summary.className = 'preview-summary';
+
+      const arrow = document.createElement('span');
+      arrow.className = 'arrow';
+      arrow.textContent = '▶';
+
+      const summaryText = document.createTextNode(' Preview what Claude will receive');
+      summary.appendChild(arrow);
+      summary.appendChild(summaryText);
+      details.appendChild(summary);
+
+      const previewBody = document.createElement('div');
+      previewBody.className = 'preview-body';
+      previewBody.id = 'previewBody';
+      details.appendChild(previewBody);
+
+      root.appendChild(details);
+    }
+
+    function buildQuestion(key, cfg) {
+      const block = document.createElement('div');
+      block.className = 'question';
+
+      const qlabel = document.createElement('div');
+      qlabel.className = 'q-label';
+      qlabel.textContent = cfg.label;
+      block.appendChild(qlabel);
+
+      if (cfg.note) {
+        const qnote = document.createElement('div');
+        qnote.className = 'q-note';
+        qnote.textContent = cfg.note;
+        block.appendChild(qnote);
+      } else {
+        qlabel.style.marginBottom = '12px';
+      }
+
+      if (cfg.type === 'radio' || cfg.type === 'checkbox') {
+        const grid = document.createElement('div');
+        // Use wider grid for options with longer descriptions
+        const avgDescLen = cfg.options.reduce((s, o) => s + (o.desc || '').length, 0) / cfg.options.length;
+        grid.className = avgDescLen > 60 ? 'options-grid wide' : 'options-grid';
+
+        for (const opt of cfg.options) {
+          grid.appendChild(buildOptionCard(key, cfg.type, opt));
+        }
+        block.appendChild(grid);
+
+      } else if (cfg.type === 'numeric_preset') {
+        const concGrid = document.createElement('div');
+        concGrid.className = 'conc-grid';
+
+        for (const field of cfg.fields) {
+          concGrid.appendChild(buildConcField(field));
+        }
+        block.appendChild(concGrid);
+      }
+
+      return block;
+    }
+
+    function buildOptionCard(name, inputType, opt) {
+      const lbl = document.createElement('label');
+      lbl.className = 'option-label';
+      if (opt.recommended) lbl.classList.add('recommended');
+      if (opt.discouraged) lbl.classList.add('discouraged');
+      lbl.dataset.value = opt.value;
+      lbl.dataset.name = name;
+
+      const input = document.createElement('input');
+      input.type = inputType;
+      input.name = name;
+      input.value = opt.value;
+      input.addEventListener('change', () => {
+        setDirty(true);
+        // Update selected states for this name group
+        document.querySelectorAll(`.option-label[data-name="${name}"]`).forEach(el => {
+          const inp = el.querySelector('input');
+          el.classList.toggle('selected', inp && inp.checked);
+        });
+      });
+      lbl.appendChild(input);
+
+      const top = document.createElement('div');
+      top.className = 'option-top';
+
+      const optName = document.createElement('span');
+      optName.className = 'option-name';
+      optName.textContent = opt.label;
+      top.appendChild(optName);
+
+      if (opt.recommended) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-rec';
+        badge.textContent = '★ rec';
+        top.appendChild(badge);
+      } else if (opt.discouraged) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-caution';
+        badge.textContent = '⚠ caution';
+        top.appendChild(badge);
+      }
+
+      lbl.appendChild(top);
+
+      if (opt.desc) {
+        const desc = document.createElement('span');
+        desc.className = 'option-desc';
+        desc.textContent = opt.desc;
+        lbl.appendChild(desc);
+      }
+
+      return lbl;
+    }
+
+    function buildConcField(field) {
+      const wrapper = document.createElement('div');
+
+      const lbl = document.createElement('div');
+      lbl.className = 'conc-field-label';
+      lbl.textContent = field.label;
+      wrapper.appendChild(lbl);
+
+      const presetsDiv = document.createElement('div');
+      presetsDiv.className = 'conc-presets';
+      presetsDiv.id = `presets_${field.key}`;
+
+      for (const p of field.presets) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'preset-btn';
+        btn.textContent = p;
+        btn.dataset.val = p;
+        btn.addEventListener('click', () => _setConcPreset(field.key, p, btn));
+        presetsDiv.appendChild(btn);
+      }
+      wrapper.appendChild(presetsDiv);
+
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.className = 'conc-input';
+      inp.id = `conc_${field.key}`;
+      inp.min = field.min;
+      inp.max = field.max;
+      inp.value = field.defaultPreset;
+      inp.addEventListener('input', () => {
+        setDirty(true);
+        _clearConcPresets(field.key);
+      });
+      wrapper.appendChild(inp);
+
+      return wrapper;
+    }
+
+    // ─── Concentration helpers ─────────────────────────────────────────────────
+    function _setConcPreset(fieldKey, val, btn) {
+      const inp = document.getElementById(`conc_${fieldKey}`);
+      if (inp) inp.value = val;
+
+      const container = document.getElementById(`presets_${fieldKey}`);
+      if (container) {
+        container.querySelectorAll('.preset-btn').forEach(b => {
+          b.classList.toggle('active', Number(b.dataset.val) === Number(val));
+        });
+      }
+      setDirty(true);
+    }
+
+    function _clearConcPresets(fieldKey) {
+      const container = document.getElementById(`presets_${fieldKey}`);
+      if (container) {
+        container.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      }
+    }
+
+    // ─── Populate form from data ───────────────────────────────────────────────
+    function populateForm(data) {
+      for (const [key, cfg] of Object.entries(STRATEGY_OPTIONS)) {
+        if (cfg.type === 'radio') {
+          const val = data[key];
+          if (val !== undefined) {
+            const inp = document.querySelector(`input[name="${key}"][value="${val}"]`);
+            if (inp) {
+              inp.checked = true;
+              inp.closest('.option-label')?.classList.add('selected');
+            }
+          }
+        } else if (cfg.type === 'checkbox') {
+          const vals = data[key];
+          if (Array.isArray(vals)) {
+            vals.forEach(v => {
+              const inp = document.querySelector(`input[name="${key}"][value="${v}"]`);
+              if (inp) {
+                inp.checked = true;
+                inp.closest('.option-label')?.classList.add('selected');
+              }
+            });
+          }
+        } else if (cfg.type === 'numeric_preset') {
+          const obj = data[key];
+          if (obj) {
+            for (const field of cfg.fields) {
+              const val = obj[field.key];
+              if (val !== undefined) {
+                const inp = document.getElementById(`conc_${field.key}`);
+                if (inp) inp.value = val;
+
+                // Highlight matching preset button
+                const container = document.getElementById(`presets_${field.key}`);
+                if (container) {
+                  container.querySelectorAll('.preset-btn').forEach(b => {
+                    b.classList.toggle('active', Number(b.dataset.val) === Number(val));
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const notesEl = document.getElementById('stratNotes');
+      if (notesEl && data.notes !== undefined) {
+        notesEl.value = data.notes || '';
+      }
+    }
+
+    // ─── Collect form state ────────────────────────────────────────────────────
+    function collectStrategy() {
+      const out = {};
+      for (const [key, cfg] of Object.entries(STRATEGY_OPTIONS)) {
+        if (cfg.type === 'radio') {
+          const el = document.querySelector(`input[name="${key}"]:checked`);
+          out[key] = el ? el.value : (cfg.options[0]?.value || '');
+        } else if (cfg.type === 'checkbox') {
+          out[key] = [...document.querySelectorAll(`input[name="${key}"]:checked`)]
+            .map(el => el.value);
+        } else if (cfg.type === 'numeric_preset') {
+          out[key] = {};
+          for (const field of cfg.fields) {
+            const el = document.getElementById(`conc_${field.key}`);
+            out[key][field.key] = el ? Number(el.value) : field.defaultPreset;
+          }
+        }
+      }
+      out.notes = document.getElementById('stratNotes')?.value || '';
+      return out;
+    }
+
+    // ─── Save ──────────────────────────────────────────────────────────────────
+    async function saveStrategy() {
+      if (window.pinRequired) {
+        // Show PIN modal first; doSave() is called from submitPin() once PIN is entered.
+        showPinModal();
+        return;
+      }
+      await doSave('');
+    }
+
+    async function doSave(pin) {
+      const btn = document.getElementById('saveBtn');
+      btn.classList.add('saving');
+      btn.disabled = true;
+
+      try {
+        const payload = collectStrategy();
+        if (pin) payload._pin = pin;
+
+        const resp = await fetch('/api/v1/strategy', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (resp.status === 403) {
+          // Wrong PIN — reopen modal with error message
+          showPinModal();
+          document.getElementById('pinError').classList.remove('hidden');
+          return;
+        }
+
+        if (!resp.ok) {
+          const err = await resp.text();
+          throw new Error(err);
+        }
+
+        setDirty(false);
+        showToast('Strategy saved', 'success');
+
+        // If preview is open, refresh it
+        const details = document.getElementById('previewDetails');
+        if (details && details.open) {
+          loadPreview();
+        }
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        btn.classList.remove('saving');
+        btn.disabled = false;
+      }
+    }
+
+    // ─── Preview ───────────────────────────────────────────────────────────────
+    let _previewLoaded = false;
+
+    function onPreviewToggle(e) {
+      if (e.target.open) {
+        loadPreview();
+      }
+    }
+
+    async function loadPreview() {
+      const body = document.getElementById('previewBody');
+      if (!body) return;
+
+      // Show loading state
+      body.textContent = '';
+      const loading = document.createElement('div');
+      loading.className = 'preview-loading';
+      const spinner = document.createElement('div');
+      spinner.className = 'spinner-sm';
+      loading.appendChild(spinner);
+      const txt = document.createTextNode(' Loading preview…');
+      loading.appendChild(txt);
+      body.appendChild(loading);
+
+      try {
+        const resp = await fetch('/api/v1/strategy');
+        if (!resp.ok) throw new Error('API error');
+        const data = await resp.json();
+
+        body.textContent = '';
+        const pre = document.createElement('pre');
+        pre.className = 'preview-pre';
+        // Use textContent for API-sourced data (security: no HTML injection)
+        pre.textContent = data.prose || '(no prose returned)';
+        body.appendChild(pre);
+      } catch (e) {
+        body.textContent = '';
+        const errMsg = document.createElement('div');
+        errMsg.className = 'preview-loading';
+        errMsg.textContent = 'Failed to load preview.';
+        body.appendChild(errMsg);
+      }
+    }
+
+    // ─── Toast ─────────────────────────────────────────────────────────────────
+    let _toastTimer = null;
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.className = `toast ${type} show`;
+      if (_toastTimer) clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // ─── Load initial data ─────────────────────────────────────────────────────
+    window.pinRequired = false;
+
+    async function loadStrategy() {
+      try {
+        const resp = await fetch('/api/v1/strategy');
+        if (!resp.ok) throw new Error('API error');
+        const data = await resp.json();
+        populateForm(data.data || {});
+        window.pinRequired = data.pin_required ?? false;
+      } catch (e) {
+        showToast('Failed to load strategy settings', 'error');
+      }
+    }
+
+    // ─── PIN modal ─────────────────────────────────────────────────────────────
+    function showPinModal() {
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinError').classList.add('hidden');
+      document.getElementById('pinModal').classList.remove('hidden');
+      document.getElementById('pinInput').focus();
+    }
+
+    function cancelPin() {
+      document.getElementById('pinModal').classList.add('hidden');
+      const btn = document.getElementById('saveBtn');
+      btn.classList.remove('saving');
+      btn.disabled = false;
+    }
+
+    async function submitPin() {
+      const pin = document.getElementById('pinInput').value;
+      document.getElementById('pinModal').classList.add('hidden');
+      await doSave(pin);
+    }
+
+    document.addEventListener('keydown', e => {
+      const modal = document.getElementById('pinModal');
+      if (modal && !modal.classList.contains('hidden')) {
+        if (e.key === 'Enter') submitPin();
+        if (e.key === 'Escape') cancelPin();
+      }
+    });
+
+    // ─── Dirty guard on navigate ───────────────────────────────────────────────
+    window.addEventListener('beforeunload', e => {
+      if (_dirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    // ─── Init ──────────────────────────────────────────────────────────────────
+    buildForm();
+    loadStrategy();
+  </script>
+
+  <!-- PIN modal — shown by JS when SETTINGS_PIN is configured server-side -->
+  <div id="pinModal" class="pin-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+    <div class="pin-dialog">
+      <div class="pin-title" id="pinTitle">Enter PIN to save</div>
+      <input
+        type="password"
+        id="pinInput"
+        class="pin-input"
+        maxlength="20"
+        placeholder="PIN"
+        autocomplete="off"
+      >
+      <div class="pin-error hidden" id="pinError">Incorrect PIN — try again</div>
+      <div class="pin-actions">
+        <button class="pin-btn-cancel" onclick="cancelPin()">Cancel</button>
+        <button class="pin-btn-save" onclick="submitPin()">Save</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
