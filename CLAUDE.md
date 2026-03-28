@@ -37,9 +37,10 @@ FastAPI app (`src/scorched/main.py`) with two transports:
 - **REST** at `/api/v1/` — same logic via standard HTTP; cron jobs hit these endpoints directly
 
 The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator required:
-- `30 12 * * 1-5` UTC (8:30 AM ET, pre-DST: `30 13`) → POST `/api/v1/recommendations/generate`
-- `45 13 * * 1-5` UTC (9:45 AM ET, pre-DST: `45 14`) → POST `/api/v1/trades/confirm` for each pending rec
-- `05 21 * * 1-5` UTC (5:05 PM ET) → optional EOD summary via `/api/v1/market/summary`
+- `30 12 * * 1-5` UTC (8:30 AM ET) → Phase 1: POST `/api/v1/recommendations/generate`
+- `30 13 * * 1-5` UTC (9:30 AM ET) → Phase 1.5: Circuit breaker gate (`cron/tradebot_phase1_5.py`)
+- `35 13 * * 1-5` UTC (9:35 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec
+- `02 20 * * 1-5` UTC (4:02 PM ET) → Phase 3: EOD summary + playbook update
 
 The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to mounted sub-apps. `mcp.session_manager.run()` is wired manually into FastAPI's own `lifespan` context manager. Don't break this.
 
@@ -57,6 +58,8 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/services/playbook.py` | Playbook read/update (living strategy doc) |
 | `src/scorched/services/strategy.py` | load_strategy() — reads strategy.json (edited via dashboard) |
 | `src/scorched/tax.py` | ST/LT classification based on first_purchase_date |
+| `src/scorched/broker/` | BrokerAdapter ABC, PaperBroker, AlpacaBroker, `get_broker()` factory |
+| `src/scorched/circuit_breaker.py` | Pre-execution gate checks (stock gap, SPY drop, VIX spike) |
 | `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
 | `src/scorched/models.py` | 7 SQLAlchemy ORM models |
 | `src/scorched/schemas.py` | Pydantic request/response schemas |
@@ -103,6 +106,33 @@ Two API calls per day, both using `claude-sonnet-4-6`:
 | `ALPHA_VANTAGE_API_KEY` | "" | Empty = RSI data skipped |
 | `POLYGON_API_KEY` | "" | Empty = Polygon news skipped |
 | `settings_pin` | "" | If set, PUT /api/v1/strategy requires this PIN |
+| `BROKER_MODE` | "paper" | "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live |
+| `ALPACA_API_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
+| `ALPACA_SECRET_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
+
+## Broker Integration (Alpaca)
+
+The system supports three broker modes, controlled by `BROKER_MODE` in `.env`:
+
+| Mode | Behavior |
+|------|----------|
+| `paper` (default) | DB-only trades, no broker. Original behavior. |
+| `alpaca_paper` | Orders go to Alpaca paper trading. Fills recorded in local DB. |
+| `alpaca_live` | Orders go to Alpaca live trading. Real money. |
+
+**Architecture:** `BrokerAdapter` ABC in `src/scorched/broker/` with `PaperBroker` and `AlpacaBroker` implementations. `get_broker(db)` factory reads `settings.broker_mode`. The trade confirmation endpoint (`POST /api/v1/trades/confirm`) routes through the broker adapter — no other endpoints change.
+
+**AlpacaBroker flow:** Submits limit orders via `alpaca-py` SDK → polls for fill (2s interval, 60s timeout) → mirrors fill into local DB (Portfolio, Position, TradeHistory) for dashboard/tax consistency.
+
+**Circuit Breaker (Phase 1.5):** Runs at 9:30 AM ET, between Phase 1 (recommendations) and Phase 2 (execution). Gates buy orders based on:
+- Individual stock gap-down from prior close (default: >2%)
+- Price drift from Claude's suggested price (default: >1.5%)
+- SPY gap-down (default: >1%)
+- VIX absolute level (default: >30) or overnight spike (default: >20%)
+
+Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells always pass through.
+
+**Position Reconciliation:** `GET /api/v1/broker/status` compares local DB positions against Alpaca holdings and flags mismatches.
 
 ## Gotchas
 
@@ -111,7 +141,7 @@ Two API calls per day, both using `claude-sonnet-4-6`:
 - **`force: true` on recommendations** — NULLs out `token_usage.session_id` (nullable FK) before deleting the session, avoiding FK violation. Don't skip this step.
 - **Recommendation caching** — `get_recommendations` returns the existing session if one exists for today, unless `force=True`. This is intentional.
 - **NYSE holidays** — detected in `_is_market_open()` using `pandas_market_calendars`. Returns early before any DB or Claude work.
-- **VM cron times are UTC** — DST (US clocks spring forward ~March 8): ET shifts from UTC-5 → UTC-4. After DST, use `30 12` and `45 13`; before DST, `30 13` and `45 14`.
+- **VM cron times are UTC** — DST (US clocks spring forward ~March 8): ET shifts from UTC-5 → UTC-4. After DST: Phase 1 at `30 12`, Phase 1.5 at `30 13`, Phase 2 at `35 13`, Phase 3 at `02 20`. Before DST: shift each forward 1hr.
 - **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
 - **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
 - **Wash sale detection** — buys within 30 days of a same-symbol sell get a `⚠️ WASH SALE WARNING` prepended to `key_risks`.
@@ -123,6 +153,13 @@ Required in `.env`:
 ```
 ANTHROPIC_API_KEY=sk-ant-api03-...
 STARTING_CAPITAL=100000
+```
+
+Optional (for Alpaca broker integration):
+```
+BROKER_MODE=alpaca_paper
+ALPACA_API_KEY=PK...
+ALPACA_SECRET_KEY=...
 ```
 
 `DATABASE_URL` is injected by Docker Compose. Only needed for local non-Docker runs:
