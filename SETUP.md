@@ -128,15 +128,39 @@ By default, trades are paper-only (tracked in the database, no real orders). To 
    ```
 4. Rebuild: `docker compose up -d --build --force-recreate tradebot`
 
-## Optional API Keys
+## API Keys — What You Need
 
-These enhance the analysis but the bot works without them:
+### Required
 
-| Key | What it adds | How to get it |
+| Key | What it does | How to get it |
 |-----|-------------|---------------|
-| `FRED_API_KEY` | Fed funds rate, yields, CPI, unemployment, credit spreads | Free at [fred.stlouisfed.org/docs/api/api_key.html](https://fred.stlouisfed.org/docs/api/api_key.html) |
-| `POLYGON_API_KEY` | Better news headlines | Free tier at [polygon.io](https://polygon.io) |
-| `ALPHA_VANTAGE_API_KEY` | RSI data for momentum screener | Free (25 calls/day) at [alphavantage.co](https://www.alphavantage.co/support/#api-key) |
+| `ANTHROPIC_API_KEY` | Powers Claude analysis and trade decisions | Sign up at [console.anthropic.com](https://console.anthropic.com), create an API key. Costs ~$0.02-0.05/day. |
+
+### Strongly Recommended
+
+These are free and significantly improve analysis quality. Without them, Claude is making decisions with less data.
+
+| Key | What you lose without it | How to get it |
+|-----|--------------------------|---------------|
+| `FRED_API_KEY` | No macro data — Fed funds rate, Treasury yields, CPI, unemployment, credit spreads. Claude flies blind on macro. | Free — sign up at [fred.stlouisfed.org/docs/api/api_key.html](https://fred.stlouisfed.org/docs/api/api_key.html). Takes 2 minutes. |
+| `POLYGON_API_KEY` | Falls back to yfinance news (lower quality, less timely headlines) | Free tier at [polygon.io](https://polygon.io). Sign up, key is on your dashboard. |
+| `ALPHA_VANTAGE_API_KEY` | No RSI data for the momentum screener — screening still works but without a key technical signal | Free (25 calls/day) at [alphavantage.co/support/#api-key](https://www.alphavantage.co/support/#api-key) |
+
+### Optional (for broker execution)
+
+| Key | What it does | How to get it |
+|-----|-------------|---------------|
+| `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` | Executes trades on Alpaca (paper or live) instead of DB-only tracking | Free at [alpaca.markets](https://alpaca.markets) — sign up, go to Paper Trading > API Keys > Generate |
+
+Without Alpaca keys, the bot runs in paper-only mode (tracks everything in the database, no real orders). This is perfectly fine for evaluation.
+
+### Optional (for notifications)
+
+| Key | What it does | How to get it |
+|-----|-------------|---------------|
+| `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | Sends trade alerts and daily summaries to your phone | Create a bot via [@BotFather](https://t.me/BotFather) on Telegram |
+
+**Bottom line:** To get the full experience, you want all four free API keys (Anthropic, FRED, Polygon, Alpha Vantage). The whole setup takes about 10 minutes. Without the data keys the bot still runs, but Claude is trading with one hand tied behind its back.
 
 ## Configuration
 
