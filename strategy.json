@@ -1,7 +1,7 @@
 {
   "objective": "growth",
-  "rec_style": "aggressive",
-  "no_trade_threshold": "always_trade",
+  "rec_style": "adaptive",
+  "no_trade_threshold": "adaptive",
   "rec_explanation": "brief",
   "hold_period": "3-10d",
   "entry_style": [],
@@ -19,5 +19,13 @@
   "market_regime": "always_active",
   "event_risk": [],
   "sectors": [],
-  "notes": ""
+  "notes": "",
+  "circuit_breaker": {
+    "enabled": true,
+    "stock_gap_down_pct": 2.0,
+    "stock_price_drift_pct": 1.5,
+    "spy_gap_down_pct": 1.0,
+    "vix_absolute_max": 30,
+    "vix_spike_pct": 20.0
+  }
 }
