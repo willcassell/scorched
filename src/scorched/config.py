@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     fred_api_key: str = ""
 
+    # Broker config
+    broker_mode: str = "paper"  # "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live
+    alpaca_api_key: str = ""
+    alpaca_secret_key: str = ""
+
     host: str = "0.0.0.0"
     port: int = 8000
     strategy_file: Path = Path("strategy.json")
