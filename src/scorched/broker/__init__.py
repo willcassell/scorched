@@ -5,9 +5,20 @@ from .paper import PaperBroker
 __all__ = ["BrokerAdapter", "PaperBroker", "get_broker"]
 
 
-def get_broker(db_session, alpaca_client=None):
-    """Factory: returns AlpacaBroker if alpaca_client is provided, else PaperBroker."""
-    if alpaca_client is not None:
+def get_broker(db_session):
+    """Factory: returns the broker configured in settings.broker_mode."""
+    from ..config import settings
+
+    if settings.broker_mode in ("alpaca_paper", "alpaca_live"):
+        from alpaca.trading.client import TradingClient
         from .alpaca import AlpacaBroker
-        return AlpacaBroker(db_session, alpaca_client)
+
+        is_paper = settings.broker_mode == "alpaca_paper"
+        client = TradingClient(
+            api_key=settings.alpaca_api_key,
+            secret_key=settings.alpaca_secret_key,
+            paper=is_paper,
+        )
+        return AlpacaBroker(db_session, client)
+
     return PaperBroker(db_session)
