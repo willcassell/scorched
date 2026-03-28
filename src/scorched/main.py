@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from .api import costs, market, playbook, portfolio, recommendations, strategy, trades
+from .api import broker_status, costs, market, playbook, portfolio, recommendations, strategy, trades
 from .config import settings
 from .database import AsyncSessionLocal
 from .models import Portfolio
@@ -54,6 +54,7 @@ app.include_router(playbook.router, prefix="/api/v1")
 app.include_router(strategy.router, prefix="/api/v1")
 app.include_router(costs.router, prefix="/api/v1")
 app.include_router(market.router, prefix="/api/v1")
+app.include_router(broker_status.router, prefix="/api/v1")
 
 
 @app.get("/")
