@@ -15,6 +15,7 @@ import os
 import pathlib
 import urllib.request
 import urllib.parse
+import urllib.error
 import datetime
 import pytz
 
@@ -99,8 +100,6 @@ def main():
 
     recs = stored["recommendations"]
     symbols = stored["symbols"]
-    # All recs in the file are candidates — the confirm endpoint returns an error
-    # for any that are already confirmed, which we handle gracefully below.
     pending = recs
 
     if not pending:
@@ -108,7 +107,14 @@ def main():
         os.remove(RECS_FILE)
         return
 
-    # Fetch opening prices
+    # Fetch broker mode for reporting
+    try:
+        broker_info = http_get("/api/v1/broker/status")
+        broker_mode = broker_info.get("broker_mode", "paper")
+    except Exception:
+        broker_mode = "paper"
+
+    # Fetch opening prices (used as limit price for broker orders)
     try:
         qs = urllib.parse.urlencode({"symbols": ",".join(symbols), "date": today_str})
         prices_resp = http_get(f"/api/v1/market/opening-prices?{qs}")
@@ -134,19 +140,20 @@ def main():
                 "shares": qty,
             })
             print(f"confirm_trade {symbol}: {result}")
-            # Check if the API returned an error (already confirmed, etc.)
             if "error" in result:
                 print(f"  skipping {symbol}: {result['error']}")
                 continue
             gain = result.get("realized_gain")
-            if open_price is not None:
-                slip = open_price - suggested
-                trades_detail += f"  {action} {symbol} - {qty:.0f}sh @ ${fill_price:.2f} (slippage: {'+' if slip>=0 else ''}{slip:.2f})\n"
-            else:
-                trades_detail += f"  {action} {symbol} - {qty:.0f}sh @ ${fill_price:.2f} (fallback: no open price)\n"
+            actual_price = float(result.get("execution_price", fill_price))
+            slip = actual_price - suggested
+            trades_detail += f"  {action} {symbol} - {qty:.0f}sh @ ${actual_price:.2f} (slippage: {'+' if slip>=0 else ''}{slip:.2f})\n"
             if gain is not None:
                 gain_f = float(gain)
                 trades_detail += f"    Realized P&L: {'+' if gain_f>=0 else ''}${gain_f:,.2f}\n"
+        except urllib.error.HTTPError as e:
+            body = e.read().decode() if hasattr(e, 'read') else str(e)
+            print(f"confirm_trade {symbol} failed ({e.code}): {body}")
+            trades_detail += f"  {action} {symbol} - NOT FILLED: {body[:100]}\n"
         except Exception as e:
             print(f"confirm_trade {symbol} failed: {e}")
             trades_detail += f"  {action} {symbol} - ERROR: {e}\n"
@@ -165,7 +172,8 @@ def main():
         ret_pct = 0
         positions = []
 
-    msg = f"TRADEBOT // {today_str} - Executed at open\n"
+    mode_label = {"paper": "PAPER", "alpaca_paper": "ALPACA-PAPER", "alpaca_live": "LIVE"}.get(broker_mode, broker_mode.upper())
+    msg = f"TRADEBOT [{mode_label}] // {today_str} - Executed at open\n"
     msg += f"Portfolio: ${total:,.2f} ({fmt_pct(ret_pct)})\n\n"
     msg += "Trades Executed:\n" + trades_detail
 
