@@ -120,3 +120,16 @@ class TokenUsage(Base):
     thinking_tokens: Mapped[int] = mapped_column(nullable=False, default=0)
     estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 6), nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class ApiCallLog(Base):
+    __tablename__ = "api_call_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    endpoint: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(15), nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
