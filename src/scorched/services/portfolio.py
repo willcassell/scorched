@@ -37,6 +37,31 @@ async def _get_current_price(symbol: str) -> Decimal:
     return await loop.run_in_executor(None, _fetch)
 
 
+async def _get_current_prices(symbols: list[str]) -> dict[str, Decimal]:
+    """Batch-fetch current prices for all symbols via yfinance."""
+    if not symbols:
+        return {}
+    import yfinance as yf
+
+    def _fetch():
+        result = {}
+        for symbol in symbols:
+            try:
+                ticker = yf.Ticker(symbol)
+                try:
+                    result[symbol] = Decimal(str(round(float(ticker.fast_info["last_price"]), 4)))
+                except (KeyError, IndexError):
+                    hist = ticker.history(period="1d")
+                    if not hist.empty:
+                        result[symbol] = Decimal(str(round(float(hist["Close"].iloc[-1]), 4)))
+            except Exception:
+                pass  # Will fall back to avg_cost_basis in caller
+        return result
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _fetch)
+
+
 async def get_portfolio_state(db: AsyncSession) -> PortfolioResponse:
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     if portfolio is None:
@@ -48,8 +73,11 @@ async def get_portfolio_state(db: AsyncSession) -> PortfolioResponse:
     total_positions_value = Decimal("0")
     total_unrealized_gain = Decimal("0")
 
+    symbols = [pos.symbol for pos in positions_rows]
+    prices = await _get_current_prices(symbols)
+
     for pos in positions_rows:
-        current_price = await _get_current_price(pos.symbol)
+        current_price = prices.get(pos.symbol, pos.avg_cost_basis)
         market_value = (current_price * pos.shares).quantize(Decimal("0.01"))
         cost_basis_total = (pos.avg_cost_basis * pos.shares).quantize(Decimal("0.01"))
         unrealized_gain = market_value - cost_basis_total
@@ -303,10 +331,12 @@ async def get_benchmark_comparison(db: AsyncSession) -> BenchmarkResponse:
 
     # Current portfolio return
     positions_rows = (await db.execute(select(Position))).scalars().all()
-    total_positions_value = Decimal("0")
-    for pos in positions_rows:
-        price = await _get_current_price(pos.symbol)
-        total_positions_value += (price * pos.shares).quantize(Decimal("0.01"))
+    position_symbols = [pos.symbol for pos in positions_rows]
+    prices = await _get_current_prices(position_symbols)
+    total_positions_value = sum(
+        (prices.get(pos.symbol, pos.avg_cost_basis) * pos.shares).quantize(Decimal("0.01"))
+        for pos in positions_rows
+    )
 
     total_value = portfolio.cash_balance + total_positions_value
     portfolio_return_pct = float(
