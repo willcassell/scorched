@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from .api import broker_status, costs, market, playbook, portfolio, recommendations, strategy, trades
+from .api import broker_status, costs, market, playbook, portfolio, recommendations, strategy, system, trades
 from .config import settings
 from .database import AsyncSessionLocal
 from .models import Portfolio
@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
             logging.info("Initialized portfolio with $%s", settings.starting_capital)
         else:
             logging.info("Portfolio exists: $%s cash", existing.cash_balance)
+    # Cleanup old API call log records (>30 days)
+    async with AsyncSessionLocal() as db:
+        from .api_tracker import cleanup_old_records
+        await cleanup_old_records(db)
     async with mcp.session_manager.run():
         yield
 
@@ -55,6 +59,7 @@ app.include_router(strategy.router, prefix="/api/v1")
 app.include_router(costs.router, prefix="/api/v1")
 app.include_router(market.router, prefix="/api/v1")
 app.include_router(broker_status.router, prefix="/api/v1")
+app.include_router(system.router, prefix="/api/v1")
 
 
 @app.get("/")
@@ -65,6 +70,11 @@ async def dashboard():
 @app.get("/strategy")
 async def strategy_settings():
     return FileResponse(STATIC_DIR / "strategy.html")
+
+
+@app.get("/system")
+async def system_page():
+    return FileResponse(STATIC_DIR / "system.html")
 
 
 @app.get("/health")
