@@ -5,30 +5,11 @@ price action and recommends whether to tighten stops, take partial profit, or ho
 """
 import logging
 
+from ..prompts import load_prompt
+
 logger = logging.getLogger(__name__)
 
-POSITION_MGMT_SYSTEM = """You are reviewing open positions after market close. For each position, evaluate today's price action and recommend an action for tomorrow.
-
-For each position, consider:
-- How many days has it been held vs. the strategy's target holding period?
-- Is the position approaching a stop loss or profit target?
-- Did today's price action strengthen or weaken the original thesis?
-- Are there any earnings or events approaching that create risk?
-
-## Output format
-Respond with valid JSON only:
-{{
-  "position_reviews": [
-    {{
-      "symbol": "TICKER",
-      "action": "hold" or "tighten_stop" or "take_partial" or "exit_tomorrow",
-      "new_stop_pct": null or float (e.g. -3.0 means set stop at -3% from current price),
-      "reasoning": "1-2 sentences"
-    }}
-  ]
-}}
-
-Be conservative. "hold" is the default. Only recommend changes when today's action provides clear evidence."""
+POSITION_MGMT_SYSTEM = load_prompt("position_mgmt")
 
 
 def build_position_review_prompt(positions: list[dict], market_summary: str) -> str:

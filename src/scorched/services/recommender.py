@@ -9,6 +9,7 @@ from decimal import Decimal
 import anthropic
 
 from ..api_tracker import ApiCallTracker, track_call
+from ..prompts import load_prompt
 from ..retry import claude_call_with_retry
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,77 +46,9 @@ logger = logging.getLogger(__name__)
 MODEL = "claude-sonnet-4-6"
 THINKING_BUDGET = 16000  # tokens; ~$0.048/day (Tier 2 upgrade from 8K)
 
-# ── Call 1: Analysis prompt ────────────────────────────────────────────────
-
-ANALYSIS_SYSTEM = """You are a disciplined stock market analyst. Your job is to study today's research data and identify which stocks, if any, have a genuinely compelling setup that matches the user's declared trading strategy.
-
-## User's Declared Trading Strategy
-{strategy}
-
-## Signal Interpretation Reference
-{guidance}
-
-Work through the data with the strategy and signal reference above in mind:
-- Which stocks have the exact type of setup this strategy calls for? (momentum breakouts, value entries, etc.)
-- What is the macro environment saying? Is it supportive or hostile to this style of trading?
-- Which sectors align with the user's stated preferences? Skip sectors they want to avoid.
-- For each candidate, is there a specific named catalyst that fits the strategy's entry criteria?
-- Are there earnings surprises, insider buying, or unusual options activity in the preferred sectors?
-- Which existing positions (if any) should be considered for exit based on the strategy's exit rules?
-
-Be honest. Most days do not have a strong setup matching this strategy. If today is one of those days, say so clearly. Do not force candidates.
-
-Output valid JSON with exactly this structure:
-{{
-  "analysis": "Your full free-form market analysis (as many paragraphs as needed)",
-  "candidates": ["TICKER1", "TICKER2"]
-}}
-
-The candidates list contains symbols that fit the declared strategy with a real, named catalyst.
-It may be empty. Maximum 5 candidates — only include symbols with a real, named catalyst."""
-
-# ── Call 2: Decision prompt ────────────────────────────────────────────────
-
-DECISION_SYSTEM = """You are a disciplined simulated stock trader. You have already done your market analysis (provided below). Now make your final trade decisions.
-
-## User's Declared Trading Strategy
-This is what the human investor wants. Follow it precisely — it overrides your own judgment on style, time horizon, and exit rules.
-{strategy}
-
-## Signal Interpretation & Hard Rules Reference
-{guidance}
-
-## Additional Hard Rules
-- Only BUY or SELL (no options, no short selling, no ETFs unless on the watchlist)
-- Never recommend a trade that would leave cash below {min_cash_pct}% of total portfolio value
-- Weigh tax cost on sells: short-term gains (held < 365 days) taxed at 37%, long-term at 20%
-- Maximum 3 trades total — 0, 1, or 2 are equally valid
-- Be specific about share quantity based on available cash and conviction level
-- Follow both the strategy above AND the playbook below
-- If a trade would violate the declared strategy (wrong time horizon, wrong sector, wrong exit discipline), do not make it
-
-## Your Trading Playbook (Learned from Past Trades)
-{playbook}
-
-## Output format
-Respond with valid JSON only:
-{{
-  "research_summary": "2-3 sentence summary for the daily report",
-  "recommendations": [
-    {{
-      "symbol": "TICKER",
-      "action": "buy" or "sell",
-      "suggested_price": 123.45,
-      "quantity": 10,
-      "reasoning": "Specific catalyst and which strategy entry criteria are met (2-4 sentences)",
-      "confidence": "high" or "medium" or "low",
-      "key_risks": "Main risks to this trade"
-    }}
-  ]
-}}
-
-An empty recommendations array is a completely valid response.
-Do not fabricate catalysts. Do not trade out of habit."""
+# ── Call 1 & 2 system prompts (loaded from src/scorched/prompts/*.md) ─────
+_ANALYSIS_SYSTEM = load_prompt("analysis")
+_DECISION_SYSTEM = load_prompt("decision")
 
 
 def _extract_text(content: list) -> str:
@@ -272,7 +205,7 @@ async def generate_recommendations(
         finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
 
     # Run momentum screener first so screener_symbols is available for AV call and gather
-    screener_symbols = await fetch_momentum_screener(n=30, tracker=tracker)
+    screener_symbols = await fetch_momentum_screener(n=60, tracker=tracker)
     logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
     research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
     logger.info("Total research universe: %d symbols", len(research_symbols))
@@ -364,7 +297,7 @@ async def generate_recommendations(
             model=MODEL,
             max_tokens=THINKING_BUDGET + 2048,
             thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
-            system=ANALYSIS_SYSTEM.format(strategy=strategy, guidance=guidance),
+            system=_ANALYSIS_SYSTEM.format(strategy=strategy, guidance=guidance),
             messages=[{"role": "user", "content": call1_user}],
         )
 
@@ -402,7 +335,7 @@ async def generate_recommendations(
     # ── Call 2: Decision (standard, no extended thinking) ─────────────────
     logger.info("Call 2: trade decision")
     min_cash_pct = int(settings.min_cash_reserve_pct * 100)
-    decision_system = DECISION_SYSTEM.format(
+    decision_system = _DECISION_SYSTEM.format(
         min_cash_pct=min_cash_pct,
         playbook=playbook.content,
         strategy=strategy,

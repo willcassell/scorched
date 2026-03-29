@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import Playbook, TradeHistory, TradeRecommendation
+from ..prompts import load_prompt
 from ..retry import claude_call_with_retry
 
 logger = logging.getLogger(__name__)
@@ -41,18 +42,7 @@ No trades have been made yet. Starting fresh with $100k simulated capital.
 This playbook is updated each morning before recommendations are generated.
 """
 
-UPDATE_SYSTEM_PROMPT = """You are maintaining a trading strategy playbook for a simulated stock portfolio. Your job is to review recent closed trade outcomes and update the playbook to reflect genuine learnings.
-
-Be honest and specific. If a thesis was wrong, say so clearly. If a pattern is emerging, name it. The playbook should help future you make better decisions — not rationalize past ones.
-
-Update the playbook by:
-1. Noting what worked and why (was the thesis correct, or did you get lucky?)
-2. Noting what didn't work and what the actual cause was
-3. Updating sector/theme biases based on observed outcomes
-4. Refining position sizing guidance if relevant
-5. Flagging any recurring mistakes
-
-Return ONLY the full updated playbook text. Preserve the existing structure but rewrite sections as needed. Do not wrap in markdown code blocks."""
+UPDATE_SYSTEM_PROMPT = load_prompt("playbook_update")
 
 
 async def get_playbook(db: AsyncSession) -> Playbook:
