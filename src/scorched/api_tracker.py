@@ -152,6 +152,6 @@ async def cleanup_old_records(db: AsyncSession, days: int = 30) -> None:
     """Delete ApiCallLog records older than N days."""
     from scorched.models import ApiCallLog
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.utcnow() - timedelta(days=days)
     await db.execute(delete(ApiCallLog).where(ApiCallLog.created_at < cutoff))
     await db.commit()
