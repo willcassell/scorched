@@ -40,6 +40,7 @@ The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator requ
 - `30 12 * * 1-5` UTC (8:30 AM ET) → Phase 1: POST `/api/v1/recommendations/generate`
 - `30 13 * * 1-5` UTC (9:30 AM ET) → Phase 1.5: Circuit breaker gate (`cron/tradebot_phase1_5.py`)
 - `35 13 * * 1-5` UTC (9:35 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec
+- `*/5 13-19 * * 1-5` UTC → Intraday: Position monitoring with trigger-based Claude exit evaluation (9:35 AM–3:55 PM ET, self-gates)
 - `02 20 * * 1-5` UTC (4:02 PM ET) → Phase 3: EOD summary + playbook update
 
 The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to mounted sub-apps. `mcp.session_manager.run()` is wired manually into FastAPI's own `lifespan` context manager. Don't break this.
@@ -66,6 +67,9 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/circuit_breaker.py` | Pre-execution gate checks (stock gap, SPY drop, VIX spike) |
 | `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
 | `src/scorched/api_tracker.py` | API call tracking — sync recorder, health aggregation, cleanup |
+| `src/scorched/intraday.py` | Pure intraday trigger check functions |
+| `src/scorched/api/intraday.py` | POST /api/v1/intraday/evaluate — Claude exit evaluation + auto-sell |
+| `cron/intraday_monitor.py` | Every 5 min position check during market hours |
 | `src/scorched/api/system.py` | System health endpoints: /system/health, /system/errors, /system/trend |
 | `src/scorched/models.py` | 8 SQLAlchemy ORM models (including ApiCallLog) |
 | `src/scorched/schemas.py` | Pydantic request/response schemas |
@@ -98,6 +102,14 @@ Four API calls per day, all using `claude-sonnet-4-6`:
 - System: `POSITION_MGMT_SYSTEM` — conservative position reviewer
 - Input: all open positions with current prices + today's market summary
 - Output: per-position hold/tighten/partial/exit recommendations (logged)
+
+**Call 5+ — Intraday Exit** (conditional, during market hours):
+- Triggered only when intraday monitor detects a position hitting one of 5 configurable triggers
+- Prompt: `src/scorched/prompts/intraday_exit.md`
+- Input: triggered position data + trigger details + current market conditions
+- Output: exit/hold decision with reasoning; auto-executes sells
+- Cost: ~$0.01 per triggered position; zero LLM cost on quiet days
+- Triggers (configurable in `strategy.json` under `intraday_monitor`): position drop from entry (5%), drop from today's open (3%), SPY intraday drop (2%), VIX above threshold (30), volume surge (3x average)
 
 ## Data Sources
 
@@ -167,7 +179,7 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
 - **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
 - **Wash sale detection** — buys within 30 days of a same-symbol sell get a `⚠️ WASH SALE WARNING` prepended to `key_risks`.
-- **Model** is `claude-sonnet-4-6`. THINKING_BUDGET is 16000 tokens. 4 Claude calls/day: analysis, decision, risk review, position management.
+- **Model** is `claude-sonnet-4-6`. THINKING_BUDGET is 16000 tokens. Up to 7 Claude calls/day: analysis, decision, risk review, position mgmt, EOD review, playbook update, + intraday exit (only when triggered, typically 0).
 
 ## Environment
 

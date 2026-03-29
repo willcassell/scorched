@@ -22,7 +22,7 @@ The bot runs completely on its own. Once set up, you don't need to do anything �
 
 ### 1. An Anthropic API Key (required)
 
-This is how you pay for Claude's "brain." The bot makes 6 AI calls per day and costs about **$0.15-0.25 per day** (~$5-8/month).
+This is how you pay for Claude's "brain." The bot makes up to 7 AI calls per day and costs about **$0.15-0.25 per day** (~$5-8/month). Most days it's fewer — the intraday monitor only calls Claude when a position hits a trigger.
 
 - Go to [console.anthropic.com](https://console.anthropic.com)
 - Create an account and add a payment method
@@ -165,6 +165,9 @@ Then paste these lines (they schedule the bot to run at the right times on weekd
 # 9:35 AM ET: Execute approved trades
 35 13 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase2.py >> ~/scorched/cron.log 2>&1
 
+# 9:35 AM–3:55 PM ET: Intraday position monitoring (every 5 min, self-gates to market hours)
+*/5 13-19 * * 1-5 cd ~/scorched && python3 cron/intraday_monitor.py >> ~/scorched/cron.log 2>&1
+
 # 4:01 PM ET: End-of-day review and learning
 01 20 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase3.py >> ~/scorched/cron.log 2>&1
 ```
@@ -182,6 +185,7 @@ Save and close. The bot will now run automatically every trading day.
 | **8:30 AM** | Researches ~100 stocks: prices, news, analyst ratings, insider activity, economic data. Asks Claude to analyze everything and pick up to 3 trades. |
 | **9:30 AM** | Safety check — blocks any buys where the stock gapped down overnight or the market looks dangerous. |
 | **9:35 AM** | Executes approved trades at the actual opening price. |
+| **9:35 AM–3:55 PM** | Intraday monitor checks held positions every 5 minutes against 5 triggers (position drop, SPY drop, VIX spike, volume surge). If any fire, Claude decides whether to exit. Zero cost on quiet days. |
 | **4:01 PM** | Reviews the day's performance. Updates its "playbook" — a living document of what strategies are working and what isn't. Tomorrow's picks will reflect today's lessons. |
 
 ---
@@ -211,7 +215,7 @@ docker compose up -d --build
 ## FAQ
 
 **How much does it cost to run?**
-About $5-8/month for the Claude API (6 AI calls per day across two models). Everything else is free (free data sources, free Docker, free Oracle Cloud VM if you use one).
+About $5-8/month for the Claude API (up to 7 AI calls per day, though the intraday monitor only calls Claude when triggered — most days it adds zero cost). Everything else is free (free data sources, free Docker, free Oracle Cloud VM if you use one).
 
 **Is this real money?**
 Not by default. It starts as paper trading with simulated $100,000. You can optionally connect an Alpaca brokerage account later if you want to go live.

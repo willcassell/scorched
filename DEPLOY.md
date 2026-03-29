@@ -46,7 +46,8 @@ tradebot/
 │   ├── tradebot_phase1.py
 │   ├── tradebot_phase1_5.py
 │   ├── tradebot_phase2.py
-│   └── tradebot_phase3.py
+│   ├── tradebot_phase3.py
+│   └── intraday_monitor.py
 └── src/scorched/         ← main application
     ├── main.py
     ├── config.py
@@ -223,6 +224,9 @@ Add these lines (all times are UTC — see DST table below):
 # Phase 2: Confirm trades at opening prices (9:35 AM ET = 13:35 UTC)
 35 13 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase2.py >> ~/tradebot/cron.log 2>&1
 
+# Intraday: Position monitoring with trigger-based exit evaluation (9:35 AM–3:55 PM ET, self-gates)
+*/5 13-19 * * 1-5 cd ~/tradebot && python3 cron/intraday_monitor.py >> ~/tradebot/cron.log 2>&1
+
 # Phase 3: EOD summary + playbook update (4:01 PM ET = 20:01 UTC)
 01 20 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase3.py >> ~/tradebot/cron.log 2>&1
 ```
@@ -234,6 +238,7 @@ Add these lines (all times are UTC — see DST table below):
 | 1 | 8:30 AM | `cron/tradebot_phase1.py` | Generates recommendations via Claude, sends Telegram notification |
 | 1.5 | 9:30 AM | `cron/tradebot_phase1_5.py` | Circuit breaker — blocks buys that fail safety checks |
 | 2 | 9:35 AM | `cron/tradebot_phase2.py` | Confirms trades at opening prices via broker |
+| Intraday | 9:35 AM–3:55 PM | `cron/intraday_monitor.py` | Every 5 min — checks positions against triggers, calls Claude for exit decisions if any fire |
 | 3 | 4:01 PM | `cron/tradebot_phase3.py` | EOD review, playbook update, summary notification |
 
 All scripts read `.env` from the project root automatically and send results via Telegram (if configured).

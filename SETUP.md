@@ -8,7 +8,8 @@ Every trading day:
 1. **8:30 AM ET** — Claude analyzes 40 stocks using 7 data sources and generates up to 3 trade recommendations
 2. **9:30 AM ET** — Circuit breaker checks if the market or individual stocks have moved against the thesis
 3. **9:35 AM ET** — Approved trades are executed (paper or via Alpaca broker)
-4. **4:01 PM ET** — End-of-day review: Claude compares morning thesis vs. actual outcomes and updates its playbook
+4. **9:35 AM–3:55 PM ET** — Intraday monitor checks positions every 5 minutes against triggers (position drop, SPY drop, VIX spike, volume surge); Claude evaluates exits only when triggered
+5. **4:01 PM ET** — End-of-day review: Claude compares morning thesis vs. actual outcomes and updates its playbook
 
 The bot learns from its trades via a living playbook that carries lessons forward to future decisions.
 
@@ -81,6 +82,9 @@ Add these lines (adjust timezone handling for your server):
 
 # Phase 2: Execute trades
 35 9 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase2.py >> logs/cron.log 2>&1
+
+# Intraday: Position monitoring (9:35 AM–3:55 PM ET, self-gates to market hours)
+*/5 9-15 * * 1-5 cd ~/scorched && python3 cron/intraday_monitor.py >> logs/cron.log 2>&1
 
 # Phase 3: End-of-day summary
 01 16 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase3.py >> logs/cron.log 2>&1

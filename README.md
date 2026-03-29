@@ -13,6 +13,7 @@ Cron (VM)
     │
     │  8:30 AM ET — POST /api/v1/recommendations/generate
     │  9:45 AM ET — POST /api/v1/trades/confirm × N
+    │  Every 5 min (9:35 AM–3:55 PM ET) — POST /api/v1/intraday/evaluate
     │
     ▼
 Scorched (FastAPI + PostgreSQL)
@@ -26,9 +27,11 @@ Scorched (FastAPI + PostgreSQL)
     └── Dashboard auto-refreshes at http://host:8000
 ```
 
-**Two-phase daily cycle:**
+**Daily cycle:**
 1. **8:30 AM ET (pre-market)** — `generate` fetches live market data across the full research universe, builds a rich context packet, and asks Claude for up to 3 trades. Results are cached; safe to call multiple times.
 2. **9:45 AM ET (post-open)** — cron script fetches actual opening prices via `get_opening_prices` and calls `confirm_trade` for each pending recommendation, filling at the real open price for accurate simulation.
+3. **9:35 AM–3:55 PM ET (every 5 min)** — intraday monitor checks held positions against 5 configurable triggers (position drop from entry, drop from open, SPY drop, VIX spike, volume surge). If any trigger fires, Claude evaluates whether to exit. Zero LLM cost on quiet days.
+4. **4:01 PM ET (post-close)** — EOD review, playbook update, summary notification.
 
 **NYSE holidays** are detected automatically — if the market is closed, `generate` returns `market_closed: true` with no recommendations and no Claude calls are made.
 
@@ -87,6 +90,7 @@ The bot exposes 7 tools over MCP at `http://host:8000/mcp`. These mirror the RES
 | `GET` | `/api/v1/strategy` | Read strategy settings |
 | `PUT` | `/api/v1/strategy` | Update strategy settings (PIN-protected if configured) |
 | `GET` | `/api/v1/playbook` | Read strategy playbook |
+| `POST` | `/api/v1/intraday/evaluate` | Intraday trigger check + Claude exit evaluation |
 | `GET` | `/api/v1/costs` | Claude API cost tracker |
 
 ---
