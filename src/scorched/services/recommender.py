@@ -275,6 +275,18 @@ async def generate_recommendations(
     # ── Call 1: Analysis with extended thinking ────────────────────────────
     logger.info("Call 1: analysis with extended thinking")
     call1_user = f"Today's date: {session_date}\n\n{market_context}\n\n{research_context}"
+
+    # Log context size — warn if approaching model limits
+    context_chars = len(call1_user)
+    context_est_tokens = context_chars // 4  # rough estimate: ~4 chars per token
+    logger.info("Call 1 context size: %d chars (~%dk tokens)", context_chars, context_est_tokens // 1000)
+    if context_est_tokens > 80_000:
+        logger.warning(
+            "Call 1 context is very large (%dk est. tokens) — risk of hitting context window limit. "
+            "Consider reducing watchlist size or screener scope.",
+            context_est_tokens // 1000,
+        )
+
     call1_response, analysis_text, analysis_thinking, candidates = await call_analysis(
         strategy, guidance, call1_user, tracker=tracker,
     )
