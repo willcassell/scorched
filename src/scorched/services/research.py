@@ -236,6 +236,7 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
     On free tier, description may be empty. On paid tier, it contains article summary.
     yfinance news remains as fallback in build_research_context().
     """
+    import time
     import requests
     if not api_key:
         return {}
@@ -260,6 +261,8 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
             ]
         except Exception:
             result[symbol] = []
+        # Rate limit: Polygon free tier = 5 calls/min; paid = higher but still throttle
+        time.sleep(0.25)
     return result
 
 

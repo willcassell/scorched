@@ -2,26 +2,30 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _get_attr(obj: Any, *names: str) -> Any:
-    """Get the first real (non-MagicMock) attribute found on obj.
+def _get_val(obj: Any, *names: str) -> Any:
+    """Get a value from an object that may be a dict or an SDK object.
 
-    Tries each name via __dict__ / slots first to avoid MagicMock auto-creation,
-    then falls back to getattr for real SDK objects that use __getattr__.
+    Finnhub returns plain dicts in production but tests use MagicMock objects.
+    Tries dict-style access first, then attribute access with fallback names.
     """
     for name in names:
-        # For dict-backed objects (including SDK dataclasses)
+        # Dict access (production Finnhub responses)
+        if isinstance(obj, dict) and name in obj:
+            return obj[name]
+    for name in names:
+        # Attribute access (MagicMock in tests, or SDK objects)
         if hasattr(type(obj), name) or name in getattr(obj, "__dict__", {}):
             return getattr(obj, name)
-    # Fallback: try getattr directly (real SDK objects)
+    # Final fallback: try getattr directly
     for name in names:
         try:
             val = getattr(obj, name)
-            # Skip if it looks like a MagicMock auto-attribute
             if not callable(val) or isinstance(val, (int, float, str)):
                 return val
         except AttributeError:
@@ -55,11 +59,11 @@ def fetch_analyst_consensus_sync(
                 trends = client.recommendation_trends(symbol)
                 if trends:
                     latest = trends[0]
-                    data["strong_buy"] = _get_attr(latest, "strong_buy", "strongBuy")
-                    data["buy"] = _get_attr(latest, "buy")
-                    data["hold"] = _get_attr(latest, "hold")
-                    data["sell"] = _get_attr(latest, "sell")
-                    data["strong_sell"] = _get_attr(latest, "strong_sell", "strongSell")
+                    data["strong_buy"] = _get_val(latest, "strong_buy", "strongBuy")
+                    data["buy"] = _get_val(latest, "buy")
+                    data["hold"] = _get_val(latest, "hold")
+                    data["sell"] = _get_val(latest, "sell")
+                    data["strong_sell"] = _get_val(latest, "strong_sell", "strongSell")
             except Exception as exc:
                 logger.warning("Finnhub recommendation_trends failed for %s: %s", symbol, exc)
 
@@ -67,14 +71,17 @@ def fetch_analyst_consensus_sync(
             try:
                 pt = client.price_target(symbol)
                 if pt:
-                    data["target_high"] = _get_attr(pt, "target_high", "targetHigh")
-                    data["target_low"] = _get_attr(pt, "target_low", "targetLow")
-                    data["target_mean"] = _get_attr(pt, "target_mean", "targetMean")
+                    data["target_high"] = _get_val(pt, "target_high", "targetHigh")
+                    data["target_low"] = _get_val(pt, "target_low", "targetLow")
+                    data["target_mean"] = _get_val(pt, "target_mean", "targetMean")
             except Exception as exc:
                 logger.warning("Finnhub price_target failed for %s: %s", symbol, exc)
 
             if data:
                 results[symbol] = data
+
+            # Rate limit: Finnhub free tier = 60 calls/min; 2 calls/symbol so ~0.1s spacing
+            time.sleep(0.12)
 
         except Exception as exc:
             logger.warning("Finnhub fetch failed for %s: %s", symbol, exc)
