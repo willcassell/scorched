@@ -45,7 +45,7 @@ def http_post(path, payload):
     if pin:
         headers["X-Owner-Pin"] = pin
     req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=300) as resp:
+    with urllib.request.urlopen(req, timeout=600) as resp:
         return json.loads(resp.read())
 
 
@@ -80,7 +80,7 @@ def main():
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 1: generating recommendations for {today_str}")
 
     try:
-        session = http_post("/api/v1/recommendations/generate", {"date": today_str})
+        session = http_post("/api/v1/recommendations/generate", {"session_date": today_str})
     except Exception as e:
         msg = f"TRADEBOT // {today_str} - Phase 1 failed\nError: {e}"
         send_telegram(msg)
@@ -94,7 +94,7 @@ def main():
 
     recs = session.get("recommendations", [])
     if not recs:
-        send_telegram(f"TRADEBOT // {today_str} - No recommendations generated. Manual check required.")
+        send_telegram(f"TRADEBOT // {today_str} - No action taken. Analysis complete, no trades met criteria.")
         print("No recommendations.")
         return
 

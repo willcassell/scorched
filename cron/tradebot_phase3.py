@@ -155,6 +155,20 @@ def main():
             msg += f"  {sym} ({data['label']}): {sign}{pct:.1f}%\n"
 
     send_telegram(msg)
+
+    # Trigger EOD review: Claude compares morning thesis against intraday outcomes
+    # and updates the playbook so tomorrow's picks benefit from today's learnings.
+    try:
+        review = http_post(f"/api/v1/market/eod-review?date={today_str}", {})
+        status = review.get("status", "unknown")
+        version = review.get("playbook_version")
+        if status == "completed":
+            print(f"EOD review complete — playbook updated to v{version}.")
+        else:
+            print(f"EOD review: {status} ({review.get('reason', '')})")
+    except Exception as e:
+        print(f"EOD review error (non-fatal): {e}")
+
     print("Phase 3 complete.")
 
 

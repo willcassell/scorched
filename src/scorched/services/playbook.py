@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import Playbook, TradeHistory, TradeRecommendation
+from ..retry import claude_call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +155,17 @@ async def update_playbook(db: AsyncSession, today: date) -> Playbook:
 Review these outcomes against the playbook and produce an updated version that reflects what we've learned."""
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=2048,
-        system=UPDATE_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_content}],
-    )
+    try:
+        response = claude_call_with_retry(
+            client, "Playbook update",
+            model="claude-opus-4-6",
+            max_tokens=2048,
+            system=UPDATE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_content}],
+        )
+    except anthropic.APIStatusError:
+        logger.error("Playbook update failed after all retries — using stale playbook")
+        return playbook
 
     updated_content = response.content[0].text.strip()
 
