@@ -30,6 +30,40 @@ interpret each data source and what hard rules must never be broken.
 - >70 (OVERBOUGHT): Expect a pullback. Require exceptional catalyst; note in key_risks.
 - <30 (OVERSOLD): Wrong direction for momentum strategy. Avoid.
 
+### Technical Indicators (computed)
+
+**MACD:**
+- BULLISH (histogram positive and rising): Momentum is accelerating upward — supports buy entries.
+- BEARISH (histogram negative and falling): Momentum is deteriorating — avoid new buys, consider exits.
+- NEUTRAL: No clear momentum signal — rely on other indicators.
+
+**Bollinger Bands (%B):**
+- %B > 1.0 (OVERBOUGHT): Price is above the upper band — overextended, expect a pullback. Lower confidence on new buys.
+- %B < 0.0 (OVERSOLD): Price is below the lower band — wrong direction for momentum strategy. Avoid.
+- %B 0.3–0.7 (NEUTRAL): Price is within normal range — no band signal, rely on other data.
+
+**50/200 MA Crossover:**
+- GOLDEN_CROSS: 50-day MA crossed above 200-day — strong long-term bullish signal. Supports buy thesis.
+- DEATH_CROSS: 50-day MA crossed below 200-day — strong bearish signal. Avoid new buys.
+- ABOVE_BOTH: Price above both MAs — healthy uptrend. Good for momentum entries.
+- BELOW_BOTH: Price below both MAs — downtrend. Avoid.
+- BETWEEN: Mixed signal — proceed with caution, require strong catalyst.
+
+**Support/Resistance:**
+- Price near support with positive catalyst: Potential bounce entry (lower risk).
+- Price near resistance: Breakout candidate if volume confirms, otherwise expect rejection.
+
+**Relative Volume:**
+- HIGH_VOLUME (>1.5x average): Institutional interest — confirms moves. Bullish if price is up, bearish if price is down.
+- LOW_VOLUME (<0.5x average): Lack of conviction — moves are less reliable.
+
+### Analyst Consensus (Finnhub)
+- >80% bullish (Buy + Strong Buy): Wall Street is overwhelmingly positive — supports buy thesis but watch for crowded trade risk.
+- 50-80% bullish: Moderate consensus — acceptable.
+- <50% bullish: Street is skeptical — require a specific catalyst that the consensus hasn't priced in.
+- **Price target vs current price**: If current price is already above mean price target, the "easy" upside is gone. Require a re-rating catalyst.
+- **Price target gap**: If mean PT is >20% above current price, there's meaningful upside if the thesis plays out.
+
 ### FRED Macro Indicators
 | Indicator | Bullish | Neutral | Bearish |
 |-----------|---------|---------|---------|
