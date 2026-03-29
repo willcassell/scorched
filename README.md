@@ -1,39 +1,65 @@
-# Scorched — Simulated Stock Trading Bot
+# Scorched — Your AI Trading Assistant
 
-A paper-trading bot that researches stocks each morning, generates buy/sell recommendations via Claude, and tracks a simulated portfolio with P&L and tax implications. Runs fully autonomously on a daily cron schedule — no manual intervention or AI orchestrator required.
+An AI-powered stock trading bot you can actually talk to. Every weekday, Scorched researches the market, generates trade recommendations through a multi-stage Claude pipeline, and manages a portfolio — all on its own. Check in through a live dashboard, or **open Claude Desktop and ask your bot what it's thinking in plain English.**
 
-**Paper trading only** — no real money, no real brokerage integration.
+Starts as paper trading with simulated money. When you're ready, connect an Alpaca brokerage account to trade for real.
 
 ---
 
-## How It Works
+## Two Ways to Use It
+
+### 1. Talk to Your Bot (MCP)
+
+Scorched runs a built-in **MCP server** — the open protocol that lets AI assistants use external tools. Point Claude Desktop (or any MCP client) at your bot and have a conversation:
+
+> **You:** "What did you buy today and why?"
+> **You:** "How's the portfolio doing?"
+> **You:** "What does your playbook say about tech stocks?"
+> **You:** "Run today's analysis — what looks good?"
+
+Claude calls the bot's tools behind the scenes and answers in plain English. No commands to memorize, no API knowledge needed. **This is the easiest way to get started.**
+
+**Quick setup (Claude Desktop):**
+```json
+{
+  "mcpServers": {
+    "tradebot": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+That's it. Open Claude Desktop and start asking questions.
+
+### 2. Set It and Forget It (Dashboard + Cron)
+
+The bot also runs fully autonomously on a daily schedule — no manual intervention required. Cron jobs trigger each phase of the trading day, and a live dashboard at `http://host:8000` shows your portfolio, today's picks, and performance history. Auto-refreshes every 5 minutes.
 
 ```
 Cron (VM)
     │
-    │  8:30 AM ET — POST /api/v1/recommendations/generate
-    │  9:45 AM ET — POST /api/v1/trades/confirm × N
-    │  Every 5 min (9:35 AM–3:55 PM ET) — POST /api/v1/intraday/evaluate
+    │  8:30 AM ET — Research + generate recommendations
+    │  9:30 AM ET — Circuit breaker safety gate
+    │  9:35 AM ET — Execute approved trades
+    │  Every 5 min — Intraday position monitoring
+    │  4:01 PM ET — EOD review + playbook update
     │
     ▼
 Scorched (FastAPI + PostgreSQL)
     │
     ├── Fetches market data (yfinance, FRED, Polygon, Alpha Vantage, EDGAR)
     ├── Runs momentum screener (top S&P 500 movers)
-    ├── Calls Claude (claude-sonnet-4-6) — two-call pipeline
+    ├── Calls Claude (claude-sonnet-4-6) — multi-call pipeline
     │     Call 1: Analysis w/ extended thinking → identify candidates
     │     Call 2: Decision → 0–3 concrete trade recommendations
+    │     Call 3: Risk committee → challenge and reject weak picks
+    │     Call 4: Position management → review open positions EOD
     ├── Tracks portfolio state in PostgreSQL
     └── Dashboard auto-refreshes at http://host:8000
 ```
 
-**Daily cycle:**
-1. **8:30 AM ET (pre-market)** — `generate` fetches live market data across the full research universe, builds a rich context packet, and asks Claude for up to 3 trades. Results are cached; safe to call multiple times.
-2. **9:45 AM ET (post-open)** — cron script fetches actual opening prices via `get_opening_prices` and calls `confirm_trade` for each pending recommendation, filling at the real open price for accurate simulation.
-3. **9:35 AM–3:55 PM ET (every 5 min)** — intraday monitor checks held positions against 5 configurable triggers (position drop from entry, drop from open, SPY drop, VIX spike, volume surge). If any trigger fires, Claude evaluates whether to exit. Zero LLM cost on quiet days.
-4. **4:01 PM ET (post-close)** — EOD review, playbook update, summary notification.
-
-**NYSE holidays** are detected automatically — if the market is closed, `generate` returns `market_closed: true` with no recommendations and no Claude calls are made.
+**NYSE holidays** are detected automatically — if the market is closed, no Claude calls are made.
 
 ---
 
@@ -43,7 +69,7 @@ Scorched (FastAPI + PostgreSQL)
 |-------|-----------|
 | Runtime | Python 3.11, FastAPI |
 | AI | Anthropic Claude (`claude-sonnet-4-6`, extended thinking on Call 1) |
-| MCP | `mcp[cli]` (FastMCP, Streamable HTTP transport) |
+| MCP | `mcp[cli]` (FastMCP, Streamable HTTP) — talk to your bot from Claude Desktop |
 | Database | PostgreSQL 16 via SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
 | Market data | yfinance (prices, fundamentals, options, earnings, news, insider) |
@@ -57,19 +83,46 @@ Scorched (FastAPI + PostgreSQL)
 
 ---
 
-## MCP Tools
+## MCP Server — Talk to Your Bot
 
-The bot exposes 7 tools over MCP at `http://host:8000/mcp`. These mirror the REST endpoints and are available for any MCP client:
+The bot runs a **Streamable HTTP MCP server** at `http://host:8000/mcp`. Any MCP-compatible client — Claude Desktop, Cursor, your own agents — can connect and interact with the full trading system through natural language.
 
-| Tool | When | Description |
-|------|------|-------------|
-| `get_recommendations` | 8:30 AM ET | Research stocks, ask Claude, return ≤3 picks. Cached per day. |
-| `get_opening_prices` | 9:45 AM ET | Fetch actual opening auction prices for a list of symbols. |
-| `confirm_trade` | 9:45 AM ET | Record a trade execution; updates portfolio state. |
-| `reject_recommendation` | 9:45 AM ET | Mark a recommendation as skipped (keeps audit trail clean). |
-| `get_portfolio` | Anytime | Live portfolio snapshot with unrealized P&L and tax estimates. |
-| `get_market_summary` | After 4 PM ET | EOD index + all S&P sector ETF performance. |
-| `read_playbook` | Optional | Read the bot's living strategy document. |
+**Why this matters:**
+- **No technical knowledge required.** Ask "what did you buy today?" and get a plain-English answer. The AI client calls the right tools automatically.
+- **The heavy lifting is behind the tools.** A single question like "what looks good today?" triggers a multi-stage pipeline that pulls from 7+ data sources, runs technical analysis, and passes picks through a risk committee. You just ask.
+- **Human-in-the-loop by default.** Recommendations come back as pending. Nothing executes without explicit confirmation.
+- **Works with any MCP client.** Claude Desktop, Cursor, Claude Code, or any tool that speaks the MCP protocol.
+
+**Connect Claude Desktop** — add this to your Claude Desktop MCP config:
+```json
+{
+  "mcpServers": {
+    "tradebot": {
+      "url": "http://your-server:8000/mcp"
+    }
+  }
+}
+```
+
+**Things you can ask:**
+- *"How's my portfolio doing?"* — pulls live positions, P&L, and tax status
+- *"Run today's analysis"* — triggers the full research + recommendation pipeline
+- *"What does the playbook say?"* — reads the bot's evolving strategy document
+- *"Show me the market summary"* — end-of-day index and sector performance
+- *"Confirm trade #42 at $185.50 for 10 shares"* — executes a specific recommendation
+- *"Reject recommendation #43"* — skips a pick while keeping the audit trail clean
+
+**Available tools (7):**
+
+| Tool | What it does |
+|------|-------------|
+| `get_recommendations` | Research stocks + generate up to 3 trade picks via Claude pipeline |
+| `get_opening_prices` | Fetch actual opening auction prices for any symbols |
+| `confirm_trade` | Execute a trade — updates portfolio, tracks P&L and taxes |
+| `reject_recommendation` | Skip a pick (audit trail stays clean) |
+| `get_portfolio` | Live portfolio snapshot — positions, unrealized P&L, tax classification |
+| `get_market_summary` | EOD performance for major indices + all S&P 500 sector ETFs |
+| `read_playbook` | Read the bot's living strategy doc — lessons learned from past trades |
 
 ---
 

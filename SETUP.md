@@ -1,6 +1,6 @@
 # Scorched AI Trading Bot — Setup Guide
 
-A Claude-powered stock trading bot that generates daily trade recommendations using fundamental analysis, technical signals, and macro data, then executes them automatically.
+A Claude-powered stock trading bot you can talk to in plain English. Generates daily trade recommendations using fundamental analysis, technical signals, and macro data, then executes them automatically. Connect Claude Desktop to ask your bot questions, review its picks, and understand its reasoning — no trading or coding knowledge required.
 
 ## What It Does
 
@@ -62,7 +62,31 @@ Visit `http://your-server-ip:8000` in a browser. You'll see the trading dashboar
 
 Visit `http://your-server-ip:8000/strategy` to configure the trading strategy (hold period, position sizing, risk guardrails, etc.).
 
-### 5. Set up the daily cron jobs
+### 5. Connect Claude Desktop (talk to your bot)
+
+Open Claude Desktop → Settings → Developer → Edit Config, and add:
+
+```json
+{
+  "mcpServers": {
+    "tradebot": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+Replace `localhost` with your server IP if running on a VM. Restart Claude Desktop.
+
+Now ask questions in natural language:
+- *"What stocks did you recommend today?"*
+- *"How's the portfolio doing?"*
+- *"Show me the market summary"*
+- *"What does your playbook say?"*
+
+Claude calls the bot's 7 MCP tools automatically — you never need to learn API syntax or trading commands.
+
+### 6. Set up the daily cron jobs
 
 ```bash
 crontab -e
@@ -208,26 +232,35 @@ docker compose exec tradebot alembic upgrade head
 ## Architecture
 
 ```
-Claude API (analysis + decisions)
-        |
-   FastAPI app (scorched)
-    /         \
-  REST       MCP
-  /api/v1    /mcp
-    |
-  Broker Adapter
-   /        \
-Paper    Alpaca
-(DB)     (real orders)
-    |
-PostgreSQL
+    You (Claude Desktop)          Cron (automated daily cycle)
+           |                              |
+     "How's my portfolio?"          Scheduled triggers
+           |                              |
+           ▼                              ▼
+      MCP (/mcp)                    REST (/api/v1)
+           \                          /
+            ▼                        ▼
+          FastAPI app (scorched)
+                  |
+         Claude API (analysis + decisions)
+                  |
+            Broker Adapter
+             /        \
+          Paper      Alpaca
+          (DB)     (real orders)
+                  |
+             PostgreSQL
 ```
 
-The bot uses a two-call Claude pipeline:
+**Two ways in, same brain.** The MCP server and REST API call the same logic. Claude Desktop users talk to the bot in natural language; cron jobs hit the REST endpoints on a schedule. Both paths feed the same portfolio, the same Claude pipeline, and the same database.
+
+The bot uses a multi-call Claude pipeline:
 1. **Analysis call** (extended thinking) — reviews all market data, identifies candidates
 2. **Decision call** — takes the analysis + current portfolio and outputs specific trades
+3. **Risk review** — adversarial review that challenges and rejects weak picks
+4. **Position management** — EOD review of all open positions
 
-Data sources: yfinance, FRED, Polygon, Alpha Vantage, SEC EDGAR, internal momentum screener, options data.
+Data sources: yfinance, FRED, Polygon, Alpha Vantage, SEC EDGAR, Finnhub, internal momentum screener, options data.
 
 ## Troubleshooting
 

@@ -288,27 +288,46 @@ The dashboard auto-refreshes every 5 minutes.
 
 ---
 
-## MCP Tools (Optional)
+## Talk to Your Bot (MCP Server)
 
-The app also exposes 7 tools via MCP at `http://localhost:8000/mcp` for any MCP-compatible client:
+Once deployed, you can **talk to your bot in plain English** from Claude Desktop or any MCP client. The bot runs a Streamable HTTP MCP server at `http://YOUR_VM_IP:8000/mcp` with 7 tools that expose the full trading system.
 
-| Tool | Description |
-|------|-------------|
-| `get_recommendations` | Research + generate trade picks. Cached per day. |
-| `get_opening_prices` | Fetch actual open prices for a list of symbols. |
-| `confirm_trade` | Record trade execution; updates portfolio. |
-| `reject_recommendation` | Mark a pending rec as skipped. |
-| `get_portfolio` | Live portfolio snapshot with P&L and tax info. |
-| `get_market_summary` | EOD index + all S&P sector ETF performance. |
-| `read_playbook` | Read the bot's living strategy document. |
+### Connect Claude Desktop
 
-To connect an MCP client:
+On your local machine (not the VM), open Claude Desktop → Settings → Developer → Edit Config:
 
 ```json
 {
-  "tradebot": {
-    "transport": "http",
-    "url": "http://localhost:8000/mcp/"
+  "mcpServers": {
+    "tradebot": {
+      "url": "http://YOUR_VM_IP:8000/mcp"
+    }
   }
 }
 ```
+
+Restart Claude Desktop. Now you can ask questions like:
+
+- *"What did you buy today and why?"*
+- *"How's the portfolio doing?"*
+- *"Run today's analysis — what looks good?"*
+- *"What does the playbook say about what's been working?"*
+- *"Show me how the market did today"*
+
+Claude calls the right tools automatically and explains everything in plain English. No API knowledge or trading commands needed.
+
+### Available tools
+
+| Tool | What it does |
+|------|-------------|
+| `get_recommendations` | Trigger the full research + Claude analysis pipeline. Returns up to 3 trade picks. |
+| `get_opening_prices` | Fetch actual opening auction prices for any list of symbols. |
+| `confirm_trade` | Execute a recommended trade — updates portfolio, tracks P&L and taxes. |
+| `reject_recommendation` | Skip a pick while keeping the audit trail clean. |
+| `get_portfolio` | Live snapshot — positions, unrealized P&L, cash balance, tax classification. |
+| `get_market_summary` | End-of-day performance for major indices + all S&P 500 sector ETFs. |
+| `read_playbook` | Read the bot's living strategy doc — accumulated lessons from past trades. |
+
+### Firewall note
+
+Make sure port 8000 is open on your VM (see the Firewall section above). Claude Desktop on your local machine connects to the VM over HTTP — the same port that serves the dashboard.

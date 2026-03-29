@@ -2,7 +2,7 @@
 
 ## What Is This?
 
-Scorched is a stock trading bot powered by Claude AI. Every weekday morning, it:
+Scorched is a stock trading bot powered by Claude AI that you can actually talk to. Every weekday morning, it:
 
 1. Researches the stock market — price trends, news, analyst ratings, economic data
 2. Asks Claude to analyze everything and pick the best trades (if any)
@@ -10,11 +10,11 @@ Scorched is a stock trading bot powered by Claude AI. Every weekday morning, it:
 4. Executes the approved trades and tracks your simulated portfolio
 5. At the end of the day, reviews how the picks performed and learns from mistakes
 
-You get a live dashboard showing your portfolio, today's picks, trade history, and performance vs. the S&P 500.
+You can check in anytime through a **live dashboard**, or open **Claude Desktop and ask your bot questions in plain English** — "what did you buy today?", "how's the portfolio doing?", "what does the playbook say about energy stocks?"
 
 **This starts as paper trading** — simulated money, no real brokerage account needed. You can optionally connect an Alpaca brokerage account later if you want to trade with real money.
 
-The bot runs completely on its own. Once set up, you don't need to do anything — just check the dashboard when you're curious.
+The bot runs completely on its own. Once set up, you don't need to do anything — just check the dashboard or chat with your bot when you're curious.
 
 ---
 
@@ -141,9 +141,48 @@ http://localhost:8000
 
 This is your live dashboard. It will be empty at first — the bot generates its first picks at 8:30 AM ET on the next trading day.
 
-### Step 5: Set Up the Daily Schedule (Optional but Recommended)
+### Step 5: Talk to Your Bot (Recommended)
 
-The bot needs to be told when to wake up and do its work. This is done with "cron jobs" — scheduled tasks that run automatically.
+This is the best part. Instead of just watching a dashboard, you can **have a conversation with your trading bot** using Claude Desktop.
+
+**What is this?** Your bot speaks a protocol called MCP (Model Context Protocol) that lets AI assistants like Claude use it as a tool. When you ask Claude a question about your portfolio, Claude calls your bot behind the scenes and answers in plain English. You never need to learn any commands or APIs.
+
+**How to set it up:**
+
+1. Download [Claude Desktop](https://claude.ai/download) if you don't have it
+2. Open Claude Desktop → Settings → Developer → Edit Config
+3. Add your bot as an MCP server:
+
+```json
+{
+  "mcpServers": {
+    "tradebot": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+(If your bot is running on a cloud VM, replace `localhost` with your VM's IP address.)
+
+4. Restart Claude Desktop
+
+**Now just ask questions in plain English:**
+
+- *"What did you buy today and why?"*
+- *"How's my portfolio doing?"*
+- *"What does your playbook say — what's working and what isn't?"*
+- *"Run today's analysis — what stocks look good?"*
+- *"Show me how the market did today"*
+- *"Reject recommendation #5 — I don't like that pick"*
+
+Claude handles everything — it figures out which tools to call, gathers the data, and explains it to you like a human analyst would. You don't need to know anything about APIs, trading commands, or technical analysis to use this.
+
+**Cost:** Talking to your bot through Claude Desktop uses your Claude subscription (included with Claude Pro/Team) or API credits. The bot itself costs ~$0.15-0.25/day in Anthropic API usage for its automated daily analysis — your conversations are separate.
+
+### Step 6: Set Up the Daily Schedule (Optional but Recommended)
+
+Even without this step, you can talk to your bot and manually trigger analysis through Claude Desktop. But for a fully hands-off experience, set up scheduled tasks ("cron jobs") so the bot runs its daily cycle automatically.
 
 **On Mac/Linux**, open your terminal and type:
 ```bash
@@ -230,4 +269,7 @@ Run `docker compose down`. Your portfolio data is saved. Run `docker compose up 
 Check the logs: `docker compose logs tradebot --tail=100`. The bot logs everything it does, including any errors from external data sources.
 
 **Do I need to know how to code?**
-No. The setup wizard handles configuration, the dashboard shows results, and the cron jobs run automatically. The only "technical" part is the initial Docker install and the cron setup.
+No. The setup wizard handles configuration, the dashboard shows results, and the cron jobs run automatically. You can talk to your bot through Claude Desktop in plain English — ask it anything about your portfolio, its strategy, or the market. The only "technical" part is the initial Docker install and the one-time Claude Desktop config.
+
+**What can I ask my bot?**
+Anything about your portfolio, its trades, the market, or its strategy. It pulls live data when you ask. Some examples: "Why did you buy NVDA?", "What's my total return?", "How did the market do today?", "What does your playbook say about holding through earnings?" The bot has 7 tools that Claude calls automatically — you never need to know they exist.
