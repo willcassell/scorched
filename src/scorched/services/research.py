@@ -21,7 +21,7 @@ def _fetch_price_data_sync(symbols: list[str]) -> dict:
     for symbol in symbols:
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1mo")
+            hist = ticker.history(period="1y")
             info = ticker.info
             if hist.empty:
                 continue
@@ -31,7 +31,7 @@ def _fetch_price_data_sync(symbols: list[str]) -> dict:
             except Exception:
                 current_price = float(hist["Close"].iloc[-1])
             week_ago_price = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else current_price
-            month_ago_price = float(hist["Close"].iloc[0])
+            month_ago_price = float(hist["Close"].iloc[-22]) if len(hist) >= 22 else float(hist["Close"].iloc[0])
             high_52w = float(info.get("fiftyTwoWeekHigh", 0))
             low_52w = float(info.get("fiftyTwoWeekLow", 0))
             result[symbol] = {
@@ -47,6 +47,8 @@ def _fetch_price_data_sync(symbols: list[str]) -> dict:
                 "short_ratio": info.get("shortRatio"),
                 "short_percent_float": info.get("shortPercentOfFloat"),
                 "insider_buy_pct": None,  # populated separately
+                "history_close": [float(x) for x in hist["Close"].tolist()],
+                "history_volume": [float(x) for x in hist["Volume"].tolist()],
             }
         except Exception:
             pass
