@@ -161,3 +161,39 @@ class SessionDetail(BaseModel):
     research_summary: str | None
     recommendations: list[RecommendationItem]
     created_at: datetime
+
+
+# ── Intraday Monitor ──────────────────────────────────────────────────────────
+
+class IntradayTriggerItem(BaseModel):
+    symbol: str
+    trigger_reasons: list[str]
+    current_price: Decimal
+    entry_price: Decimal
+    today_open: Decimal
+    today_high: Decimal
+    today_low: Decimal
+    days_held: int
+    shares: Decimal
+    original_reasoning: str = ""
+
+
+class IntradayMarketContext(BaseModel):
+    spy_change_pct: float = 0.0
+    vix_current: float = 0.0
+
+
+class IntradayEvaluateRequest(BaseModel):
+    triggers: list[IntradayTriggerItem]
+    market_context: IntradayMarketContext = IntradayMarketContext()
+
+
+class IntradayDecision(BaseModel):
+    symbol: str
+    action: str  # 'exit_full' | 'exit_partial' | 'hold'
+    reasoning: str
+    trade_result: dict | None = None
+
+
+class IntradayEvaluateResponse(BaseModel):
+    decisions: list[IntradayDecision]
