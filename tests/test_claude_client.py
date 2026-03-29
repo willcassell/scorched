@@ -1,7 +1,11 @@
 """Tests for claude_client pure helper functions (no API mocking needed)."""
-from unittest.mock import MagicMock
+import pytest
+from unittest.mock import MagicMock, patch, AsyncMock
 
-from scorched.services.claude_client import extract_text, extract_thinking, parse_json_response
+from scorched.services.claude_client import (
+    extract_text, extract_thinking, parse_json_response,
+    call_position_review, call_eod_review, call_intraday_exit,
+)
 
 
 def _text_block(text: str) -> MagicMock:
@@ -57,3 +61,40 @@ class TestParseJsonResponse:
     def test_parse_json_response_invalid(self):
         assert parse_json_response("not json at all") == {}
         assert parse_json_response("") == {}
+
+
+class TestCallWrappersUseRetry:
+    """All call_* wrappers should use claude_call_with_retry."""
+
+    @pytest.mark.asyncio
+    @patch("scorched.services.claude_client.claude_call_with_retry", new_callable=AsyncMock)
+    @patch("scorched.services.claude_client._client")
+    async def test_call_position_review_uses_retry(self, mock_client, mock_retry):
+        mock_response = MagicMock()
+        mock_response.content = [_text_block("result")]
+        mock_retry.return_value = mock_response
+        response, text = await call_position_review("test prompt")
+        mock_retry.assert_called_once()
+        assert text == "result"
+
+    @pytest.mark.asyncio
+    @patch("scorched.services.claude_client.claude_call_with_retry", new_callable=AsyncMock)
+    @patch("scorched.services.claude_client._client")
+    async def test_call_eod_review_uses_retry(self, mock_client, mock_retry):
+        mock_response = MagicMock()
+        mock_response.content = [_text_block("  updated playbook  ")]
+        mock_retry.return_value = mock_response
+        response, text = await call_eod_review("test prompt")
+        mock_retry.assert_called_once()
+        assert text == "updated playbook"
+
+    @pytest.mark.asyncio
+    @patch("scorched.services.claude_client.claude_call_with_retry", new_callable=AsyncMock)
+    @patch("scorched.services.claude_client._client")
+    async def test_call_intraday_exit_uses_retry(self, mock_client, mock_retry):
+        mock_response = MagicMock()
+        mock_response.content = [_text_block('{"action": "hold"}')]
+        mock_retry.return_value = mock_response
+        response, text = await call_intraday_exit("test prompt")
+        mock_retry.assert_called_once()
+        assert text == '{"action": "hold"}'

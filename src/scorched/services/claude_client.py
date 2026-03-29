@@ -142,14 +142,14 @@ async def call_risk_review(user_content: str, tracker=None):
     return response, response.content[0].text
 
 
-def call_position_review(user_content: str):
+async def call_position_review(user_content: str):
     """Call 4: Position management review.
 
     Returns (response, raw_text).
     """
     system_prompt = load_prompt("position_mgmt")
-    client = _client()
-    response = client.messages.create(
+    response = await claude_call_with_retry(
+        _client(), "Call 4 (position review)",
         model=MODEL,
         max_tokens=1024,
         system=system_prompt,
@@ -159,14 +159,14 @@ def call_position_review(user_content: str):
     return response, response.content[0].text
 
 
-def call_eod_review(user_content: str):
+async def call_eod_review(user_content: str):
     """EOD review: distill learnings and update the playbook.
 
     Returns (response, updated_text).
     """
     system_prompt = load_prompt("eod_review")
-    client = _client()
-    response = client.messages.create(
+    response = await claude_call_with_retry(
+        _client(), "EOD review",
         model=MODEL,
         max_tokens=2048,
         system=system_prompt,
@@ -194,16 +194,15 @@ async def call_playbook_update(user_content: str):
     return response, response.content[0].text.strip()
 
 
-def call_intraday_exit(user_content: str):
+async def call_intraday_exit(user_content: str):
     """Intraday exit evaluation — small focused call.
 
     Returns (response, raw_text).
     """
     system_prompt = load_prompt("intraday_exit")
-    client = _client()
-
     logger.info("Intraday exit evaluation call")
-    response = client.messages.create(
+    response = await claude_call_with_retry(
+        _client(), "Intraday exit",
         model=MODEL,
         max_tokens=512,
         system=system_prompt,

@@ -143,7 +143,7 @@ async def evaluate_triggers(
         # ── Normal Claude evaluation path ─────────────────────────────
         prompt = _build_exit_prompt(trigger, body.market_context)
 
-        response, raw_text = call_intraday_exit(prompt)
+        response, raw_text = await call_intraday_exit(prompt)
 
         # Record usage
         usage = response.usage

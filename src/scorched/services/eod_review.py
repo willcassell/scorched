@@ -184,7 +184,7 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
     )
 
     logger.info("EOD review: calling Claude to update playbook (date=%s)", review_date)
-    response, updated_content = _call_eod_review(user_content)
+    response, updated_content = await _call_eod_review(user_content)
 
     await record_usage(
         db,
@@ -220,7 +220,7 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
         market_summary = context[:500] if context else "Market data unavailable"
         pos_prompt = build_position_review_prompt(pos_list, market_summary)
 
-        pos_response, pos_text = _call_position_review(pos_prompt)
+        pos_response, pos_text = await _call_position_review(pos_prompt)
 
         await record_usage(
             db,
