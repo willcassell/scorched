@@ -1,0 +1,128 @@
+"""Finnhub analyst consensus and price target data."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _get_attr(obj: Any, *names: str) -> Any:
+    """Get the first real (non-MagicMock) attribute found on obj.
+
+    Tries each name via __dict__ / slots first to avoid MagicMock auto-creation,
+    then falls back to getattr for real SDK objects that use __getattr__.
+    """
+    for name in names:
+        # For dict-backed objects (including SDK dataclasses)
+        if hasattr(type(obj), name) or name in getattr(obj, "__dict__", {}):
+            return getattr(obj, name)
+    # Fallback: try getattr directly (real SDK objects)
+    for name in names:
+        try:
+            val = getattr(obj, name)
+            # Skip if it looks like a MagicMock auto-attribute
+            if not callable(val) or isinstance(val, (int, float, str)):
+                return val
+        except AttributeError:
+            continue
+    return 0
+
+
+def fetch_analyst_consensus_sync(
+    symbols: list[str], client: Any | None
+) -> dict[str, dict[str, Any]]:
+    """Fetch analyst recommendation trends and price targets for each symbol.
+
+    Args:
+        symbols: List of ticker symbols.
+        client: A finnhub.Client instance, or None (returns empty dict).
+
+    Returns:
+        Mapping of symbol -> dict with consensus counts and price targets.
+    """
+    if client is None:
+        return {}
+
+    results: dict[str, dict[str, Any]] = {}
+
+    for symbol in symbols:
+        try:
+            data: dict[str, Any] = {}
+
+            # Recommendation trends
+            try:
+                trends = client.recommendation_trends(symbol)
+                if trends:
+                    latest = trends[0]
+                    data["strong_buy"] = _get_attr(latest, "strong_buy", "strongBuy")
+                    data["buy"] = _get_attr(latest, "buy")
+                    data["hold"] = _get_attr(latest, "hold")
+                    data["sell"] = _get_attr(latest, "sell")
+                    data["strong_sell"] = _get_attr(latest, "strong_sell", "strongSell")
+            except Exception as exc:
+                logger.warning("Finnhub recommendation_trends failed for %s: %s", symbol, exc)
+
+            # Price targets
+            try:
+                pt = client.price_target(symbol)
+                if pt:
+                    data["target_high"] = _get_attr(pt, "target_high", "targetHigh")
+                    data["target_low"] = _get_attr(pt, "target_low", "targetLow")
+                    data["target_mean"] = _get_attr(pt, "target_mean", "targetMean")
+            except Exception as exc:
+                logger.warning("Finnhub price_target failed for %s: %s", symbol, exc)
+
+            if data:
+                results[symbol] = data
+
+        except Exception as exc:
+            logger.warning("Finnhub fetch failed for %s: %s", symbol, exc)
+
+    return results
+
+
+def build_analyst_context(analyst_data: dict[str, dict[str, Any]]) -> str:
+    """Format analyst consensus data as text for Claude's prompt.
+
+    Args:
+        analyst_data: Output from fetch_analyst_consensus_sync.
+
+    Returns:
+        Formatted text block, or empty string if no data.
+    """
+    if not analyst_data:
+        return ""
+
+    lines: list[str] = ["## Analyst Consensus"]
+
+    for symbol, info in analyst_data.items():
+        total = sum(
+            info.get(k, 0) or 0
+            for k in ("strong_buy", "buy", "hold", "sell", "strong_sell")
+        )
+        bullish = sum(info.get(k, 0) or 0 for k in ("strong_buy", "buy"))
+        bullish_pct = (bullish / total * 100) if total > 0 else 0
+
+        lines.append(f"\n### {symbol}")
+        lines.append(
+            f"  Strong Buy: {info.get('strong_buy', 0)} | "
+            f"Buy: {info.get('buy', 0)} | "
+            f"Hold: {info.get('hold', 0)} | "
+            f"Sell: {info.get('sell', 0)} | "
+            f"Strong Sell: {info.get('strong_sell', 0)}"
+        )
+        lines.append(f"  Bullish: {bullish_pct:.0f}%")
+
+        target_mean = info.get("target_mean")
+        target_high = info.get("target_high")
+        target_low = info.get("target_low")
+        if target_mean is not None:
+            parts = [f"Mean: ${target_mean:.2f}"]
+            if target_low is not None:
+                parts.append(f"Low: ${target_low:.2f}")
+            if target_high is not None:
+                parts.append(f"High: ${target_high:.2f}")
+            lines.append(f"  Price Targets — {' | '.join(parts)}")
+
+    return "\n".join(lines)

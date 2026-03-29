@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     broker_mode: str = "paper"  # "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
+    finnhub_api_key: str = ""
 
     host: str = "0.0.0.0"
     port: int = 8000
