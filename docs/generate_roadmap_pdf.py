@@ -184,21 +184,21 @@ def header_footer(canvas_obj, doc):
 def generate_scatter_chart():
     """Generate the cost/impact scatter chart."""
     items = [
-        ("TA Module", 0.00, 9, 'gold'),
-        ("Risk Committee", 0.02, 8, 'green'),
-        ("Finnhub Consensus", 0.00, 6, 'gold'),
-        ("Thinking 16K", 0.02, 5, 'green'),
-        ("100+ Universe", 0.05, 7, 'blue'),
-        ("Polygon Paid", 0.15, 7, 'blue'),
-        ("Position Mgmt", 0.02, 6, 'green'),
-        ("Opus Analysis", 0.25, 8, 'orange'),
-        ("Earnings Transcripts", 0.10, 7, 'orange'),
-        ("Multi-Scenario", 0.05, 6, 'orange'),
-        ("Options Activity", 0.15, 7, 'orange'),
-        ("Multi-Agent", 0.80, 9, 'red'),
-        ("Intraday Monitor", 0.10, 6, 'red'),
-        ("Sentiment", 0.05, 5, 'red'),
-        ("Backtesting", 0.05, 8, 'green'),
+        ("TA Module [DONE]", 0.00, 9, 'gold', True),
+        ("Risk Committee [DONE]", 0.02, 8, 'green', True),
+        ("Finnhub Consensus [DONE]", 0.00, 6, 'gold', True),
+        ("Thinking 16K [DONE]", 0.02, 5, 'green', True),
+        ("100+ Universe [DONE]", 0.05, 7, 'blue', True),
+        ("Polygon Paid", 0.15, 7, 'blue', False),
+        ("Position Mgmt [DONE]", 0.02, 6, 'green', True),
+        ("Opus Analysis", 0.25, 8, 'orange', False),
+        ("Earnings Transcripts", 0.10, 7, 'orange', False),
+        ("Multi-Scenario", 0.05, 6, 'orange', False),
+        ("Options Activity", 0.15, 7, 'orange', False),
+        ("Multi-Agent", 0.80, 9, 'red', False),
+        ("Intraday Monitor", 0.10, 6, 'red', False),
+        ("Sentiment", 0.05, 5, 'red', False),
+        ("Backtesting", 0.05, 8, 'green', False),
     ]
 
     color_map = {
@@ -224,32 +224,35 @@ def generate_scatter_chart():
     # Using absolute positions to guarantee no overlaps
     # Labels are connected to dots via thin leader lines
     label_cfg = {
-        "TA Module":            (0.08,  9.45, 'left'),
-        "Backtesting":          (0.10,  8.45, 'left'),
-        "Risk Committee":       (0.08,  7.65, 'left'),
-        "Opus Analysis":        (0.32,  8.40, 'left'),
-        "Multi-Agent":          (0.62,  9.40, 'left'),
-        "100+ Universe":        (0.12,  7.20, 'left'),
-        "Earnings Transcripts": (0.20,  7.40, 'left'),
-        "Polygon Paid":         (0.22,  6.80, 'left'),
-        "Options Activity":     (0.22,  6.40, 'left'),
-        "Multi-Scenario":       (0.12,  6.60, 'left'),
-        "Position Mgmt":        (0.08,  5.70, 'left'),
-        "Finnhub Consensus":    (0.08,  5.30, 'left'),
-        "Intraday Monitor":     (0.20,  5.70, 'left'),
-        "Thinking 16K":         (0.08,  4.55, 'left'),
-        "Sentiment":            (0.12,  4.80, 'left'),
+        "TA Module [DONE]":            (0.08,  9.45, 'left'),
+        "Backtesting":                 (0.10,  8.45, 'left'),
+        "Risk Committee [DONE]":       (0.08,  7.65, 'left'),
+        "Opus Analysis":               (0.32,  8.40, 'left'),
+        "Multi-Agent":                 (0.62,  9.40, 'left'),
+        "100+ Universe [DONE]":        (0.12,  7.20, 'left'),
+        "Earnings Transcripts":        (0.20,  7.40, 'left'),
+        "Polygon Paid":                (0.22,  6.80, 'left'),
+        "Options Activity":            (0.22,  6.40, 'left'),
+        "Multi-Scenario":              (0.12,  6.60, 'left'),
+        "Position Mgmt [DONE]":        (0.08,  5.70, 'left'),
+        "Finnhub Consensus [DONE]":    (0.08,  5.30, 'left'),
+        "Intraday Monitor":            (0.20,  5.70, 'left'),
+        "Thinking 16K [DONE]":         (0.08,  4.55, 'left'),
+        "Sentiment":                   (0.12,  4.80, 'left'),
     }
 
-    for name, cost, impact, tier in items:
+    for name, cost, impact, tier, done in items:
         c = color_map[tier]
-        ax.scatter(cost, impact, s=200, c=c, edgecolors='white',
-                   linewidths=1.5, zorder=5, alpha=0.9)
+        marker = 's' if done else 'o'
+        edge = '#27AE60' if done else 'white'
+        ax.scatter(cost, impact, s=200, c=c, edgecolors=edge,
+                   linewidths=2 if done else 1.5, zorder=5, alpha=0.9, marker=marker)
         lx, ly, ha = label_cfg[name]
+        label_color = '#27AE60' if done else '#2C3E50'
         ax.annotate(name, (cost, impact),
                     xytext=(lx, ly),
                     textcoords='data',
-                    fontsize=7.5, fontweight='medium', color='#2C3E50',
+                    fontsize=7.5, fontweight='bold' if done else 'medium', color=label_color,
                     ha=ha, va='center',
                     arrowprops=dict(arrowstyle='-', color='#BBBBBB', lw=0.6,
                                     shrinkA=0, shrinkB=3))
@@ -290,10 +293,10 @@ def generate_scatter_chart():
 
 def generate_cumulative_chart():
     """Generate the cumulative impact bar chart."""
-    tiers = ['Current', 'Tier 1\n$0.12/day', 'Tier 2\n$0.35/day', 'Tier 3\n$0.70/day', 'Tier 4\n$1.50/day']
-    costs = [0.08, 0.12, 0.35, 0.70, 1.50]
-    num_improvements = [0, 4, 7, 11, 15]
-    colors_bars = ['#9BA3AF', '#27AE60', '#3498DB', '#E67E22', '#E74C3C']
+    tiers = ['Current\n(Tier 1-2\ndone)', 'Tier 3\n$0.70/day', 'Tier 4\n$1.50/day', 'Tier 5\n$5+/day']
+    costs = [0.20, 0.70, 1.50, 5.00]
+    num_improvements = [9, 13, 17, 21]
+    colors_bars = ['#27AE60', '#E67E22', '#E74C3C', '#8E44AD']
 
     fig, ax1 = plt.subplots(figsize=(8, 4.5))
     fig.patch.set_facecolor('#FAFBFD')
@@ -305,14 +308,14 @@ def generate_cumulative_chart():
     bars1 = ax1.bar(x - width/2, costs, width, color=colors_bars, edgecolor='white',
                     linewidth=1.5, alpha=0.85, label='Daily Cost ($)')
     ax1.set_ylabel('Daily Cost ($)', fontsize=10, color='#2C3E50', fontweight='medium')
-    ax1.set_ylim(0, 2.0)
+    ax1.set_ylim(0, 6.0)
 
     ax2 = ax1.twinx()
     bars2 = ax2.bar(x + width/2, num_improvements, width, color=[c + '66' for c in
-                    ['#9BA3AF', '#27AE60', '#3498DB', '#E67E22', '#E74C3C']],
+                    colors_bars],
                     edgecolor=colors_bars, linewidth=1.5, label='Improvements (#)')
     ax2.set_ylabel('Cumulative Improvements', fontsize=10, color='#2C3E50', fontweight='medium')
-    ax2.set_ylim(0, 18)
+    ax2.set_ylim(0, 25)
 
     # Add value labels
     for bar, val in zip(bars1, costs):
@@ -357,25 +360,28 @@ def generate_pipeline_diagram():
 
     configs = [
         {
-            'title': 'Current (2 Calls)',
+            'title': 'Current (6 Calls)',
             'boxes': [
-                ('Research\nData', '#4A90D9', 0.85),
-                ('Call 1: Analysis\n(Sonnet, thinking)', '#1B2A4A', 0.60),
-                ('Call 2: Decision\n(Sonnet)', '#1B2A4A', 0.35),
-                ('Recommendations', '#27AE60', 0.10),
+                ('Research + Technicals\n+ Analyst Data', '#4A90D9', 0.85),
+                ('C1: Analysis\n(Sonnet 16K think)', '#1B2A4A', 0.70),
+                ('C2: Decision\n(Sonnet)', '#1B2A4A', 0.55),
+                ('C3: Risk Review\n(Adversarial)', '#E67E22', 0.40),
+                ('C4: Pos Mgmt\n(Sonnet)', '#1B2A4A', 0.25),
+                ('C5: EOD Review\n(Sonnet)', '#1B2A4A', 0.10),
+                ('C6: Playbook\n(Opus)', '#8E44AD', -0.05),
             ],
-            'cost': '$0.08/day'
+            'cost': '$0.20/day'
         },
         {
-            'title': 'Tier 1 (3 Calls)',
+            'title': 'Tier 3 (7+ Calls)',
             'boxes': [
-                ('Research\nData', '#4A90D9', 0.85),
-                ('Call 1: Analysis\n(Sonnet, thinking)', '#1B2A4A', 0.63),
-                ('Call 2: Decision\n(Sonnet)', '#1B2A4A', 0.43),
-                ('Call 3: Risk Review\n(Adversarial)', '#E67E22', 0.23),
-                ('Recommendations', '#27AE60', 0.03),
+                ('Research + Technicals\n+ Earnings + Options', '#4A90D9', 0.85),
+                ('C1: Analysis\n(Opus, thinking)', '#8E44AD', 0.63),
+                ('C2: Decision\n(Sonnet)', '#1B2A4A', 0.43),
+                ('C3: Risk Review\n(Adversarial)', '#E67E22', 0.23),
+                ('C4-6: Mgmt/EOD/\nPlaybook', '#1B2A4A', 0.03),
             ],
-            'cost': '$0.12/day'
+            'cost': '$0.70/day'
         },
         {
             'title': 'Tier 4 (Multi-Agent)',
@@ -395,7 +401,7 @@ def generate_pipeline_diagram():
     for idx, (ax, cfg) in enumerate(zip(axes, configs)):
         ax.set_facecolor('#FAFBFD')
         ax.set_xlim(0, 1)
-        ax.set_ylim(-0.05, 1.05)
+        ax.set_ylim(-0.15, 1.05)
         ax.axis('off')
         ax.set_title(cfg['title'], fontsize=10, fontweight='bold', color='#1B2A4A', pad=8)
 
@@ -410,17 +416,17 @@ def generate_pipeline_diagram():
             else:
                 w = 0.84
                 x_pos = 0.08
-            h = 0.14
+            h = 0.12
             rect = FancyBboxPatch((x_pos, y), w, h, boxstyle="round,pad=0.02",
                                   facecolor=color, edgecolor='white', linewidth=1.5)
             ax.add_patch(rect)
             ax.text(x_pos + w/2, y + h/2, label, ha='center', va='center',
-                    fontsize=7, color='white', fontweight='bold')
+                    fontsize=6.5, color='white', fontweight='bold')
 
             # Draw arrows between sequential boxes
             if i > 0 and not (is_parallel and i == 2):
                 prev_y = boxes[i-1][2]
-                prev_h = 0.14
+                prev_h = 0.12
                 if is_parallel and i == 3:
                     # Arrow from both parallel boxes
                     ax.annotate('', xy=(0.5, y + h), xytext=(0.27, boxes[1][2]),
@@ -431,7 +437,7 @@ def generate_pipeline_diagram():
                     ax.annotate('', xy=(0.5, y + h), xytext=(0.5, prev_y),
                                 arrowprops=dict(arrowstyle='->', color='#9BA3AF', lw=1.2))
 
-        ax.text(0.5, -0.04, cfg['cost'], ha='center', va='top', fontsize=9,
+        ax.text(0.5, -0.12, cfg['cost'], ha='center', va='top', fontsize=9,
                 fontweight='bold', color='#E67E22')
 
     plt.suptitle('LLM Pipeline Architecture Comparison', fontsize=13,
@@ -473,7 +479,7 @@ def build_pdf():
     ], [
         Spacer(1, 20),
     ], [
-        Paragraph("From $0.08/day to Institutional Quality", styles['CoverSubtitle']),
+        Paragraph("From $0.20/day to Institutional Quality", styles['CoverSubtitle']),
     ], [
         Spacer(1, 8),
     ], [
@@ -498,14 +504,14 @@ def build_pdf():
         [Paragraph('<b>Prepared for:</b>', styles['BodyText2']),
          Paragraph('Scorched AI Trading Bot', styles['BodyText2'])],
         [Paragraph('<b>Date:</b>', styles['BodyText2']),
-         Paragraph('March 28, 2026', styles['BodyText2'])],
+         Paragraph('March 29, 2026', styles['BodyText2'])],
         [Paragraph('<b>Current Capital:</b>', styles['BodyText2']),
          Paragraph('$100,343 ($100K starting)', styles['BodyText2'])],
         [Paragraph('<b>Current Daily Cost:</b>', styles['BodyText2']),
-         Paragraph('$0.08/day ($2.37/month)', styles['BodyText2'])],
+         Paragraph('$0.15-0.25/day ($5-8/month)', styles['BodyText2'])],
         [Paragraph('<b>Recommendation:</b>', styles['BodyText2']),
-         Paragraph('<b>Tier 2 ($0.50/day / $10 per month)</b>', ParagraphStyle(
-             'RecBold', parent=styles['BodyText2'], textColor=TIER_BLUE
+         Paragraph('<b>Tier 3 ($1.00/day / $20 per month)</b>', ParagraphStyle(
+             'RecBold', parent=styles['BodyText2'], textColor=TIER_ORANGE
          ))],
     ]
     info_table = Table(info_data, colWidths=[usable_width * 0.35, usable_width * 0.65])
@@ -528,8 +534,8 @@ def build_pdf():
     toc_items = [
         ("1.", "Current Performance Summary"),
         ("2.", "Cost vs. Impact Analysis"),
-        ("3.", "Tier 1: Better Decisions ($0.25/day)"),
-        ("4.", "Tier 2: See More, Know More ($0.50/day)"),
+        ("3.", "Tier 1: Better Decisions [COMPLETED]"),
+        ("4.", "Tier 2: See More, Know More [MOSTLY DONE]"),
         ("5.", "Tier 3: Institutional Quality ($1.00/day)"),
         ("6.", "Tier 4: Multi-Agent System ($2.50/day)"),
         ("7.", "Tier 5: Institutional Grade (>$5/day)"),
@@ -597,11 +603,14 @@ def build_pdf():
         [Paragraph('<b>Component</b>', styles['BodyText2']),
          Paragraph('<b>Daily Cost</b>', styles['BodyText2']),
          Paragraph('<b>Monthly</b>', styles['BodyText2'])],
-        ['Call 1: Analysis (Sonnet + thinking)', '$0.054', '$1.62'],
+        ['Call 1: Analysis (Sonnet + thinking 16K)', '$0.054', '$1.62'],
         ['Call 2: Decision (Sonnet)', '$0.012', '$0.36'],
-        ['Call 3: EOD Review (Sonnet)', '$0.013', '$0.39'],
-        [Paragraph('<b>Total</b>', styles['BodyText2']), Paragraph('<b>$0.079</b>', styles['BodyText2']),
-         Paragraph('<b>$2.37</b>', styles['BodyText2'])],
+        ['Call 3: Risk Review (Sonnet)', '$0.012', '$0.36'],
+        ['Call 4: Position Mgmt (Sonnet)', '$0.008', '$0.24'],
+        ['Call 5: EOD Review (Sonnet)', '$0.012', '$0.36'],
+        ['Call 6: Playbook Update (Opus)', '$0.100', '$3.00'],
+        [Paragraph('<b>Total</b>', styles['BodyText2']), Paragraph('<b>$0.198</b>', styles['BodyText2']),
+         Paragraph('<b>$5.94</b>', styles['BodyText2'])],
     ]
     cost_table = Table(cost_data, colWidths=[usable_width*0.50, usable_width*0.25, usable_width*0.25])
     cost_table.setStyle(TableStyle([
@@ -619,17 +628,32 @@ def build_pdf():
     story.append(cost_table)
     story.append(Spacer(1, 10))
 
-    # Current gaps callout
+    # Implemented improvements callout
     story.append(CalloutBox(
         usable_width,
-        '<b>Key Gaps Identified:</b><br/>'
-        '&bull; No technical analysis beyond RSI (no MACD, Bollinger Bands, support/resistance)<br/>'
-        '&bull; No analyst consensus or price targets<br/>'
+        '<b>Improvements Implemented Since Launch (March 29, 2026):</b><br/>'
+        '<font color="#27AE60">&bull; Full technical analysis suite (MACD, Bollinger Bands, support/resistance, volume profile)</font><br/>'
+        '<font color="#27AE60">&bull; Analyst consensus and price targets via Finnhub</font><br/>'
+        '<font color="#27AE60">&bull; Risk committee (adversarial Call 3) challenges weak theses</font><br/>'
+        '<font color="#27AE60">&bull; Expanded universe to 100+ stocks via S&amp;P 500 momentum screener</font><br/>'
+        '<font color="#27AE60">&bull; Polygon news descriptions (partial -- not full articles but better than headlines-only)</font><br/>'
+        '<font color="#27AE60">&bull; Position management, EOD review, and playbook update calls added</font><br/>'
+        '<font color="#27AE60">&bull; Thinking budget increased to 16K tokens</font>',
+        TIER_GREEN, HexColor('#F0FAF4'), styles['CalloutText']
+    ))
+    story.append(Spacer(1, 8))
+
+    # Remaining gaps callout
+    story.append(CalloutBox(
+        usable_width,
+        '<b>Remaining Gaps:</b><br/>'
+        '&bull; No earnings transcript analysis (management commentary is a leading indicator)<br/>'
+        '&bull; No unusual options flow detection (smart money signals)<br/>'
         '&bull; No sentiment data from social media or news<br/>'
-        '&bull; Single LLM pass with no adversarial review (thesis failures go unchallenged)<br/>'
-        '&bull; 40-stock watchlist limits opportunity discovery<br/>'
-        '&bull; Headlines only from news sources (no full article context)<br/>'
-        '&bull; 15-minute delayed price data via yfinance',
+        '&bull; No multi-scenario simulation (bull/bear/base cases)<br/>'
+        '&bull; No intraday monitoring (cannot react to flash crashes)<br/>'
+        '&bull; 15-minute delayed price data via yfinance<br/>'
+        '&bull; Polygon free tier provides summaries, not full article text',
         ACCENT_ORANGE, HexColor('#FFF8F0'), styles['CalloutText']
     ))
 
@@ -658,10 +682,10 @@ def build_pdf():
 
     story.append(CalloutBox(
         usable_width,
-        '<b>Key Insight:</b> The technical analysis module (MACD, Bollinger Bands, support/resistance) '
-        'and backtesting framework are the highest-impact improvements at zero marginal cost. '
-        'They require only compute time, not API spend. The risk committee call at $0.02/day '
-        'is the single best dollar-for-dollar investment, directly addressing the #1 loss pattern.',
+        '<b>Key Insight:</b> Items marked [DONE] in green are already implemented and active in production. '
+        'The highest-impact free improvements (technical analysis, expanded universe) and the risk committee '
+        'are all live. The next tier of improvements centers on Opus-quality reasoning for analysis '
+        'and leading-indicator data sources (earnings transcripts, unusual options activity).',
         DARK_BLUE, HexColor('#EEF2F7'), styles['CalloutText']
     ))
 
@@ -672,53 +696,54 @@ def build_pdf():
     # ═══════════════════════════════════════
     tiers = [
         {
-            'num': 3, 'name': 'Tier 1: Better Decisions',
-            'cost': '$0.25/day ($5/month)', 'effective': '$0.12/day effective',
+            'num': 3, 'name': 'Tier 1: Better Decisions [COMPLETED]',
+            'cost': '$0.25/day ($5/month)', 'effective': 'ALL IMPLEMENTED',
             'color': TIER_GREEN,
             'items': [
-                ('Technical Analysis Module', '$0.00/day',
-                 'Add MACD, Bollinger Bands, and support/resistance levels computed locally. '
-                 'Fills the biggest analytical gap at zero cost. Claude currently makes decisions '
-                 'with only RSI -- like a doctor diagnosing with only temperature.'),
-                ('Risk Committee Call', '$0.02/day',
-                 'A third Claude call that plays devil\'s advocate, actively trying to poke holes '
-                 'in the trading thesis. Could have prevented both FCX (-$1,681) and ORCL (-$978) '
-                 'by challenging weak catalysts.'),
-                ('Finnhub Analyst Consensus', '$0.00/day',
+                ('Technical Analysis Module [DONE]', '$0.00/day',
+                 'MACD, Bollinger Bands, support/resistance, and volume profile computed locally. '
+                 'Fills the biggest analytical gap at zero cost. Implemented March 2026.'),
+                ('Risk Committee Call [DONE]', '$0.02/day',
+                 'Adversarial Call 3 plays devil\'s advocate, actively trying to poke holes '
+                 'in the trading thesis. Default-reject stance filters weak recommendations.'),
+                ('Finnhub Analyst Consensus [DONE]', '$0.00/day',
                  'Free API providing analyst price targets and consensus ratings. Adds a '
                  '"Wall Street sanity check" to every recommendation.'),
-                ('Increase Thinking Budget', '$0.02/day',
-                 'Double the extended thinking budget from 8K to 16K tokens. Gives the analysis '
+                ('Increase Thinking Budget [DONE]', '$0.02/day',
+                 'Extended thinking budget doubled from 8K to 16K tokens. Gives the analysis '
                  'call more room for deeper reasoning on complex setups.'),
             ],
             'message': (
-                'This tier adds a skeptical second opinion and free data sources. '
+                'All Tier 1 improvements have been implemented as of March 29, 2026. '
                 'The risk committee alone could have prevented the two biggest losses '
                 '(FCX + ORCL = -$2,659 combined), which exceeds the entire 30-day cost of '
-                'running this tier for over 5 years.'
+                'running this tier for over 5 years. These are now active in production.'
             ),
         },
         {
-            'num': 4, 'name': 'Tier 2: See More, Know More',
-            'cost': '$0.50/day ($10/month)', 'effective': '$0.35/day effective',
+            'num': 4, 'name': 'Tier 2: See More, Know More [MOSTLY DONE]',
+            'cost': '$0.50/day ($10/month)', 'effective': '3 of 4 IMPLEMENTED',
             'color': TIER_BLUE,
             'items': [
-                ('Everything in Tier 1', '--', 'All Tier 1 improvements carry forward.'),
-                ('Expand Universe to 100+ Stocks', '$0.05/day',
-                 'Widen the momentum screener beyond the current 40-stock watchlist. '
-                 'The bot\'s best trades (HAL, CF, SLB) came from the screener, not the watchlist.'),
-                ('Polygon Paid Tier', '$0.15/day',
-                 'Full article text instead of headlines only. Claude currently guesses article '
-                 'content from titles -- like reading a book by its cover.'),
-                ('Position Management Call', '$0.02/day',
-                 'An EOD call focused on open positions: should stops be tightened? '
-                 'Has the thesis changed? Proactive instead of reactive.'),
+                ('Everything in Tier 1 [DONE]', '--', 'All Tier 1 improvements implemented and active.'),
+                ('Expand Universe to 100+ Stocks [DONE]', '$0.00/day',
+                 'S&P 500 momentum screener scans top 30 by 5-day momentum (price > 20d MA, volume > 1M). '
+                 'The bot\'s best trades came from the screener, not the static watchlist.'),
+                ('Polygon News Descriptions [PARTIAL]', '$0.00/day',
+                 'Free tier now provides article descriptions/summaries, not just headlines. '
+                 'Full article text requires paid tier ($0.15/day) -- not yet upgraded.'),
+                ('Position Management Call [DONE]', '$0.01/day',
+                 'Call 4: EOD position review -- should stops be tightened? Has the thesis changed? '
+                 'Proactive instead of reactive. Active in production.'),
+                ('EOD Review + Playbook Update [BONUS]', '$0.07-0.17/day',
+                 'Calls 5-6 added beyond original Tier 2 plan: EOD review compares morning thesis vs '
+                 'outcomes (Sonnet), Playbook Update uses Opus to maintain a living strategy document.'),
             ],
             'message': (
-                'A wider opportunity set combined with proactive position management. '
-                'The best trades consistently came from the screener discovering stocks '
-                'the watchlist missed. Full article text transforms Claude\'s news analysis '
-                'from headline speculation to informed assessment.'
+                'Most Tier 2 improvements are implemented. The expanded universe and position '
+                'management are active. Additionally, EOD Review (Call 5) and Playbook Update '
+                '(Call 6, using Opus) were added beyond the original Tier 2 plan. '
+                'The only remaining Tier 2 item is upgrading to Polygon paid tier for full article text.'
             ),
         },
         {
@@ -871,11 +896,10 @@ def build_pdf():
          Paragraph('<b>Monthly</b>', styles['BodyText2']),
          Paragraph('<b>Annual</b>', styles['BodyText2']),
          Paragraph('<b>% of $100K Capital</b>', styles['BodyText2'])],
-        ['Current', '$0.08', '$2.37', '$29', '0.03%'],
-        ['Tier 1', '$0.12', '$3.60', '$44', '0.04%'],
-        ['Tier 2', '$0.35', '$10.50', '$128', '0.13%'],
+        ['Current (Tier 1-2 done)', '$0.20', '$5.94', '$72', '0.07%'],
         ['Tier 3', '$0.70', '$21.00', '$256', '0.26%'],
         ['Tier 4', '$1.50', '$45.00', '$548', '0.55%'],
+        ['Tier 5', '$5.00+', '$150+', '$1,825+', '1.8%+'],
     ]
     sum_table = Table(sum_data, colWidths=[usable_width*0.18, usable_width*0.18,
                                            usable_width*0.18, usable_width*0.18, usable_width*0.28])
@@ -890,7 +914,7 @@ def build_pdf():
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, SOFT_GRAY]),
         ('LINEBELOW', (0, 0), (-1, -1), 0.3, MED_GRAY),
-        ('BACKGROUND', (0, 3), (-1, 3), HexColor('#E8F4FD')),
+        ('BACKGROUND', (0, 2), (-1, 2), HexColor('#FFF3E0')),
     ]))
     story.append(sum_table)
 
@@ -913,20 +937,26 @@ def build_pdf():
     check = '<font color="#27AE60"><b>YES</b></font>'
     cross = '<font color="#CC0000">--</font>'
 
+    partial = '<font color="#E67E22"><b>PARTIAL</b></font>'
+
     ds_data = [
-        ['', 'Current', 'Tier 1', 'Tier 2', 'Tier 3', 'Tier 4'],
-        ['Price Data (delayed)', check, check, check, check, check],
-        ['Fundamentals', check, check, check, check, check],
-        ['News Headlines', check, check, check, check, check],
-        ['Full Article Text', cross, cross, check, check, check],
-        ['Macro Indicators (FRED)', check, check, check, check, check],
-        ['RSI (14)', check, check, check, check, check],
-        ['Full Technicals (MACD/BB/S-R)', cross, check, check, check, check],
-        ['Analyst Consensus', cross, check, check, check, check],
-        ['Earnings Transcripts', cross, cross, cross, check, check],
-        ['Unusual Options Flow', cross, cross, cross, check, check],
-        ['Sentiment (Social/News)', cross, cross, cross, cross, check],
-        ['Real-Time Data', cross, cross, cross, cross, cross],
+        ['', 'Current', 'Tier 3', 'Tier 4', 'Tier 5'],
+        ['Price Data (delayed)', check, check, check, check],
+        ['Fundamentals', check, check, check, check],
+        ['News Headlines', check, check, check, check],
+        ['News Descriptions', check, check, check, check],
+        ['Full Article Text', cross, check, check, check],
+        ['Macro Indicators (FRED)', check, check, check, check],
+        ['RSI (14)', check, check, check, check],
+        ['Full Technicals (MACD/BB/S-R)', check, check, check, check],
+        ['Analyst Consensus', check, check, check, check],
+        ['Risk Committee Review', check, check, check, check],
+        ['Position Management', check, check, check, check],
+        ['Earnings Transcripts', cross, check, check, check],
+        ['Unusual Options Flow', cross, check, check, check],
+        ['Multi-Scenario Simulation', cross, check, check, check],
+        ['Sentiment (Social/News)', cross, cross, check, check],
+        ['Real-Time Data', cross, cross, cross, check],
     ]
 
     # Convert strings to Paragraphs
@@ -938,8 +968,8 @@ def build_pdf():
                                             alignment=TA_CENTER, fontSize=9))
              for cell in row[1:]])
 
-    cw = usable_width / 6
-    ds_table = Table(ds_formatted, colWidths=[cw * 1.8, cw * 0.84, cw * 0.84, cw * 0.84, cw * 0.84, cw * 0.84])
+    cw = usable_width / 5
+    ds_table = Table(ds_formatted, colWidths=[cw * 1.8, cw * 0.80, cw * 0.80, cw * 0.80, cw * 0.80])
     ds_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), DARK_BLUE),
         ('TEXTCOLOR', (0, 0), (-1, 0), white),
@@ -966,9 +996,10 @@ def build_pdf():
     story.append(Spacer(1, 8))
 
     story.append(Paragraph(
-        "The current two-call pipeline handles everything in a single analysis pass with "
-        "no adversarial review. Tier 1 adds a risk committee call that challenges the thesis "
-        "before execution. Tier 4 implements a full multi-agent system with specialized roles.",
+        "The current six-call pipeline includes analysis with extended thinking, a separate decision call, "
+        "an adversarial risk committee, position management, EOD review, and an Opus-powered playbook update. "
+        "Tier 3 upgrades the analysis call to Opus and adds earnings/options data. "
+        "Tier 4 implements a full multi-agent system with specialized roles.",
         styles['BodyText2']
     ))
     story.append(Spacer(1, 6))
@@ -980,13 +1011,13 @@ def build_pdf():
 
     # Architecture details table
     arch_data = [
-        ['', 'Current', 'Tier 1', 'Tier 4'],
-        ['Claude Calls/Day', '3', '4', '8-10'],
-        ['Models Used', 'Sonnet only', 'Sonnet only', 'Opus + Sonnet'],
-        ['Adversarial Review', 'None', 'Risk Committee', 'Full Committee'],
-        ['Specialization', 'Generalist', 'Generalist + Skeptic', '3 Specialists'],
-        ['Position Monitoring', 'EOD only', 'EOD only', 'Intraday (3x)'],
-        ['Estimated Daily Cost', '$0.08', '$0.12', '$1.50'],
+        ['', 'Current', 'Tier 3', 'Tier 4'],
+        ['Claude Calls/Day', '6', '7+', '8-10'],
+        ['Models Used', 'Sonnet + Opus', 'Opus + Sonnet', 'Opus + Sonnet'],
+        ['Adversarial Review', 'Risk Committee', 'Risk Committee', 'Full Committee'],
+        ['Specialization', 'Generalist + Skeptic', 'Opus Analysis + Skeptic', '3 Specialists'],
+        ['Position Monitoring', 'EOD (Call 4-5)', 'EOD + Intraday', 'Intraday (3x)'],
+        ['Estimated Daily Cost', '$0.20', '$0.70', '$1.50'],
     ]
     arch_formatted = []
     for row in arch_data:
@@ -1025,15 +1056,15 @@ def build_pdf():
     # Big recommendation callout
     rec_data = [[
         Paragraph(
-            '<font size="18" color="#FFFFFF"><b>RECOMMENDED: Tier 2</b></font><br/>'
-            '<font size="13" color="#B0C4DE">$0.50/day  |  $10/month  |  $128/year</font>',
+            '<font size="18" color="#FFFFFF"><b>RECOMMENDED: Tier 3</b></font><br/>'
+            '<font size="13" color="#B0C4DE">$1.00/day  |  $20/month  |  $256/year</font>',
             ParagraphStyle('RecTitle', parent=styles['CoverTitle'], fontSize=18, leading=28,
                           alignment=TA_CENTER)
         )
     ]]
     rec_table = Table(rec_data, colWidths=[usable_width])
     rec_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), TIER_BLUE),
+        ('BACKGROUND', (0, 0), (-1, -1), TIER_ORANGE),
         ('TOPPADDING', (0, 0), (-1, -1), 16),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 16),
         ('LEFTPADDING', (0, 0), (-1, -1), 20),
@@ -1043,19 +1074,21 @@ def build_pdf():
     story.append(rec_table)
     story.append(Spacer(1, 16))
 
-    story.append(Paragraph("Why Tier 2?", styles['SubSection']))
+    story.append(Paragraph("Why Tier 3?", styles['SubSection']))
     story.append(Spacer(1, 4))
 
     reasons = [
-        ('<b>Technical analysis module is FREE</b> and fills the single biggest analytical gap. '
-         'MACD, Bollinger Bands, and support/resistance levels are computed locally with zero API cost.'),
-        ('<b>Risk committee prevents thesis failures</b> -- the #1 loss pattern. An adversarial '
-         'third call at $0.02/day could have saved $2,659 in the first month alone.'),
-        ('<b>Expanded universe catches more opportunities.</b> The bot\'s best trades (HAL +$891, '
-         'CF +$445, SLB +$367) all came from the momentum screener, not the static watchlist.'),
-        ('<b>Polygon full articles give Claude real context</b> instead of guessing article content '
-         'from headlines. At $0.15/day, this transforms news analysis from speculation to assessment.'),
-        ('<b>Analyst consensus adds a Wall Street sanity check</b> at zero cost via Finnhub free tier.'),
+        ('<b>Tier 1 and most of Tier 2 are already implemented.</b> Technical analysis, risk committee, '
+         'analyst consensus, expanded universe, position management, EOD review, and playbook update '
+         'are all active in production at ~$0.20/day.'),
+        ('<b>Opus-quality reasoning for analysis</b> catches thesis errors that Sonnet misses. '
+         'The analysis call is where conviction is formed -- it deserves the strongest model.'),
+        ('<b>Earnings transcripts provide leading indicators</b> -- management commentary on guidance, '
+         'margin outlook, and strategic pivots that price data alone cannot capture.'),
+        ('<b>Unusual options activity detects smart money.</b> Large unusual options trades often precede '
+         'significant price moves by 1-5 days -- exactly the bot\'s holding period.'),
+        ('<b>Multi-scenario simulation forces explicit downside consideration</b> before entering '
+         'positions. Bull/bear/base cases prevent over-conviction on single narratives.'),
     ]
     for reason in reasons:
         story.append(Paragraph(f'&bull;&nbsp;&nbsp;{reason}', styles['BulletItem']))
@@ -1067,12 +1100,13 @@ def build_pdf():
     story.append(CalloutBox(
         usable_width,
         '<b>Return on Investment:</b><br/><br/>'
-        'Annual cost of Tier 2: <b>$128</b><br/>'
-        'Cost as % of $100K capital: <b>0.13%</b><br/>'
+        'Annual cost of Tier 3: <b>$256</b><br/>'
+        'Cost as % of $100K capital: <b>0.26%</b><br/>'
         'FCX + ORCL losses (preventable): <b>$2,659</b><br/>'
-        'Breakeven: Tier 2 pays for itself if it prevents <b>one bad trade per year</b>.<br/><br/>'
-        'At scale ($50K+ capital), even Tier 3 at $256/year represents just 0.5% of capital -- '
-        'well below the 1-2% expense ratio of most actively managed funds.',
+        'Breakeven: Tier 3 pays for itself if it prevents <b>one bad trade per year</b>.<br/><br/>'
+        'At $256/year, Tier 3 represents just 0.26% of capital -- well below the 1-2% expense '
+        'ratio of most actively managed funds. The Opus upgrade alone could meaningfully improve '
+        'the win rate from 42% toward the 55%+ target.',
         TIER_GREEN, HexColor('#F0FAF4'), styles['CalloutText']
     ))
 
@@ -1086,16 +1120,18 @@ def build_pdf():
         [Paragraph('<b>Week</b>', styles['BodyText2']),
          Paragraph('<b>Action</b>', styles['BodyText2']),
          Paragraph('<b>Expected Result</b>', styles['BodyText2'])],
-        ['Week 1', 'Implement technical analysis module (free)',
-         'MACD, BB, S/R levels in every analysis'],
-        ['Week 2', 'Add risk committee call + Finnhub consensus',
-         'Adversarial review catches weak theses'],
-        ['Week 3', 'Expand universe + add position management',
-         'Wider opportunity set, tighter stop management'],
-        ['Week 4', 'Upgrade to Polygon paid tier',
-         'Full article text improves news analysis'],
-        ['Week 5+', 'Monitor results and evaluate Tier 3',
-         'Data-driven decision on further investment'],
+        ['Week 1', 'Upgrade Polygon to paid tier ($0.15/day)',
+         'Full article text improves news analysis quality'],
+        ['Week 2', 'Upgrade Call 1 to Opus ($0.25/day)',
+         'Stronger reasoning catches thesis errors Sonnet misses'],
+        ['Week 3', 'Add earnings transcript analysis ($0.10/day)',
+         'Management commentary as leading indicator'],
+        ['Week 4', 'Add multi-scenario simulation ($0.05/day)',
+         'Explicit bull/bear/base cases for each candidate'],
+        ['Week 5', 'Add unusual options activity detection ($0.15/day)',
+         'Smart money signals improve entry timing'],
+        ['Week 6+', 'Monitor results and evaluate Tier 4',
+         'Data-driven decision on multi-agent pipeline'],
     ]
 
     tl_table = Table(timeline_data, colWidths=[usable_width*0.12, usable_width*0.44, usable_width*0.44])
@@ -1117,7 +1153,7 @@ def build_pdf():
     story.append(HRFlowable(width="100%", thickness=0.5, color=DARK_BLUE))
     story.append(Spacer(1, 8))
     story.append(Paragraph(
-        "Generated March 28, 2026  |  Scorched AI Trading Bot  |  Confidential",
+        "Generated March 29, 2026  |  Scorched AI Trading Bot  |  Confidential",
         styles['SmallNote']
     ))
 

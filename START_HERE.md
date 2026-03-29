@@ -22,7 +22,7 @@ The bot runs completely on its own. Once set up, you don't need to do anything â
 
 ### 1. An Anthropic API Key (required)
 
-This is how you pay for Claude's "brain." The bot uses about **$0.10 per day** in API costs (roughly $2-3/month).
+This is how you pay for Claude's "brain." The bot makes 6 AI calls per day and costs about **$0.15-0.25 per day** (~$5-8/month).
 
 - Go to [console.anthropic.com](https://console.anthropic.com)
 - Create an account and add a payment method
@@ -211,7 +211,7 @@ docker compose up -d --build
 ## FAQ
 
 **How much does it cost to run?**
-About $2-3/month for the Claude API. Everything else is free (free data sources, free Docker, free Oracle Cloud VM if you use one).
+About $5-8/month for the Claude API (6 AI calls per day across two models). Everything else is free (free data sources, free Docker, free Oracle Cloud VM if you use one).
 
 **Is this real money?**
 Not by default. It starts as paper trading with simulated $100,000. You can optionally connect an Alpaca brokerage account later if you want to go live.
