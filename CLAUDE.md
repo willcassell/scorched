@@ -17,14 +17,14 @@ docker compose up -d --build tradebot
 alembic upgrade head
 alembic revision --autogenerate -m "description"
 
-# Deploy to VM (from Mac — never overwrites .env on VM)
-rsync -av -e "ssh -i ~/Downloads/ssh-key-2026-02-19-private.key" \
+# Deploy to VM (never overwrites .env on VM)
+rsync -av -e "ssh -i /path/to/ssh-key.key" \
   --exclude='.venv' --exclude='.git' --exclude='__pycache__' \
   --exclude='*.pyc' --exclude='.env' \
-  ~/Projects/claude/tradebot/ ubuntu@129.213.37.242:~/tradebot/
+  /path/to/tradebot/ ubuntu@YOUR_VM_IP:~/tradebot/
 
 # SSH to VM
-ssh -i ~/Downloads/ssh-key-2026-02-19-private.key ubuntu@129.213.37.242
+ssh -i /path/to/ssh-key.key ubuntu@YOUR_VM_IP
 
 # Edit crontab on VM
 crontab -e

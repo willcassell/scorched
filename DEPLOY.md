@@ -6,18 +6,18 @@ Copy the entire project directory using rsync with your SSH key:
 
 ```bash
 # Fix key permissions first (required — SSH refuses keys that are world-readable)
-chmod 600 ~/Downloads/ssh-key-2026-02-19-private.key
+chmod 600 /path/to/your-ssh-key.key
 
-# Sync project to VM (run from your Mac)
+# Sync project to VM (run from your local machine)
 rsync -av \
-  -e "ssh -i ~/Downloads/ssh-key-2026-02-19-private.key" \
+  -e "ssh -i /path/to/your-ssh-key.key" \
   --exclude='.venv' \
   --exclude='.git' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='.env' \
-  ~/Projects/claude/tradebot/ \
-  ubuntu@129.213.37.242:~/tradebot/
+  /path/to/tradebot/ \
+  ubuntu@YOUR_VM_IP:~/tradebot/
 ```
 
 For subsequent deploys (after code changes), the same command is safe to re-run — rsync only transfers files that have changed.
@@ -25,10 +25,10 @@ For subsequent deploys (after code changes), the same command is safe to re-run 
 To SSH into the VM directly:
 
 ```bash
-ssh -i ~/Downloads/ssh-key-2026-02-19-private.key ubuntu@129.213.37.242
+ssh -i /path/to/your-ssh-key.key ubuntu@YOUR_VM_IP
 ```
 
-**Files that must be present on the VM:**
+**Key files that must be present on the VM:**
 
 ```
 tradebot/
@@ -37,39 +37,25 @@ tradebot/
 ├── entrypoint.sh
 ├── pyproject.toml
 ├── alembic.ini
+├── strategy.json
+├── analyst_guidance.md
 ├── .env                  ← you create this (see Section 3)
-├── alembic/
-│   ├── env.py
-│   └── versions/
-└── src/
-    └── scorched/
-        ├── __init__.py
-        ├── main.py
-        ├── config.py
-        ├── cost.py
-        ├── database.py
-        ├── models.py
-        ├── schemas.py
-        ├── mcp_tools.py
-        ├── tax.py
-        ├── static/
-        │   └── dashboard.html
-        ├── api/
-        │   ├── __init__.py
-        │   ├── costs.py
-        │   ├── market.py
-        │   ├── playbook.py
-        │   ├── portfolio.py
-        │   ├── recommendations.py
-        │   ├── strategy.py
-        │   └── trades.py
-        └── services/
-            ├── __init__.py
-            ├── playbook.py
-            ├── portfolio.py
-            ├── recommender.py
-            ├── research.py
-            └── strategy.py
+├── alembic/              ← database migrations
+├── cron/                 ← daily automation scripts
+│   ├── common.py
+│   ├── tradebot_phase1.py
+│   ├── tradebot_phase1_5.py
+│   ├── tradebot_phase2.py
+│   └── tradebot_phase3.py
+└── src/scorched/         ← main application
+    ├── main.py
+    ├── config.py
+    ├── models.py
+    ├── prompts/          ← Claude system prompts
+    ├── api/              ← REST endpoints
+    ├── broker/           ← Alpaca / paper broker
+    ├── services/         ← business logic
+    └── static/           ← dashboard HTML
 ```
 
 ---
@@ -223,93 +209,34 @@ The daily trading cycle is driven entirely by cron jobs on the VM. No AI orchest
 crontab -e
 ```
 
-Add these lines:
+Add these lines (all times are UTC — see DST table below):
 
 ```cron
-# ── Tradebot daily cycle (times in UTC) ──────────────────────────────────────
+# ── Tradebot daily cycle (times in UTC, after DST) ──────────────────────────
 
-# Phase 1: Pre-market research + recommendations (8:30 AM ET)
-# After DST (Mar 8 – Nov 1):   30 12 * * 1-5
-# Before DST (Nov 1 – Mar 8):  30 13 * * 1-5
-30 12 * * 1-5 curl -s -X POST http://localhost:8000/api/v1/recommendations/generate -H "Content-Type: application/json" -d '{}' >> /home/ubuntu/tradebot/cron.log 2>&1
+# Phase 1: Pre-market research + recommendations (8:30 AM ET = 12:30 UTC)
+30 12 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase1.py >> ~/tradebot/cron.log 2>&1
 
-# Phase 2: Confirm trades at opening prices (9:45 AM ET)
-# After DST:   45 13 * * 1-5
-# Before DST:  45 14 * * 1-5
-45 13 * * 1-5 /home/ubuntu/tradebot/scripts/confirm_trades.sh >> /home/ubuntu/tradebot/cron.log 2>&1
+# Phase 1.5: Circuit breaker gate (9:30 AM ET = 13:30 UTC)
+30 13 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase1_5.py >> ~/tradebot/cron.log 2>&1
+
+# Phase 2: Confirm trades at opening prices (9:35 AM ET = 13:35 UTC)
+35 13 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase2.py >> ~/tradebot/cron.log 2>&1
+
+# Phase 3: EOD summary + playbook update (4:01 PM ET = 20:01 UTC)
+01 20 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase3.py >> ~/tradebot/cron.log 2>&1
 ```
 
-### Phase 1: Recommendation generation
+### What Each Phase Does
 
-The Phase 1 cron directly POSTs to the recommendations endpoint:
+| Phase | Time (ET) | Script | Action |
+|-------|-----------|--------|--------|
+| 1 | 8:30 AM | `cron/tradebot_phase1.py` | Generates recommendations via Claude, sends Telegram notification |
+| 1.5 | 9:30 AM | `cron/tradebot_phase1_5.py` | Circuit breaker — blocks buys that fail safety checks |
+| 2 | 9:35 AM | `cron/tradebot_phase2.py` | Confirms trades at opening prices via broker |
+| 3 | 4:01 PM | `cron/tradebot_phase3.py` | EOD review, playbook update, summary notification |
 
-```bash
-curl -s -X POST http://localhost:8000/api/v1/recommendations/generate \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-The response includes the session_id and all pending recommendation IDs with suggested prices.
-
-### Phase 2: Trade confirmation script
-
-Create `/home/ubuntu/tradebot/scripts/confirm_trades.sh`:
-
-```bash
-#!/bin/bash
-# Fetch today's pending recommendations and confirm each at the opening price.
-
-BASE="http://localhost:8000/api/v1"
-
-# Get today's pending recommendations
-RECS=$(curl -s "$BASE/recommendations" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-# Get today's session
-sessions = data if isinstance(data, list) else data.get('sessions', [])
-today = sessions[0] if sessions else {}
-recs = today.get('recommendations', [])
-for r in recs:
-    if r.get('status') == 'pending':
-        print(r['id'], r['symbol'])
-" 2>/dev/null)
-
-if [ -z "$RECS" ]; then
-    echo "$(date): No pending recommendations found."
-    exit 0
-fi
-
-# For each pending rec, fetch the opening price and confirm
-while IFS=' ' read -r REC_ID SYMBOL; do
-    # Fetch opening price for this symbol
-    OPEN_PRICE=$(curl -s -X POST "$BASE/trades/opening-prices" \
-      -H "Content-Type: application/json" \
-      -d "{\"symbols\": [\"$SYMBOL\"]}" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-prices = data.get('opening_prices', {})
-p = prices.get('$SYMBOL')
-print(p if p else '')
-" 2>/dev/null)
-
-    if [ -z "$OPEN_PRICE" ] || [ "$OPEN_PRICE" = "None" ]; then
-        echo "$(date): No opening price for $SYMBOL — skipping $REC_ID"
-        continue
-    fi
-
-    # Confirm the trade at the opening price
-    curl -s -X POST "$BASE/trades/confirm" \
-      -H "Content-Type: application/json" \
-      -d "{\"recommendation_id\": $REC_ID, \"execution_price\": $OPEN_PRICE}" \
-      && echo "$(date): Confirmed $SYMBOL (rec $REC_ID) @ \$$OPEN_PRICE"
-
-done <<< "$RECS"
-```
-
-```bash
-chmod +x /home/ubuntu/tradebot/scripts/confirm_trades.sh
-mkdir -p /home/ubuntu/tradebot/scripts
-```
+All scripts read `.env` from the project root automatically and send results via Telegram (if configured).
 
 ### DST time adjustments
 
@@ -344,7 +271,7 @@ curl -s http://localhost:8000/api/v1/market/summary | python3 -m json.tool
 Once running, open a browser to:
 
 ```
-http://129.213.37.242:8000
+http://YOUR_VM_IP:8000
 ```
 
 You'll see:
@@ -353,8 +280,6 @@ You'll see:
 - **Right column**: Tax summary (ST/LT breakdown), living strategy playbook, strategy settings editor
 
 The dashboard auto-refreshes every 5 minutes.
-
-Tailscale address for remote access: `http://100.69.228.37:8000`
 
 ---
 

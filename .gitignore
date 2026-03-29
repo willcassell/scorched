@@ -1,9 +1,30 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
 *.egg-info/
 dist/
 build/
+
+# Environment and secrets
 .env
+
+# Logs
 logs/
 *.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker data
+postgres_data/
+
+# Superpowers plugin state
+.superpowers/
+
+# OS files
+.DS_Store
+Thumbs.db
