@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRADEBOT // SYSTEM HEALTH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0c0f;
+    --surface:  #0f1217;
+    --border:   #253040;
+    --border2:  #344558;
+    --text:     #b8cce0;
+    --text-dim: #6a8099;
+    --text-hi:  #e8f2fc;
+    --amber:    #e8a030;
+    --amber-dim:#7a5018;
+    --green:    #2ec87a;
+    --green-dim:#134d30;
+    --red:      #e84040;
+    --red-dim:  #5a1818;
+    --yellow:   #eab308;
+    --yellow-dim:#5a4a08;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --fs-base: 14px;
+    --card-bg: #111820;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: var(--fs-base);
+    line-height: 1.5;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Topbar */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 20px; }
+  .back-link {
+    color: var(--amber);
+    text-decoration: none;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    transition: color 0.15s;
+  }
+  .back-link:hover { color: var(--text-hi); }
+  .logo {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--text-dim); font-weight: 300; }
+  .topbar-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--text-dim); }
+  .refresh-indicator { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.08em; }
+  .refresh-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green); animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .refresh-btn {
+    background: none; border: 1px solid var(--border2); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 4px 10px;
+    cursor: pointer; letter-spacing: 0.1em; transition: all 0.15s;
+  }
+  .refresh-btn:hover { border-color: var(--amber); color: var(--amber); }
+  .refresh-btn.spinning { opacity: 0.5; pointer-events: none; }
+
+  /* Main content */
+  .content { padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+
+  /* Section titles */
+  .section-title {
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Service cards grid */
+  .service-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 900px) {
+    .service-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 500px) {
+    .service-grid { grid-template-columns: 1fr; }
+  }
+  .service-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border2);
+    padding: 12px 14px;
+    transition: border-color 0.2s;
+  }
+  .service-card.status-green  { border-left-color: var(--green); }
+  .service-card.status-yellow { border-left-color: var(--yellow); }
+  .service-card.status-red    { border-left-color: var(--red); }
+  .service-card.status-none   { border-left-color: var(--border2); }
+  .service-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-hi);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .service-pct {
+    font-size: 28px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+  .service-pct.green  { color: var(--green); }
+  .service-pct.yellow { color: var(--yellow); }
+  .service-pct.red    { color: var(--red); }
+  .service-pct.none   { color: var(--text-dim); }
+  .service-calls {
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+  .service-latency {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+  }
+
+  /* Errors section */
+  .errors-container {
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    max-height: 300px;
+    overflow-y: auto;
+    margin-bottom: 24px;
+  }
+  .error-row {
+    display: grid;
+    grid-template-columns: 80px 90px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .error-row:last-child { border-bottom: none; }
+  @media (max-width: 700px) {
+    .error-row {
+      grid-template-columns: 70px 80px 1fr;
+    }
+    .error-symbol { display: none; }
+  }
+  .error-time {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+  .error-time.error   { color: var(--red); }
+  .error-time.ratelimit { color: var(--yellow); }
+  .error-time.timeout { color: var(--amber); }
+  .service-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 2px;
+    background: rgba(184,204,224,0.08);
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .error-msg {
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 300;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .error-symbol {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    text-align: right;
+  }
+  .empty-state {
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 24px 0;
+    text-align: center;
+  }
+
+  /* Trend table */
+  .trend-container {
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    overflow-x: auto;
+    margin-bottom: 24px;
+  }
+  .trend-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 600px;
+  }
+  .trend-table th,
+  .trend-table td {
+    padding: 8px 10px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .trend-table th:last-child,
+  .trend-table td:last-child { border-right: none; }
+  .trend-table tr:last-child td { border-bottom: none; }
+  .trend-table thead th {
+    background: var(--surface);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+  }
+  .trend-table .service-col {
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-hi);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .trend-cell {
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    border-radius: 2px;
+  }
+  .trend-cell.green  { background: rgba(46,200,122,0.12); color: var(--green); }
+  .trend-cell.yellow { background: rgba(234,179,8,0.12); color: var(--yellow); }
+  .trend-cell.red    { background: rgba(232,64,64,0.12); color: var(--red); }
+  .trend-cell.none   { color: var(--text-dim); }
+
+  /* Skeleton loading */
+  .skeleton {
+    background: linear-gradient(90deg, var(--border) 25%, var(--border2) 50%, var(--border) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 2px;
+    display: inline-block;
+  }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .sk-line { height: 12px; margin-bottom: 6px; width: 80%; }
+  .sk-big  { height: 28px; margin-bottom: 8px; width: 60%; }
+  .sk-sm   { height: 10px; margin-bottom: 4px; width: 50%; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* Animations */
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+  .loaded { animation: fadeIn 0.25s ease forwards; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <a href="/static/dashboard.html" class="back-link">&lt; DASHBOARD</a>
+    <div class="logo">SYSTEM HEALTH <span>// OPS</span></div>
+  </div>
+  <div class="topbar-right">
+    <div class="refresh-indicator">
+      <span class="refresh-dot"></span>
+      <span id="last-updated">Loading...</span>
+    </div>
+    <button class="refresh-btn" id="refresh-btn" onclick="loadAll()">REFRESH</button>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Section 1: API Service Cards -->
+  <div class="section-title">API Services</div>
+  <div class="service-grid" id="service-grid">
+    <!-- Skeleton loaders rendered by JS on first load -->
+  </div>
+
+  <!-- Section 2: Recent Errors -->
+  <div class="section-title">Recent Errors</div>
+  <div class="errors-container" id="errors-container">
+    <div class="empty-state">Loading...</div>
+  </div>
+
+  <!-- Section 3: 7-Day Trend -->
+  <div class="section-title">7-Day Success Rate</div>
+  <div class="trend-container" id="trend-container">
+    <div class="empty-state">Loading...</div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  /* -- Constants ----------------------------------------- */
+
+  var SERVICE_ORDER = [
+    'yfinance', 'fred', 'polygon', 'finnhub',
+    'alpha_vantage', 'edgar', 'claude', 'alpaca'
+  ];
+
+  var SERVICE_LABELS = {
+    yfinance:      'yfinance',
+    fred:          'FRED',
+    polygon:       'Polygon',
+    finnhub:       'Finnhub',
+    alpha_vantage: 'Alpha Vantage',
+    edgar:         'EDGAR',
+    claude:        'Claude API',
+    alpaca:        'Alpaca'
+  };
+
+  var lastLoadTime = null;
+
+  /* -- Helpers ------------------------------------------- */
+
+  /** Escape HTML to prevent XSS — all dynamic content passes through this */
+  function esc(s) {
+    if (s == null) return '';
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(String(s)));
+    return d.innerHTML;
+  }
+
+  function apiFetch(path) {
+    return fetch('/api/v1' + path).then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  function statusClass(pct) {
+    if (pct == null) return 'none';
+    if (pct >= 90) return 'green';
+    if (pct >= 50) return 'yellow';
+    return 'red';
+  }
+
+  function fmtPct(pct) {
+    if (pct == null) return '\u2014';
+    return pct.toFixed(pct === 100 ? 0 : 1) + '%';
+  }
+
+  function fmtMs(ms) {
+    if (ms == null) return '\u2014';
+    if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+    return ms + 'ms';
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '\u2014';
+    var d = new Date(iso);
+    return String(d.getHours()).padStart(2, '0') + ':' +
+           String(d.getMinutes()).padStart(2, '0') + ':' +
+           String(d.getSeconds()).padStart(2, '0');
+  }
+
+  function fmtDay(dateStr) {
+    var d = new Date(dateStr + 'T12:00:00');
+    var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    return days[d.getDay()] + ' ' + (d.getMonth()+1) + '/' + d.getDate();
+  }
+
+  function errorType(status) {
+    if (!status) return 'error';
+    var s = String(status).toLowerCase();
+    if (s === '429' || s.indexOf('rate') !== -1) return 'ratelimit';
+    if (s.indexOf('timeout') !== -1) return 'timeout';
+    return 'error';
+  }
+
+  function updateTimestamp() {
+    var el = document.getElementById('last-updated');
+    if (!lastLoadTime) { el.textContent = 'Loading...'; return; }
+    var ago = Math.round((Date.now() - lastLoadTime) / 1000);
+    if (ago < 5) el.textContent = 'Updated just now';
+    else if (ago < 60) el.textContent = 'Updated ' + ago + 's ago';
+    else el.textContent = 'Updated ' + Math.floor(ago/60) + 'm ago';
+  }
+
+  /* -- DOM builders (safe: all text content escaped) ----- */
+
+  function createServiceCard(key, svc) {
+    var label = SERVICE_LABELS[key] || key;
+    var hasSvc = svc && svc.today_total != null && svc.today_total > 0;
+    var sc = hasSvc ? statusClass(svc.today_pct) : 'none';
+
+    var card = document.createElement('div');
+    card.className = 'service-card status-' + sc + ' loaded';
+
+    var nameEl = document.createElement('div');
+    nameEl.className = 'service-name';
+    nameEl.textContent = label;
+    card.appendChild(nameEl);
+
+    var pctEl = document.createElement('div');
+    pctEl.className = 'service-pct ' + sc;
+    pctEl.textContent = hasSvc ? fmtPct(svc.today_pct) : '\u2014';
+    card.appendChild(pctEl);
+
+    var callsEl = document.createElement('div');
+    callsEl.className = 'service-calls';
+    callsEl.textContent = hasSvc
+      ? svc.today_success + ' / ' + svc.today_total + ' calls today'
+      : 'No calls today';
+    card.appendChild(callsEl);
+
+    var latEl = document.createElement('div');
+    latEl.className = 'service-latency';
+    latEl.textContent = hasSvc ? 'avg ' + fmtMs(svc.avg_response_ms) + ' response' : '\u00a0';
+    card.appendChild(latEl);
+
+    return card;
+  }
+
+  function createSkeletonCard() {
+    var card = document.createElement('div');
+    card.className = 'service-card status-none';
+
+    var parts = [
+      {cls: 'service-name', child: {cls: 'skeleton sk-line', style: 'width:60%'}},
+      {cls: '', child: {cls: 'skeleton sk-big', style: 'width:50%'}},
+      {cls: '', child: {cls: 'skeleton sk-sm', style: 'width:70%'}},
+      {cls: '', child: {cls: 'skeleton sk-sm', style: 'width:55%'}}
+    ];
+    parts.forEach(function(p) {
+      var div = document.createElement('div');
+      if (p.cls) div.className = p.cls;
+      var span = document.createElement('span');
+      span.className = p.child.cls;
+      span.style.cssText = p.child.style;
+      div.appendChild(span);
+      card.appendChild(div);
+    });
+    return card;
+  }
+
+  /* -- Render: Service Cards ----------------------------- */
+
+  function renderServices(data) {
+    var grid = document.getElementById('service-grid');
+    var services = data && data.services ? data.services : {};
+
+    // Clear existing
+    while (grid.firstChild) grid.removeChild(grid.firstChild);
+
+    SERVICE_ORDER.forEach(function(key) {
+      grid.appendChild(createServiceCard(key, services[key]));
+    });
+  }
+
+  function renderServiceSkeletons() {
+    var grid = document.getElementById('service-grid');
+    while (grid.firstChild) grid.removeChild(grid.firstChild);
+    for (var i = 0; i < 8; i++) grid.appendChild(createSkeletonCard());
+  }
+
+  /* -- Render: Recent Errors ----------------------------- */
+
+  function renderErrors(data) {
+    var container = document.getElementById('errors-container');
+    var errors = data && data.errors ? data.errors : [];
+
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    if (errors.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No errors recorded';
+      container.appendChild(empty);
+      return;
+    }
+
+    errors.forEach(function(err) {
+      var t = errorType(err.status);
+      var row = document.createElement('div');
+      row.className = 'error-row loaded';
+
+      var timeEl = document.createElement('div');
+      timeEl.className = 'error-time ' + t;
+      timeEl.textContent = fmtTime(err.timestamp);
+      row.appendChild(timeEl);
+
+      var badgeWrap = document.createElement('div');
+      var badge = document.createElement('span');
+      badge.className = 'service-badge';
+      badge.textContent = err.service || '\u2014';
+      badgeWrap.appendChild(badge);
+      row.appendChild(badgeWrap);
+
+      var msgEl = document.createElement('div');
+      msgEl.className = 'error-msg';
+      msgEl.textContent = err.error_message || 'Unknown error';
+      msgEl.title = err.error_message || '';
+      row.appendChild(msgEl);
+
+      var symEl = document.createElement('div');
+      symEl.className = 'error-symbol';
+      symEl.textContent = err.symbol || '';
+      row.appendChild(symEl);
+
+      container.appendChild(row);
+    });
+  }
+
+  /* -- Render: 7-Day Trend ------------------------------- */
+
+  function renderTrend(data) {
+    var container = document.getElementById('trend-container');
+    var days = data && data.days ? data.days : [];
+    var services = data && data.services ? data.services : {};
+
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    if (days.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No trend data available';
+      container.appendChild(empty);
+      return;
+    }
+
+    var table = document.createElement('table');
+    table.className = 'trend-table';
+
+    // Header
+    var thead = document.createElement('thead');
+    var hRow = document.createElement('tr');
+    var thService = document.createElement('th');
+    thService.style.textAlign = 'left';
+    thService.textContent = 'Service';
+    hRow.appendChild(thService);
+    days.forEach(function(d) {
+      var th = document.createElement('th');
+      th.textContent = fmtDay(d);
+      hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+    table.appendChild(thead);
+
+    // Body
+    var tbody = document.createElement('tbody');
+    SERVICE_ORDER.forEach(function(key) {
+      var label = SERVICE_LABELS[key] || key;
+      var vals = services[key];
+      if (!vals) return;
+
+      var tr = document.createElement('tr');
+      tr.className = 'loaded';
+
+      var tdName = document.createElement('td');
+      tdName.className = 'service-col';
+      tdName.textContent = label;
+      tr.appendChild(tdName);
+
+      days.forEach(function(d, i) {
+        var v = vals[i] != null ? vals[i] : null;
+        var sc = statusClass(v);
+        var td = document.createElement('td');
+        td.className = 'trend-cell ' + sc;
+        td.textContent = v != null ? v + '%' : '\u2014';
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    container.appendChild(table);
+  }
+
+  /* -- Load All ------------------------------------------ */
+
+  function loadAll() {
+    var btn = document.getElementById('refresh-btn');
+    btn.classList.add('spinning');
+    btn.textContent = 'LOADING...';
+
+    Promise.allSettled([
+      apiFetch('/system/health'),
+      apiFetch('/system/errors'),
+      apiFetch('/system/trend')
+    ]).then(function(results) {
+      var health  = results[0].status === 'fulfilled' ? results[0].value : null;
+      var errors  = results[1].status === 'fulfilled' ? results[1].value : null;
+      var trend   = results[2].status === 'fulfilled' ? results[2].value : null;
+
+      renderServices(health);
+      renderErrors(errors);
+      renderTrend(trend);
+
+      lastLoadTime = Date.now();
+      updateTimestamp();
+    }).finally(function() {
+      btn.classList.remove('spinning');
+      btn.textContent = 'REFRESH';
+    });
+  }
+
+  // Expose for onclick
+  window.loadAll = loadAll;
+
+  /* -- Init ---------------------------------------------- */
+
+  renderServiceSkeletons();
+  loadAll();
+
+  // Auto-refresh every 60 seconds
+  setInterval(loadAll, 60000);
+
+  // Update "Xs ago" counter every 5 seconds
+  setInterval(updateTimestamp, 5000);
+
+})();
+</script>
+</body>
+</html>
