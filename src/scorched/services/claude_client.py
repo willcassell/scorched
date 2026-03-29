@@ -192,3 +192,22 @@ def call_playbook_update(user_content: str):
     )
 
     return response, response.content[0].text.strip()
+
+
+def call_intraday_exit(user_content: str):
+    """Intraday exit evaluation — small focused call.
+
+    Returns (response, raw_text).
+    """
+    system_prompt = load_prompt("intraday_exit")
+    client = _client()
+
+    logger.info("Intraday exit evaluation call")
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=512,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    )
+
+    return response, response.content[0].text
