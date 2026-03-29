@@ -65,7 +65,9 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/broker/` | BrokerAdapter ABC, PaperBroker, AlpacaBroker, `get_broker()` factory |
 | `src/scorched/circuit_breaker.py` | Pre-execution gate checks (stock gap, SPY drop, VIX spike) |
 | `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
-| `src/scorched/models.py` | 7 SQLAlchemy ORM models |
+| `src/scorched/api_tracker.py` | API call tracking — sync recorder, health aggregation, cleanup |
+| `src/scorched/api/system.py` | System health endpoints: /system/health, /system/errors, /system/trend |
+| `src/scorched/models.py` | 8 SQLAlchemy ORM models (including ApiCallLog) |
 | `src/scorched/schemas.py` | Pydantic request/response schemas |
 | `src/scorched/config.py` | pydantic-settings Settings (env vars, tax rates, cash reserve %) |
 | `strategy.md` | Human-readable strategy reference (source of truth is strategy.json via dashboard) |
@@ -151,6 +153,8 @@ The system supports three broker modes, controlled by `BROKER_MODE` in `.env`:
 Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells always pass through.
 
 **Position Reconciliation:** `GET /api/v1/broker/status` compares local DB positions against Alpaca holdings and flags mismatches.
+
+**System Health:** All external API calls are tracked in `api_call_log` table. Dashboard header shows R/Y/G summary. `/system` page has full operational detail (per-API cards, error log, 7-day trend). Records auto-cleaned after 30 days.
 
 ## Gotchas
 
