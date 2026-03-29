@@ -52,8 +52,12 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 |------|------|
 | `src/scorched/main.py` | FastAPI app + MCP mount + lifespan wiring |
 | `src/scorched/mcp_tools.py` | 7 MCP tool definitions (FastMCP) |
-| `src/scorched/services/recommender.py` | Claude pipeline (two-call: analysis → decision), NYSE holiday check, recommendation cache |
-| `src/scorched/services/research.py` | All data fetching: yfinance, FRED, Polygon, Alpha Vantage, EDGAR, momentum screener, options |
+| `src/scorched/services/recommender.py` | Claude pipeline (4-call: analysis → decision → risk review → position mgmt), NYSE holiday check, recommendation cache |
+| `src/scorched/services/research.py` | All data fetching: yfinance, FRED, Polygon, Alpha Vantage, EDGAR, Finnhub, momentum screener, options |
+| `src/scorched/services/technicals.py` | MACD, Bollinger Bands, MA crossover, support/resistance, volume profile calculations |
+| `src/scorched/services/finnhub_data.py` | Analyst consensus ratings and price targets from Finnhub |
+| `src/scorched/services/risk_review.py` | Call 3: Adversarial risk committee review of recommendations |
+| `src/scorched/services/position_mgmt.py` | Call 4: EOD position management review and stop suggestions |
 | `src/scorched/services/portfolio.py` | apply_buy(), apply_sell(), get_portfolio_state() |
 | `src/scorched/services/playbook.py` | Playbook read/update (living strategy doc) |
 | `src/scorched/services/strategy.py` | load_strategy() — reads strategy.json (edited via dashboard) |
@@ -70,11 +74,11 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 
 ## Claude Pipeline (recommender.py)
 
-Two API calls per day, both using `claude-sonnet-4-6`:
+Four API calls per day, all using `claude-sonnet-4-6`:
 
-**Call 1 — Analysis** (extended thinking, budget=8000 tokens):
+**Call 1 — Analysis** (extended thinking, budget=16000 tokens):
 - System: `ANALYSIS_SYSTEM` — analyst persona, strategy injected
-- Input: market context + full research context (all data sources)
+- Input: market context + full research context (price data, technicals, analyst consensus, news, macro, earnings, insider activity)
 - Output: `{"analysis": "...", "candidates": ["TICK1", ...]}`
 
 **Call 2 — Decision** (standard, no extended thinking):
@@ -82,16 +86,29 @@ Two API calls per day, both using `claude-sonnet-4-6`:
 - Input: analysis text + options data for candidates + current portfolio
 - Output: `{"research_summary": "...", "recommendations": [...]}`
 
+**Call 3 — Risk Committee** (standard, no extended thinking):
+- System: `RISK_REVIEW_SYSTEM` — skeptical risk reviewer, default-reject stance
+- Input: proposed recommendations + portfolio + analysis summary + recent playbook
+- Output: `{"decisions": [{"symbol": ..., "verdict": "approve"|"reject", ...}]}`
+- Rejected buys are removed before saving. Sells always pass through.
+
+**Call 4 — Position Management** (EOD, standard):
+- System: `POSITION_MGMT_SYSTEM` — conservative position reviewer
+- Input: all open positions with current prices + today's market summary
+- Output: per-position hold/tighten/partial/exit recommendations (logged)
+
 ## Data Sources
 
 | Source | What it provides | Key? |
 |--------|-----------------|------|
 | yfinance | Price history, fundamentals, news, earnings dates, options chains, insider purchases | No |
 | FRED | Fed funds rate, 10Y/2Y yields, CPI, unemployment, retail sales, HY credit spread, PCE, industrial production | `FRED_API_KEY` |
-| Polygon.io | Better news headlines (preferred over yfinance news when available) | `POLYGON_API_KEY` |
+| Polygon.io | News headlines + article descriptions (paid tier provides full summaries) | `POLYGON_API_KEY` |
 | Alpha Vantage | RSI(14) for screener picks only (≤20 symbols, free tier = 25 calls/day) | `ALPHA_VANTAGE_API_KEY` |
+| Finnhub | Analyst consensus ratings, price targets, recommendation trends | `FINNHUB_API_KEY` |
 | SEC EDGAR | Form 4 insider buy/sell data (free, no key) | No |
-| Momentum screener | Top 20 S&P 500 members by 5-day momentum (price > 20d MA, volume > 1M) | No |
+| Momentum screener | Top 30 S&P 500 members by 5-day momentum (price > 20d MA, volume > 1M) | No |
+| Technical analysis | MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile (computed from yfinance history) | No |
 | Options (yfinance) | Put/call ratio, ATM IV, implied 30-day move — fetched only for candidates | No |
 
 ## Settings (config.py)
@@ -105,6 +122,7 @@ Two API calls per day, both using `claude-sonnet-4-6`:
 | `FRED_API_KEY` | "" | Empty = FRED data skipped |
 | `ALPHA_VANTAGE_API_KEY` | "" | Empty = RSI data skipped |
 | `POLYGON_API_KEY` | "" | Empty = Polygon news skipped |
+| `FINNHUB_API_KEY` | "" | Empty = analyst consensus skipped |
 | `settings_pin` | "" | If set, PUT /api/v1/strategy requires this PIN |
 | `BROKER_MODE` | "paper" | "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live |
 | `ALPACA_API_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
@@ -145,7 +163,7 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
 - **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
 - **Wash sale detection** — buys within 30 days of a same-symbol sell get a `⚠️ WASH SALE WARNING` prepended to `key_risks`.
-- **Model** is `claude-sonnet-4-6`. THINKING_BUDGET is 8000 tokens (~$0.024/day for Call 1).
+- **Model** is `claude-sonnet-4-6`. THINKING_BUDGET is 16000 tokens. 4 Claude calls/day: analysis, decision, risk review, position management.
 
 ## Environment
 
