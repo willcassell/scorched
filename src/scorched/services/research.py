@@ -1,10 +1,13 @@
 """Stock research: price data, fundamentals, news, macro, and market context via yfinance + FRED."""
 import asyncio
+import logging
 from contextlib import nullcontext
 from datetime import date, timedelta
 from decimal import Decimal
 
 import yfinance as yf
+
+logger = logging.getLogger(__name__)
 
 
 def _api_ctx(tracker, service, endpoint, symbol=None):
@@ -48,7 +51,7 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
             # Use fast_info for real-time last price; fall back to daily close
             try:
                 current_price = float(ticker.fast_info["last_price"])
-            except Exception:
+            except (KeyError, IndexError):
                 current_price = float(hist["Close"].iloc[-1])
             week_ago_price = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else current_price
             month_ago_price = float(hist["Close"].iloc[-22]) if len(hist) >= 22 else float(hist["Close"].iloc[0])
@@ -71,7 +74,7 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
                 "history_volume": [float(x) for x in hist["Volume"].tolist()],
             }
         except Exception:
-            pass
+            logger.warning("Price data fetch failed for %s", symbol, exc_info=True)
     return result
 
 
@@ -89,6 +92,7 @@ def _fetch_news_sync(symbols: list[str], tracker=None) -> dict:
                     headlines.append(title)
             result[symbol] = headlines
         except Exception:
+            logger.warning("News fetch failed for %s", symbol, exc_info=True)
             result[symbol] = []
     return result
 
@@ -114,6 +118,7 @@ def _fetch_earnings_surprise_sync(symbols: list[str], tracker=None) -> dict:
                     rows.append({"surprise_pct": surprise_pct, "verdict": verdict})
             result[symbol] = rows
         except Exception:
+            logger.warning("Earnings surprise fetch failed for %s", symbol, exc_info=True)
             result[symbol] = []
     return result
 
@@ -139,6 +144,7 @@ def _fetch_insider_activity_sync(symbols: list[str]) -> dict:
                     sells += int(shares)
             result[symbol] = {"recent_buys": buys, "recent_sells": sells}
         except Exception:
+            logger.warning("Insider activity fetch failed for %s", symbol, exc_info=True)
             result[symbol] = {"recent_buys": 0, "recent_sells": 0}
     return result
 
@@ -162,6 +168,7 @@ def _build_ticker_to_cik_map(headers: dict) -> dict[str, str]:
             for entry in data.values()
         }
     except Exception:
+        logger.warning("SEC ticker-to-CIK map fetch failed", exc_info=True)
         return {}
 
 
@@ -221,6 +228,7 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30, tracker=N
             # Any recent Form 4 activity is a useful signal for Claude.
             result[symbol] = {"recent_buys": form4_count, "recent_sells": 0}
         except Exception:
+            logger.warning("EDGAR insider fetch failed for %s, falling back to yfinance", symbol, exc_info=True)
             # Fallback: yfinance
             try:
                 ticker = yf.Ticker(symbol)
@@ -238,6 +246,7 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30, tracker=N
                         sells += shares
                 result[symbol] = {"recent_buys": buys, "recent_sells": sells}
             except Exception:
+                logger.warning("Insider fallback (yfinance) also failed for %s", symbol, exc_info=True)
                 result[symbol] = {"recent_buys": 0, "recent_sells": 0}
     return result
 
@@ -246,7 +255,7 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
     """
     Fetch recent news from Polygon.io for each symbol.
     Returns {symbol: [{"title": ..., "description": ...}, ...]}
-    On free tier, description may be empty. On paid tier, it contains article summary.
+    Description field contains article summaries on all tiers (verified 2026-03-29).
     yfinance news remains as fallback in build_research_context().
     """
     import time
@@ -274,6 +283,7 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
                 if a.get("title")
             ]
         except Exception:
+            logger.warning("Polygon news fetch failed for %s", symbol, exc_info=True)
             result[symbol] = []
         # Rate limit: Polygon free tier = 5 calls/min; paid = higher but still throttle
         time.sleep(0.25)
@@ -321,7 +331,7 @@ def _fetch_av_technicals_sync(symbols: list[str], api_key: str, tracker=None) ->
             signal = "overbought" if rsi >= 70 else ("oversold" if rsi <= 30 else "neutral")
             result[symbol] = {"rsi": rsi, "signal": signal}
         except Exception:
-            pass
+            logger.warning("Alpha Vantage RSI fetch failed for %s", symbol, exc_info=True)
         # Rate limit: AV free tier allows 5 calls/min; 1.2s spacing keeps us safe
         time.sleep(1.2)
     return result
@@ -371,6 +381,7 @@ def _fetch_options_data_sync(symbols: list[str], tracker=None) -> dict:
                 "expiration_used": target_exp,
             }
         except Exception:
+            logger.warning("Options data fetch failed for %s", symbol, exc_info=True)
             result[symbol] = None
     return result
 
@@ -407,7 +418,7 @@ def _fetch_fred_macro_sync(api_key: str, tracker=None) -> dict:
                     if label == "cpi_index":
                         cpi_series_cache = data
             except Exception:
-                pass
+                logger.warning("FRED series %s fetch failed", series_id, exc_info=True)
         # Compute CPI YoY % change from the index level series
         # CPIAUCSL is monthly, so 12 observations back ≈ 1 year ago
         if "cpi_index" in result and cpi_series_cache is not None:
@@ -426,7 +437,7 @@ def _fetch_fred_macro_sync(api_key: str, tracker=None) -> dict:
                         "change": round(cpi_yoy_pct - prev_yoy_pct, 3),
                     }
             except Exception:
-                pass
+                logger.warning("CPI YoY computation failed", exc_info=True)
             # Remove the raw index entry — Claude only needs the YoY rate
             result.pop("cpi_index", None)
         # Compute yield curve spread
@@ -435,6 +446,7 @@ def _fetch_fred_macro_sync(api_key: str, tracker=None) -> dict:
             result["yield_curve_spread_10y2y"] = round(spread, 3)
         return result
     except Exception:
+        logger.warning("FRED macro fetch failed entirely", exc_info=True)
         return {}
 
 
@@ -463,7 +475,7 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tr
             week_chg = round((price - week_ago) / week_ago * 100, 2) if week_ago else 0
             lines.append(f"  {label}: {price:.2f} ({chg_pct:+.2f}% today, {week_chg:+.2f}% 5d)")
         except Exception:
-            pass
+            logger.warning("Market context: index %s fetch failed", ticker_sym, exc_info=True)
     sectors = {
         "XLK": "Tech", "XLF": "Financials", "XLE": "Energy",
         "XLV": "Healthcare", "XLI": "Industrials",
@@ -481,7 +493,7 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tr
             chg = round((price - week_ago) / week_ago * 100, 2) if week_ago else 0
             lines.append(f"  {label} ({ticker_sym}): {chg:+.2f}%")
         except Exception:
-            pass
+            logger.warning("Market context: sector %s fetch failed", ticker_sym, exc_info=True)
     window_start = today - timedelta(days=1)
     window_end = today + timedelta(days=2)
     upcoming_earnings = []
@@ -502,10 +514,10 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tr
                     if window_start <= ed_date <= window_end:
                         upcoming_earnings.append((symbol, ed_date))
                         break
-                except Exception:
-                    pass
+                except (ValueError, TypeError, AttributeError):
+                    logger.debug("Earnings date parse failed for %s", symbol)
         except Exception:
-            pass
+            logger.debug("Earnings calendar unavailable for %s", symbol)
     if upcoming_earnings:
         lines.append("\nUpcoming earnings (watchlist, ±2 days):")
         for symbol, ed in sorted(upcoming_earnings, key=lambda x: x[1]):
@@ -522,7 +534,7 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tr
                 if title:
                     lines.append(f"  - {title}")
     except Exception:
-        pass
+        logger.warning("SPY broad market news fetch failed", exc_info=True)
     return "\n".join(lines)
 
 
@@ -603,6 +615,7 @@ def _fetch_momentum_screener_sync(n: int = 20, tracker=None) -> list[str]:
             if current > ma20 and avg_vol > 1_000_000:
                 candidates.append((symbol, momentum_5d))
         except Exception:
+            logger.debug("Screener: skipping %s (data fetch failed)", symbol)
             continue
 
     candidates.sort(key=lambda x: x[1], reverse=True)
@@ -632,6 +645,7 @@ def _fetch_opening_prices_sync(symbols: list[str], trade_date: date, tracker=Non
             # .values.flat[0] extracts the first scalar from a 1D or 2D array.
             results[symbol] = round(float(df["Open"].values.flat[0]), 4)
         except Exception:
+            logger.warning("Opening price fetch failed for %s", symbol, exc_info=True)
             results[symbol] = None
     return results
 
@@ -769,7 +783,7 @@ def build_research_context(
                     title = a.get("title", "")
                     desc = a.get("description", "")
                     if desc:
-                        lines.append(f"    - {title}: {desc[:150]}")
+                        lines.append(f"    - {title}: {desc[:300]}")
                     else:
                         lines.append(f"    - {title}")
                 else:
@@ -886,6 +900,7 @@ def _fetch_market_eod_sync(target_date: date) -> dict:
             prev = float(hist["Close"].iloc[-2])
             return round(close, 2), round((close - prev) / prev * 100, 2)
         except Exception:
+            logger.debug("Market context: pct calculation failed", exc_info=True)
             return None, None
 
     result: dict = {"indices": {}, "sectors": {}}
