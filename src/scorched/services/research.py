@@ -221,8 +221,9 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30) -> dict:
 
 def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol: int = 5) -> dict:
     """
-    Fetch recent news headlines from Polygon.io for each symbol.
-    Returns {symbol: [headline, ...]} — empty list if api_key is blank or request fails.
+    Fetch recent news from Polygon.io for each symbol.
+    Returns {symbol: [{"title": ..., "description": ...}, ...]}
+    On free tier, description may be empty. On paid tier, it contains article summary.
     yfinance news remains as fallback in build_research_context().
     """
     import requests
@@ -239,7 +240,14 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
             )
             resp.raise_for_status()
             articles = resp.json().get("results", [])
-            result[symbol] = [a.get("title", "") for a in articles if a.get("title")]
+            result[symbol] = [
+                {
+                    "title": a.get("title", ""),
+                    "description": a.get("description", ""),
+                }
+                for a in articles
+                if a.get("title")
+            ]
         except Exception:
             result[symbol] = []
     return result
@@ -614,6 +622,7 @@ def build_research_context(
     polygon_news: dict | None = None,
     av_technicals: dict | None = None,
     technicals: dict | None = None,
+    analyst_consensus: dict | None = None,
 ) -> str:
     lines = []
 
@@ -638,6 +647,14 @@ def build_research_context(
                 d = fred_macro[key]
                 lines.append(f"{label}: {d['value']} (prev {d['prev']}, chg {d['change']:+.3f})")
         lines.append("")
+
+    # Analyst consensus section
+    if analyst_consensus:
+        from .finnhub_data import build_analyst_context
+        analyst_text = build_analyst_context(analyst_consensus)
+        if analyst_text:
+            lines.append(analyst_text)
+            lines.append("")
 
     # Portfolio state
     lines.append("=== PORTFOLIO ===")
@@ -708,11 +725,24 @@ def build_research_context(
             if ta_parts:
                 lines.append(f"  Technicals: {' | '.join(ta_parts)}")
 
-        # News — prefer Polygon headlines; fall back to yfinance
-        headlines = (polygon_news or {}).get(symbol) or news_data.get(symbol, [])
-        if headlines:
+        # News — prefer Polygon (with descriptions if available); fall back to yfinance
+        poly_articles = (polygon_news or {}).get(symbol, [])
+        yf_headlines = news_data.get(symbol, [])
+        if poly_articles:
             lines.append("  News:")
-            for h in headlines[:3]:
+            for a in poly_articles[:3]:
+                if isinstance(a, dict):
+                    title = a.get("title", "")
+                    desc = a.get("description", "")
+                    if desc:
+                        lines.append(f"    - {title}: {desc[:150]}")
+                    else:
+                        lines.append(f"    - {title}")
+                else:
+                    lines.append(f"    - {a}")
+        elif yf_headlines:
+            lines.append("  News:")
+            for h in yf_headlines[:3]:
                 lines.append(f"    - {h}")
 
     return "\n".join(lines)

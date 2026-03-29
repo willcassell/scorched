@@ -20,6 +20,7 @@ from .playbook import get_playbook, update_playbook
 from .portfolio import get_portfolio_summary
 from .strategy import load_analyst_guidance, load_strategy
 from .technicals import compute_technicals
+from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from .research import (
     WATCHLIST,
     build_options_context,
@@ -260,6 +261,12 @@ async def generate_recommendations(
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]
 
+    # Initialize Finnhub client (None if no API key)
+    finnhub_client = None
+    if settings.finnhub_api_key:
+        import finnhub
+        finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
+
     # Run momentum screener first so screener_symbols is available for AV call and gather
     screener_symbols = await fetch_momentum_screener(n=20)
     logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
@@ -284,6 +291,12 @@ async def generate_recommendations(
     # Compute technical indicators from price history (pure math, no I/O)
     technicals = compute_technicals(price_data)
     logger.info("Computed technicals for %d symbols", len(technicals))
+
+    # Finnhub analyst consensus (sync SDK, run in executor)
+    analyst_consensus = await asyncio.get_event_loop().run_in_executor(
+        None, fetch_analyst_consensus_sync, research_symbols, finnhub_client
+    )
+    logger.info("Fetched analyst consensus for %d symbols", len(analyst_consensus))
 
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     portfolio_dict = {
@@ -325,6 +338,7 @@ async def generate_recommendations(
         polygon_news=polygon_news,
         av_technicals=av_technicals,
         technicals=technicals,
+        analyst_consensus=analyst_consensus,
     )
 
     # Persist session row early so we have an ID for token_usage FK
