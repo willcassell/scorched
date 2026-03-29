@@ -40,7 +40,7 @@ def _is_hard_stop(trigger: IntradayTriggerItem, hard_stop_pct: float) -> tuple[b
 
     Returns (is_hard_stop, drop_pct).
     """
-    if not trigger.entry_price:
+    if trigger.entry_price <= 0:
         return False, 0.0
     drop_pct = float((trigger.entry_price - trigger.current_price) / trigger.entry_price * 100)
     return drop_pct >= hard_stop_pct, drop_pct
@@ -72,7 +72,10 @@ async def _execute_sell(
                 trigger.symbol, sell_qty, result["filled_avg_price"],
             )
             return trade_result, None
-        return None, None
+        else:
+            error = f"Order not filled (status: {result['status']})"
+            logger.warning("Intraday sell for %s: %s", trigger.symbol, error)
+            return None, error
     except Exception as e:
         logger.error("Intraday sell failed for %s: %s", trigger.symbol, e)
         return None, str(e)
