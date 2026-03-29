@@ -3,9 +3,18 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import nullcontext
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _api_ctx(tracker, service, endpoint, symbol=None):
+    """Return a track_call context if tracker is provided, else nullcontext."""
+    if tracker is None:
+        return nullcontext()
+    from ..api_tracker import track_call
+    return track_call(tracker, service, endpoint, symbol=symbol)
 
 
 def _get_val(obj: Any, *names: str) -> Any:
@@ -34,7 +43,7 @@ def _get_val(obj: Any, *names: str) -> Any:
 
 
 def fetch_analyst_consensus_sync(
-    symbols: list[str], client: Any | None
+    symbols: list[str], client: Any | None, tracker=None
 ) -> dict[str, dict[str, Any]]:
     """Fetch analyst recommendation trends and price targets for each symbol.
 
@@ -56,7 +65,8 @@ def fetch_analyst_consensus_sync(
 
             # Recommendation trends
             try:
-                trends = client.recommendation_trends(symbol)
+                with _api_ctx(tracker, "finnhub", "recommendation_trends", symbol):
+                    trends = client.recommendation_trends(symbol)
                 if trends:
                     latest = trends[0]
                     data["strong_buy"] = _get_val(latest, "strong_buy", "strongBuy")
@@ -69,7 +79,8 @@ def fetch_analyst_consensus_sync(
 
             # Price targets
             try:
-                pt = client.price_target(symbol)
+                with _api_ctx(tracker, "finnhub", "price_target", symbol):
+                    pt = client.price_target(symbol)
                 if pt:
                     data["target_high"] = _get_val(pt, "target_high", "targetHigh")
                     data["target_low"] = _get_val(pt, "target_low", "targetLow")

@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import anthropic
 
+from ..api_tracker import ApiCallTracker, track_call
 from ..retry import claude_call_with_retry
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -252,6 +253,8 @@ async def generate_recommendations(
 
     logger.info("Generating new recommendations for %s", session_date)
 
+    tracker = ApiCallTracker()
+
     # Playbook update happens before Call 1 so analysis is informed by learnings
     playbook = await update_playbook(db, session_date)
 
@@ -269,7 +272,7 @@ async def generate_recommendations(
         finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
 
     # Run momentum screener first so screener_symbols is available for AV call and gather
-    screener_symbols = await fetch_momentum_screener(n=30)
+    screener_symbols = await fetch_momentum_screener(n=30, tracker=tracker)
     logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
     research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
     logger.info("Total research universe: %d symbols", len(research_symbols))
@@ -279,14 +282,14 @@ async def generate_recommendations(
         price_data, news_data, earnings_surprise, insider_activity,
         market_context, fred_macro, polygon_news, av_technicals
     ) = await asyncio.gather(
-        fetch_price_data(research_symbols),
-        fetch_news(research_symbols),
-        fetch_earnings_surprise(research_symbols),
-        fetch_edgar_insider(research_symbols),
-        fetch_market_context(session_date, research_symbols),
-        fetch_fred_macro(settings.fred_api_key),
-        fetch_polygon_news(research_symbols, settings.polygon_api_key),
-        fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key),
+        fetch_price_data(research_symbols, tracker=tracker),
+        fetch_news(research_symbols, tracker=tracker),
+        fetch_earnings_surprise(research_symbols, tracker=tracker),
+        fetch_edgar_insider(research_symbols, tracker=tracker),
+        fetch_market_context(session_date, research_symbols, tracker=tracker),
+        fetch_fred_macro(settings.fred_api_key, tracker=tracker),
+        fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker),
+        fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker),
     )
 
     # Compute technical indicators from price history (pure math, no I/O)
@@ -295,7 +298,7 @@ async def generate_recommendations(
 
     # Finnhub analyst consensus (sync SDK, run in executor)
     analyst_consensus = await asyncio.get_event_loop().run_in_executor(
-        None, fetch_analyst_consensus_sync, research_symbols, finnhub_client
+        None, lambda: fetch_analyst_consensus_sync(research_symbols, finnhub_client, tracker=tracker)
     )
     logger.info("Fetched analyst consensus for %d symbols", len(analyst_consensus))
 
@@ -355,14 +358,15 @@ async def generate_recommendations(
     # ── Call 1: Analysis with extended thinking ────────────────────────────
     logger.info("Call 1: analysis with extended thinking (budget=%d)", THINKING_BUDGET)
     call1_user = f"Today's date: {session_date}\n\n{market_context}\n\n{research_context}"
-    call1_response = claude_call_with_retry(
-        client, "Call 1 (analysis)",
-        model=MODEL,
-        max_tokens=THINKING_BUDGET + 2048,
-        thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
-        system=ANALYSIS_SYSTEM.format(strategy=strategy, guidance=guidance),
-        messages=[{"role": "user", "content": call1_user}],
-    )
+    with track_call(tracker, "claude", "analysis"):
+        call1_response = claude_call_with_retry(
+            client, "Call 1 (analysis)",
+            model=MODEL,
+            max_tokens=THINKING_BUDGET + 2048,
+            thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
+            system=ANALYSIS_SYSTEM.format(strategy=strategy, guidance=guidance),
+            messages=[{"role": "user", "content": call1_user}],
+        )
 
     # Record Call 1 token usage — API reports thinking tokens in usage object
     usage1 = call1_response.usage
@@ -393,7 +397,7 @@ async def generate_recommendations(
     options_data = {}
     if candidates:
         logger.info("Fetching options data for candidates: %s", candidates)
-        options_data = await fetch_options_data(candidates)
+        options_data = await fetch_options_data(candidates, tracker=tracker)
 
     # ── Call 2: Decision (standard, no extended thinking) ─────────────────
     logger.info("Call 2: trade decision")
@@ -424,13 +428,14 @@ async def generate_recommendations(
                 f"{pos['days_held']}d ({pos['tax_category']})\n"
             )
 
-    call2_response = claude_call_with_retry(
-        client, "Call 2 (decision)",
-        model=MODEL,
-        max_tokens=2048,
-        system=decision_system,
-        messages=[{"role": "user", "content": call2_user}],
-    )
+    with track_call(tracker, "claude", "decision"):
+        call2_response = claude_call_with_retry(
+            client, "Call 2 (decision)",
+            model=MODEL,
+            max_tokens=2048,
+            system=decision_system,
+            messages=[{"role": "user", "content": call2_user}],
+        )
 
     usage2 = call2_response.usage
     await record_usage(
@@ -457,13 +462,14 @@ async def generate_recommendations(
         playbook_excerpt = playbook.content[:500] if playbook else ""
         risk_prompt = build_risk_review_prompt(raw_recs, portfolio_dict, analysis_text, playbook_excerpt)
 
-        call3_response = claude_call_with_retry(
-            client, "Call 3 (risk review)",
-            model=MODEL,
-            max_tokens=1024,
-            system=RISK_REVIEW_SYSTEM,
-            messages=[{"role": "user", "content": risk_prompt}],
-        )
+        with track_call(tracker, "claude", "risk_review"):
+            call3_response = claude_call_with_retry(
+                client, "Call 3 (risk review)",
+                model=MODEL,
+                max_tokens=1024,
+                system=RISK_REVIEW_SYSTEM,
+                messages=[{"role": "user", "content": risk_prompt}],
+            )
 
         usage3 = call3_response.usage
         await record_usage(
@@ -551,6 +557,7 @@ async def generate_recommendations(
         db.add(row)
         recommendation_rows.append(row)
 
+    await tracker.flush(db)
     await db.commit()
     for row in recommendation_rows:
         await db.refresh(row)

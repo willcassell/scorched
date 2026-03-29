@@ -1,9 +1,18 @@
 """Stock research: price data, fundamentals, news, macro, and market context via yfinance + FRED."""
 import asyncio
+from contextlib import nullcontext
 from datetime import date, timedelta
 from decimal import Decimal
 
 import yfinance as yf
+
+
+def _api_ctx(tracker, service, endpoint, symbol=None):
+    """Return a track_call context if tracker is provided, else nullcontext."""
+    if tracker is None:
+        return nullcontext()
+    from ..api_tracker import track_call
+    return track_call(tracker, service, endpoint, symbol=symbol)
 
 # Universe of large-cap, liquid stocks to consider each morning
 WATCHLIST = [
@@ -26,13 +35,14 @@ WATCHLIST = [
 ]
 
 
-def _fetch_price_data_sync(symbols: list[str]) -> dict:
+def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
     result = {}
     for symbol in symbols:
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1y")
-            info = ticker.info
+            with _api_ctx(tracker, "yfinance", "history", symbol):
+                hist = ticker.history(period="1y")
+                info = ticker.info
             if hist.empty:
                 continue
             # Use fast_info for real-time last price; fall back to daily close
@@ -65,12 +75,13 @@ def _fetch_price_data_sync(symbols: list[str]) -> dict:
     return result
 
 
-def _fetch_news_sync(symbols: list[str]) -> dict:
+def _fetch_news_sync(symbols: list[str], tracker=None) -> dict:
     result = {}
     for symbol in symbols:
         try:
             ticker = yf.Ticker(symbol)
-            news = ticker.news or []
+            with _api_ctx(tracker, "yfinance", "news", symbol):
+                news = ticker.news or []
             headlines = []
             for item in news[:5]:
                 title = item.get("content", {}).get("title", "")
@@ -82,13 +93,14 @@ def _fetch_news_sync(symbols: list[str]) -> dict:
     return result
 
 
-def _fetch_earnings_surprise_sync(symbols: list[str]) -> dict:
+def _fetch_earnings_surprise_sync(symbols: list[str], tracker=None) -> dict:
     """Return last 4 quarters of EPS beat/miss for each symbol."""
     result = {}
     for symbol in symbols:
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.earnings_history
+            with _api_ctx(tracker, "yfinance", "earnings", symbol):
+                hist = ticker.earnings_history
             if hist is None or (hasattr(hist, "empty") and hist.empty):
                 result[symbol] = []
                 continue
@@ -153,7 +165,7 @@ def _build_ticker_to_cik_map(headers: dict) -> dict[str, str]:
         return {}
 
 
-def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30) -> dict:
+def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30, tracker=None) -> dict:
     """
     Fetch Form 4 insider filing counts from SEC EDGAR for each symbol.
     Uses the official data.sec.gov submissions API (free, no key required).
@@ -183,9 +195,10 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30) -> dict:
             # Rate limit: SEC requests max 10 req/sec
             time.sleep(0.12)
             url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-            resp = requests.get(url, headers=headers, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            with _api_ctx(tracker, "edgar", "submissions", symbol):
+                resp = requests.get(url, headers=headers, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
 
             # Count recent Form 4 filings from the "recent" filings list
             recent = data.get("filings", {}).get("recent", {})
@@ -229,7 +242,7 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30) -> dict:
     return result
 
 
-def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol: int = 5) -> dict:
+def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol: int = 5, tracker=None) -> dict:
     """
     Fetch recent news from Polygon.io for each symbol.
     Returns {symbol: [{"title": ..., "description": ...}, ...]}
@@ -244,13 +257,14 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
     base = "https://api.polygon.io/v2/reference/news"
     for symbol in symbols:
         try:
-            resp = requests.get(
-                base,
-                params={"ticker": symbol, "limit": limit_per_symbol, "apiKey": api_key},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            articles = resp.json().get("results", [])
+            with _api_ctx(tracker, "polygon", "news", symbol):
+                resp = requests.get(
+                    base,
+                    params={"ticker": symbol, "limit": limit_per_symbol, "apiKey": api_key},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                articles = resp.json().get("results", [])
             result[symbol] = [
                 {
                     "title": a.get("title", ""),
@@ -266,7 +280,7 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
     return result
 
 
-def _fetch_av_technicals_sync(symbols: list[str], api_key: str) -> dict:
+def _fetch_av_technicals_sync(symbols: list[str], api_key: str, tracker=None) -> dict:
     """
     Fetch RSI(14) from Alpha Vantage for each symbol.
     Returns {symbol: {"rsi": float, "signal": "overbought"|"oversold"|"neutral"}}
@@ -281,20 +295,21 @@ def _fetch_av_technicals_sync(symbols: list[str], api_key: str) -> dict:
     base = "https://www.alphavantage.co/query"
     for symbol in symbols:
         try:
-            resp = requests.get(
-                base,
-                params={
-                    "function": "RSI",
-                    "symbol": symbol,
-                    "interval": "daily",
-                    "time_period": 14,
-                    "series_type": "close",
-                    "apikey": api_key,
-                },
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            with _api_ctx(tracker, "alpha_vantage", "rsi", symbol):
+                resp = requests.get(
+                    base,
+                    params={
+                        "function": "RSI",
+                        "symbol": symbol,
+                        "interval": "daily",
+                        "time_period": 14,
+                        "series_type": "close",
+                        "apikey": api_key,
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json()
             # AV returns an error note when rate limited
             if "Note" in data or "Information" in data:
                 break  # stop making calls — daily/minute limit hit
@@ -312,13 +327,14 @@ def _fetch_av_technicals_sync(symbols: list[str], api_key: str) -> dict:
     return result
 
 
-def _fetch_options_data_sync(symbols: list[str]) -> dict:
+def _fetch_options_data_sync(symbols: list[str], tracker=None) -> dict:
     """Return put/call ratio, IV rank proxy, and 30-day implied move for each symbol."""
     result = {}
     for symbol in symbols:
         try:
             ticker = yf.Ticker(symbol)
-            expirations = ticker.options
+            with _api_ctx(tracker, "yfinance", "options", symbol):
+                expirations = ticker.options
             if not expirations:
                 result[symbol] = None
                 continue
@@ -359,7 +375,7 @@ def _fetch_options_data_sync(symbols: list[str]) -> dict:
     return result
 
 
-def _fetch_fred_macro_sync(api_key: str) -> dict:
+def _fetch_fred_macro_sync(api_key: str, tracker=None) -> dict:
     """Fetch key macro indicators from FRED. Returns empty dict if api_key is blank."""
     if not api_key:
         return {}
@@ -382,7 +398,8 @@ def _fetch_fred_macro_sync(api_key: str) -> dict:
         cpi_series_cache = None  # cache CPI index series for YoY computation
         for label, series_id in series.items():
             try:
-                data = fred.get_series_latest_release(series_id)
+                with _api_ctx(tracker, "fred", "series"):
+                    data = fred.get_series_latest_release(series_id)
                 if data is not None and len(data) >= 2:
                     latest = float(data.iloc[-1])
                     prev = float(data.iloc[-2])
@@ -421,7 +438,7 @@ def _fetch_fred_macro_sync(api_key: str) -> dict:
         return {}
 
 
-def _fetch_market_context_sync(today: date, symbols: list[str] | None = None) -> str:
+def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tracker=None) -> str:
     lines = []
     indices = {
         "SPY": "S&P 500 ETF",
@@ -435,7 +452,8 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None) ->
     for ticker_sym, label in indices.items():
         try:
             t = yf.Ticker(ticker_sym)
-            hist = t.history(period="5d")
+            with _api_ctx(tracker, "yfinance", "market_context"):
+                hist = t.history(period="5d")
             if hist.empty:
                 continue
             price = round(float(hist["Close"].iloc[-1]), 2)
@@ -454,7 +472,8 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None) ->
     for ticker_sym, label in sectors.items():
         try:
             t = yf.Ticker(ticker_sym)
-            hist = t.history(period="5d")
+            with _api_ctx(tracker, "yfinance", "market_context"):
+                hist = t.history(period="5d")
             if hist.empty:
                 continue
             price = float(hist["Close"].iloc[-1])
@@ -557,7 +576,7 @@ _SP500_POOL = [
 ]
 
 
-def _fetch_momentum_screener_sync(n: int = 20) -> list[str]:
+def _fetch_momentum_screener_sync(n: int = 20, tracker=None) -> list[str]:
     """
     Return up to n symbols from the S&P 500 pool that are:
       - Not already in WATCHLIST
@@ -573,7 +592,8 @@ def _fetch_momentum_screener_sync(n: int = 20) -> list[str]:
             continue
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="3mo", interval="1d")
+            with _api_ctx(tracker, "yfinance", "screener", symbol):
+                hist = ticker.history(period="3mo", interval="1d")
             if hist.empty or len(hist) < 25:
                 continue
             current = float(hist["Close"].iloc[-1])
@@ -589,20 +609,21 @@ def _fetch_momentum_screener_sync(n: int = 20) -> list[str]:
     return [sym for sym, _ in candidates[:n]]
 
 
-def _fetch_opening_prices_sync(symbols: list[str], trade_date: date) -> dict[str, float | None]:
+def _fetch_opening_prices_sync(symbols: list[str], trade_date: date, tracker=None) -> dict[str, float | None]:
     results: dict[str, float | None] = {}
     date_str = trade_date.isoformat()
     next_day = (trade_date + timedelta(days=1)).isoformat()
     for symbol in symbols:
         try:
-            df = yf.download(
-                symbol,
-                start=date_str,
-                end=next_day,
-                interval="1m",
-                progress=False,
-                auto_adjust=True,
-            )
+            with _api_ctx(tracker, "yfinance", "opening_prices", symbol):
+                df = yf.download(
+                    symbol,
+                    start=date_str,
+                    end=next_day,
+                    interval="1m",
+                    progress=False,
+                    auto_adjust=True,
+                )
             if df.empty:
                 results[symbol] = None
                 continue
@@ -780,64 +801,64 @@ def build_options_context(options_data: dict) -> str:
 
 # ── Async wrappers ──────────────────────────────────────────────────────────
 
-async def fetch_price_data(symbols: list[str]) -> dict:
+async def fetch_price_data(symbols: list[str], tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_price_data_sync, symbols)
+    return await loop.run_in_executor(None, lambda: _fetch_price_data_sync(symbols, tracker=tracker))
 
 
-async def fetch_news(symbols: list[str]) -> dict:
+async def fetch_news(symbols: list[str], tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_news_sync, symbols)
+    return await loop.run_in_executor(None, lambda: _fetch_news_sync(symbols, tracker=tracker))
 
 
-async def fetch_earnings_surprise(symbols: list[str]) -> dict:
+async def fetch_earnings_surprise(symbols: list[str], tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_earnings_surprise_sync, symbols)
+    return await loop.run_in_executor(None, lambda: _fetch_earnings_surprise_sync(symbols, tracker=tracker))
 
 
-async def fetch_insider_activity(symbols: list[str]) -> dict:
+async def fetch_insider_activity(symbols: list[str], tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_insider_activity_sync, symbols)
+    return await loop.run_in_executor(None, lambda: _fetch_insider_activity_sync(symbols, tracker=tracker))
 
 
-async def fetch_options_data(symbols: list[str]) -> dict:
+async def fetch_options_data(symbols: list[str], tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_options_data_sync, symbols)
+    return await loop.run_in_executor(None, lambda: _fetch_options_data_sync(symbols, tracker=tracker))
 
 
-async def fetch_fred_macro(api_key: str) -> dict:
+async def fetch_fred_macro(api_key: str, tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_fred_macro_sync, api_key)
+    return await loop.run_in_executor(None, lambda: _fetch_fred_macro_sync(api_key, tracker=tracker))
 
 
-async def fetch_market_context(today: date, symbols: list[str] | None = None) -> str:
+async def fetch_market_context(today: date, symbols: list[str] | None = None, tracker=None) -> str:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_market_context_sync, today, symbols)
+    return await loop.run_in_executor(None, lambda: _fetch_market_context_sync(today, symbols, tracker=tracker))
 
 
-async def fetch_edgar_insider(symbols: list[str], days_back: int = 30) -> dict:
+async def fetch_edgar_insider(symbols: list[str], days_back: int = 30, tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_edgar_insider_sync, symbols, days_back)
+    return await loop.run_in_executor(None, lambda: _fetch_edgar_insider_sync(symbols, days_back, tracker=tracker))
 
 
-async def fetch_polygon_news(symbols: list[str], api_key: str) -> dict:
+async def fetch_polygon_news(symbols: list[str], api_key: str, tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_polygon_news_sync, symbols, api_key)
+    return await loop.run_in_executor(None, lambda: _fetch_polygon_news_sync(symbols, api_key, tracker=tracker))
 
 
-async def fetch_av_technicals(symbols: list[str], api_key: str) -> dict:
+async def fetch_av_technicals(symbols: list[str], api_key: str, tracker=None) -> dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_av_technicals_sync, symbols, api_key)
+    return await loop.run_in_executor(None, lambda: _fetch_av_technicals_sync(symbols, api_key, tracker=tracker))
 
 
-async def fetch_momentum_screener(n: int = 20) -> list[str]:
+async def fetch_momentum_screener(n: int = 20, tracker=None) -> list[str]:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_momentum_screener_sync, n)
+    return await loop.run_in_executor(None, lambda: _fetch_momentum_screener_sync(n, tracker=tracker))
 
 
-async def fetch_opening_prices(symbols: list[str], trade_date: date) -> dict[str, float | None]:
+async def fetch_opening_prices(symbols: list[str], trade_date: date, tracker=None) -> dict[str, float | None]:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_opening_prices_sync, symbols, trade_date)
+    return await loop.run_in_executor(None, lambda: _fetch_opening_prices_sync(symbols, trade_date, tracker=tracker))
 
 
 def _fetch_market_eod_sync(target_date: date) -> dict:
