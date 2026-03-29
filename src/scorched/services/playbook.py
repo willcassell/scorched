@@ -1,16 +1,13 @@
 """Playbook service: reads and updates the bot's living strategy document."""
 import logging
 from datetime import date
-from decimal import Decimal
 
 import anthropic
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
 from ..models import Playbook, TradeHistory, TradeRecommendation
-from ..prompts import load_prompt
-from ..retry import claude_call_with_retry
+from .claude_client import call_playbook_update as _call_playbook_update
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +38,6 @@ No trades have been made yet. Starting fresh with $100k simulated capital.
 ## Notes
 This playbook is updated each morning before recommendations are generated.
 """
-
-UPDATE_SYSTEM_PROMPT = load_prompt("playbook_update")
-
 
 async def get_playbook(db: AsyncSession) -> Playbook:
     """Get the current playbook, creating it if it doesn't exist."""
@@ -144,20 +138,11 @@ async def update_playbook(db: AsyncSession, today: date) -> Playbook:
 
 Review these outcomes against the playbook and produce an updated version that reflects what we've learned."""
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     try:
-        response = claude_call_with_retry(
-            client, "Playbook update",
-            model="claude-opus-4-6",
-            max_tokens=2048,
-            system=UPDATE_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
-        )
+        response, updated_content = _call_playbook_update(user_content)
     except anthropic.APIStatusError:
         logger.error("Playbook update failed after all retries — using stale playbook")
         return playbook
-
-    updated_content = response.content[0].text.strip()
 
     playbook.content = updated_content
     playbook.version += 1

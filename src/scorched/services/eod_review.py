@@ -3,23 +3,17 @@ import asyncio
 import logging
 from datetime import date
 
-import anthropic
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
 from ..cost import record_usage
 from ..models import Position, RecommendationSession, TradeHistory, TradeRecommendation
-from ..prompts import load_prompt
+from .claude_client import MODEL, call_eod_review as _call_eod_review, call_position_review as _call_position_review
 from .playbook import get_playbook
-from .position_mgmt import POSITION_MGMT_SYSTEM, build_position_review_prompt
+from .position_mgmt import build_position_review_prompt
 from .research import fetch_market_eod, fetch_price_data
 
 logger = logging.getLogger(__name__)
-
-MODEL = "claude-sonnet-4-6"
-
-EOD_REVIEW_SYSTEM = load_prompt("eod_review")
 
 
 async def _get_execution_for_rec(db: AsyncSession, recommendation_id: int) -> TradeHistory | None:
@@ -190,13 +184,7 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
     )
 
     logger.info("EOD review: calling Claude to update playbook (date=%s)", review_date)
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=2048,
-        system=EOD_REVIEW_SYSTEM,
-        messages=[{"role": "user", "content": user_content}],
-    )
+    response, updated_content = _call_eod_review(user_content)
 
     await record_usage(
         db,
@@ -206,8 +194,6 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
     )
-
-    updated_content = response.content[0].text.strip()
     playbook.content = updated_content
     playbook.version += 1
     await db.commit()
@@ -234,12 +220,7 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
         market_summary = context[:500] if context else "Market data unavailable"
         pos_prompt = build_position_review_prompt(pos_list, market_summary)
 
-        pos_response = client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=POSITION_MGMT_SYSTEM,
-            messages=[{"role": "user", "content": pos_prompt}],
-        )
+        pos_response, pos_text = _call_position_review(pos_prompt)
 
         await record_usage(
             db,
@@ -250,7 +231,7 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
             output_tokens=pos_response.usage.output_tokens,
         )
 
-        logger.info("Position management review: %s", pos_response.content[0].text[:200])
+        logger.info("Position management review: %s", pos_text[:200])
 
     return {
         "status": "completed",

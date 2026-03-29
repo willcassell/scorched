@@ -2,15 +2,10 @@
 import asyncio
 import json
 import logging
-import re
 from datetime import date, datetime
 from decimal import Decimal
 
-import anthropic
-
-from ..api_tracker import ApiCallTracker, track_call
-from ..prompts import load_prompt
-from ..retry import claude_call_with_retry
+from ..api_tracker import ApiCallTracker
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,8 +13,9 @@ from ..config import settings
 from ..cost import record_usage
 from ..models import Portfolio, Position, RecommendationSession, TokenUsage, TradeHistory, TradeRecommendation
 from ..schemas import PortfolioSummary, RecommendationItem, RecommendationsResponse
+from .claude_client import MODEL, call_analysis, call_decision, call_risk_review, parse_json_response
 from .playbook import get_playbook, update_playbook
-from .risk_review import RISK_REVIEW_SYSTEM, build_risk_review_prompt, parse_risk_review_response
+from .risk_review import build_risk_review_prompt, parse_risk_review_response
 from .portfolio import get_portfolio_summary
 from .strategy import load_analyst_guidance, load_strategy
 from .technicals import compute_technicals
@@ -41,41 +37,6 @@ from .research import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-MODEL = "claude-sonnet-4-6"
-THINKING_BUDGET = 16000  # tokens; ~$0.048/day (Tier 2 upgrade from 8K)
-
-# ── Call 1 & 2 system prompts (loaded from src/scorched/prompts/*.md) ─────
-_ANALYSIS_SYSTEM = load_prompt("analysis")
-_DECISION_SYSTEM = load_prompt("decision")
-
-
-def _extract_text(content: list) -> str:
-    """Extract the text block from a response that may contain thinking blocks."""
-    for block in content:
-        if block.type == "text":
-            return block.text
-    return ""
-
-
-def _extract_thinking(content: list) -> str:
-    """Extract the thinking block text if present."""
-    for block in content:
-        if block.type == "thinking":
-            return block.thinking
-    return ""
-
-
-def _parse_json_response(raw: str) -> dict:
-    """Parse JSON from a response, handling markdown code fences."""
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
-        if match:
-            return json.loads(match.group(1))
-        return {}
 
 
 async def _get_recent_sell(
@@ -286,20 +247,12 @@ async def generate_recommendations(
     db.add(session_row)
     await db.flush()
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
     # ── Call 1: Analysis with extended thinking ────────────────────────────
-    logger.info("Call 1: analysis with extended thinking (budget=%d)", THINKING_BUDGET)
+    logger.info("Call 1: analysis with extended thinking")
     call1_user = f"Today's date: {session_date}\n\n{market_context}\n\n{research_context}"
-    with track_call(tracker, "claude", "analysis"):
-        call1_response = claude_call_with_retry(
-            client, "Call 1 (analysis)",
-            model=MODEL,
-            max_tokens=THINKING_BUDGET + 2048,
-            thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
-            system=_ANALYSIS_SYSTEM.format(strategy=strategy, guidance=guidance),
-            messages=[{"role": "user", "content": call1_user}],
-        )
+    call1_response, analysis_text, analysis_thinking, candidates = call_analysis(
+        strategy, guidance, call1_user, tracker=tracker,
+    )
 
     # Record Call 1 token usage — API reports thinking tokens in usage object
     usage1 = call1_response.usage
@@ -312,13 +265,6 @@ async def generate_recommendations(
         output_tokens=usage1.output_tokens,
         thinking_tokens=getattr(usage1, "thinking_tokens", 0),
     )
-
-    analysis_raw = _extract_text(call1_response.content)
-    analysis_thinking = _extract_thinking(call1_response.content)
-    analysis_parsed = _parse_json_response(analysis_raw)
-
-    analysis_text = analysis_parsed.get("analysis", analysis_raw)
-    candidates = [s.upper() for s in analysis_parsed.get("candidates", [])][:5]
 
     # Store analysis text (thinking + analysis) on the session row
     thinking_prefix = f"[THINKING]\n{analysis_thinking}\n\n[ANALYSIS]\n" if analysis_thinking else ""
@@ -335,12 +281,6 @@ async def generate_recommendations(
     # ── Call 2: Decision (standard, no extended thinking) ─────────────────
     logger.info("Call 2: trade decision")
     min_cash_pct = int(settings.min_cash_reserve_pct * 100)
-    decision_system = _DECISION_SYSTEM.format(
-        min_cash_pct=min_cash_pct,
-        playbook=playbook.content,
-        strategy=strategy,
-        guidance=guidance,
-    )
 
     options_context = build_options_context(options_data) if options_data else ""
     call2_user = (
@@ -361,14 +301,9 @@ async def generate_recommendations(
                 f"{pos['days_held']}d ({pos['tax_category']})\n"
             )
 
-    with track_call(tracker, "claude", "decision"):
-        call2_response = claude_call_with_retry(
-            client, "Call 2 (decision)",
-            model=MODEL,
-            max_tokens=2048,
-            system=decision_system,
-            messages=[{"role": "user", "content": call2_user}],
-        )
+    call2_response, decision_raw, parsed = call_decision(
+        strategy, guidance, playbook.content, min_cash_pct, call2_user, tracker=tracker,
+    )
 
     usage2 = call2_response.usage
     await record_usage(
@@ -380,11 +315,7 @@ async def generate_recommendations(
         output_tokens=usage2.output_tokens,
     )
 
-    decision_raw = call2_response.content[0].text
     session_row.claude_response = decision_raw
-    parsed = _parse_json_response(decision_raw)
-    if not parsed:
-        parsed = {"research_summary": decision_raw, "recommendations": []}
 
     research_summary = parsed.get("research_summary", "")
     raw_recs = parsed.get("recommendations", [])[:3]
@@ -395,14 +326,7 @@ async def generate_recommendations(
         playbook_excerpt = playbook.content[:500] if playbook else ""
         risk_prompt = build_risk_review_prompt(raw_recs, portfolio_dict, analysis_text, playbook_excerpt)
 
-        with track_call(tracker, "claude", "risk_review"):
-            call3_response = claude_call_with_retry(
-                client, "Call 3 (risk review)",
-                model=MODEL,
-                max_tokens=1024,
-                system=RISK_REVIEW_SYSTEM,
-                messages=[{"role": "user", "content": risk_prompt}],
-            )
+        call3_response, risk_raw = call_risk_review(risk_prompt, tracker=tracker)
 
         usage3 = call3_response.usage
         await record_usage(
@@ -414,7 +338,7 @@ async def generate_recommendations(
             output_tokens=usage3.output_tokens,
         )
 
-        risk_decisions = parse_risk_review_response(call3_response.content[0].text)
+        risk_decisions = parse_risk_review_response(risk_raw)
         rejected_symbols = {
             d["symbol"].upper()
             for d in risk_decisions
