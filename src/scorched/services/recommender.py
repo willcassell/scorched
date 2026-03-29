@@ -275,7 +275,7 @@ async def generate_recommendations(
     # ── Call 1: Analysis with extended thinking ────────────────────────────
     logger.info("Call 1: analysis with extended thinking")
     call1_user = f"Today's date: {session_date}\n\n{market_context}\n\n{research_context}"
-    call1_response, analysis_text, analysis_thinking, candidates = call_analysis(
+    call1_response, analysis_text, analysis_thinking, candidates = await call_analysis(
         strategy, guidance, call1_user, tracker=tracker,
     )
 
@@ -326,7 +326,7 @@ async def generate_recommendations(
                 f"{pos['days_held']}d ({pos['tax_category']})\n"
             )
 
-    call2_response, decision_raw, parsed = call_decision(
+    call2_response, decision_raw, parsed = await call_decision(
         strategy, guidance, playbook.content, min_cash_pct, call2_user, tracker=tracker,
     )
 
@@ -351,7 +351,7 @@ async def generate_recommendations(
         playbook_excerpt = playbook.content[:500] if playbook else ""
         risk_prompt = build_risk_review_prompt(raw_recs, portfolio_dict, analysis_text, playbook_excerpt)
 
-        call3_response, risk_raw = call_risk_review(risk_prompt, tracker=tracker)
+        call3_response, risk_raw = await call_risk_review(risk_prompt, tracker=tracker)
 
         usage3 = call3_response.usage
         await record_usage(

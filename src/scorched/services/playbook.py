@@ -139,7 +139,7 @@ async def update_playbook(db: AsyncSession, today: date) -> Playbook:
 Review these outcomes against the playbook and produce an updated version that reflects what we've learned."""
 
     try:
-        response, updated_content = _call_playbook_update(user_content)
+        response, updated_content = await _call_playbook_update(user_content)
     except anthropic.APIStatusError:
         logger.error("Playbook update failed after all retries — using stale playbook")
         return playbook

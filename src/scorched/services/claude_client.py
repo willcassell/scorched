@@ -60,7 +60,7 @@ def _client() -> anthropic.Anthropic:
 
 # ── Call wrappers ────────────────────────────────────────────────────────────
 
-def call_analysis(strategy: str, guidance: str, user_content: str, tracker=None):
+async def call_analysis(strategy: str, guidance: str, user_content: str, tracker=None):
     """Call 1: Analysis with extended thinking.
 
     Returns (response, analysis_text, thinking_text, candidates).
@@ -68,7 +68,7 @@ def call_analysis(strategy: str, guidance: str, user_content: str, tracker=None)
     system_prompt = load_prompt("analysis").format(strategy=strategy, guidance=guidance)
     ctx = track_call(tracker, "claude", "analysis") if tracker else nullcontext()
     with ctx:
-        response = claude_call_with_retry(
+        response = await claude_call_with_retry(
             _client(), "Call 1 (analysis)",
             model=MODEL,
             max_tokens=THINKING_BUDGET + 2048,
@@ -87,7 +87,7 @@ def call_analysis(strategy: str, guidance: str, user_content: str, tracker=None)
     return response, analysis_text, thinking_text, candidates
 
 
-def call_decision(
+async def call_decision(
     strategy: str,
     guidance: str,
     playbook_content: str,
@@ -107,7 +107,7 @@ def call_decision(
     )
     ctx = track_call(tracker, "claude", "decision") if tracker else nullcontext()
     with ctx:
-        response = claude_call_with_retry(
+        response = await claude_call_with_retry(
             _client(), "Call 2 (decision)",
             model=MODEL,
             max_tokens=2048,
@@ -123,7 +123,7 @@ def call_decision(
     return response, decision_raw, parsed
 
 
-def call_risk_review(user_content: str, tracker=None):
+async def call_risk_review(user_content: str, tracker=None):
     """Call 3: Risk committee review.
 
     Returns (response, raw_text).
@@ -131,7 +131,7 @@ def call_risk_review(user_content: str, tracker=None):
     system_prompt = load_prompt("risk_review")
     ctx = track_call(tracker, "claude", "risk_review") if tracker else nullcontext()
     with ctx:
-        response = claude_call_with_retry(
+        response = await claude_call_with_retry(
             _client(), "Call 3 (risk review)",
             model=MODEL,
             max_tokens=1024,
@@ -176,14 +176,14 @@ def call_eod_review(user_content: str):
     return response, response.content[0].text.strip()
 
 
-def call_playbook_update(user_content: str):
+async def call_playbook_update(user_content: str):
     """Playbook update (uses claude-opus-4-6, not sonnet).
 
     Returns (response, updated_text).
     Raises anthropic.APIStatusError on failure after retries.
     """
     system_prompt = load_prompt("playbook_update")
-    response = claude_call_with_retry(
+    response = await claude_call_with_retry(
         _client(), "Playbook update",
         model="claude-opus-4-6",
         max_tokens=2048,
