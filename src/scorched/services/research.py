@@ -613,6 +613,7 @@ def build_research_context(
     fred_macro: dict | None = None,
     polygon_news: dict | None = None,
     av_technicals: dict | None = None,
+    technicals: dict | None = None,
 ) -> str:
     lines = []
 
@@ -684,6 +685,28 @@ def build_research_context(
         if av_technicals and symbol in av_technicals:
             t = av_technicals[symbol]
             lines.append(f"  RSI(14): {t['rsi']} [{t['signal'].upper()}]")
+
+        # Technical analysis (MACD, Bollinger, MA crossover, S/R, volume)
+        if technicals and symbol in technicals:
+            t = technicals[symbol]
+            ta_parts = []
+            if "macd" in t:
+                m = t["macd"]
+                ta_parts.append(f"MACD: {m['signal'].upper()} (hist={m['histogram']:+.4f})")
+            if "bollinger" in t:
+                b = t["bollinger"]
+                ta_parts.append(f"BB: {b['signal'].upper()} (%B={b['pct_b']:.2f}, band=${b['lower']:.0f}-${b['upper']:.0f})")
+            if "ma_crossover" in t:
+                ma = t["ma_crossover"]
+                ta_parts.append(f"MA: {ma['signal'].upper()} (50d=${ma['ma_50']:.0f}, 200d=${ma['ma_200']:.0f})")
+            if "support_resistance" in t:
+                sr = t["support_resistance"]
+                ta_parts.append(f"S/R: ${sr['support']:.0f} / ${sr['resistance']:.0f}")
+            if "volume" in t:
+                v = t["volume"]
+                ta_parts.append(f"Vol: {v['signal'].upper()} (rel={v['relative_volume']:.1f}x)")
+            if ta_parts:
+                lines.append(f"  Technicals: {' | '.join(ta_parts)}")
 
         # News — prefer Polygon headlines; fall back to yfinance
         headlines = (polygon_news or {}).get(symbol) or news_data.get(symbol, [])

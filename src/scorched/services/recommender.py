@@ -7,6 +7,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import anthropic
+
+from ..retry import claude_call_with_retry
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,7 @@ from ..schemas import PortfolioSummary, RecommendationItem, RecommendationsRespo
 from .playbook import get_playbook, update_playbook
 from .portfolio import get_portfolio_summary
 from .strategy import load_analyst_guidance, load_strategy
+from .technicals import compute_technicals
 from .research import (
     WATCHLIST,
     build_options_context,
@@ -34,6 +37,7 @@ from .research import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 MODEL = "claude-sonnet-4-6"
 THINKING_BUDGET = 8000  # tokens; ~$0.024/day
@@ -277,6 +281,10 @@ async def generate_recommendations(
         fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key),
     )
 
+    # Compute technical indicators from price history (pure math, no I/O)
+    technicals = compute_technicals(price_data)
+    logger.info("Computed technicals for %d symbols", len(technicals))
+
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     portfolio_dict = {
         "cash_balance": float(portfolio.cash_balance),
@@ -316,6 +324,7 @@ async def generate_recommendations(
         fred_macro=fred_macro,
         polygon_news=polygon_news,
         av_technicals=av_technicals,
+        technicals=technicals,
     )
 
     # Persist session row early so we have an ID for token_usage FK
@@ -331,7 +340,8 @@ async def generate_recommendations(
     # ── Call 1: Analysis with extended thinking ────────────────────────────
     logger.info("Call 1: analysis with extended thinking (budget=%d)", THINKING_BUDGET)
     call1_user = f"Today's date: {session_date}\n\n{market_context}\n\n{research_context}"
-    call1_response = client.messages.create(
+    call1_response = claude_call_with_retry(
+        client, "Call 1 (analysis)",
         model=MODEL,
         max_tokens=THINKING_BUDGET + 2048,
         thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
@@ -399,7 +409,8 @@ async def generate_recommendations(
                 f"{pos['days_held']}d ({pos['tax_category']})\n"
             )
 
-    call2_response = client.messages.create(
+    call2_response = claude_call_with_retry(
+        client, "Call 2 (decision)",
         model=MODEL,
         max_tokens=2048,
         system=decision_system,
