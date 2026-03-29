@@ -1,6 +1,8 @@
 """Intraday monitoring endpoint — evaluates triggered positions via Claude."""
+import json
 import logging
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,12 +14,68 @@ from ..schemas import (
     IntradayDecision,
     IntradayEvaluateRequest,
     IntradayEvaluateResponse,
+    IntradayTriggerItem,
 )
 from ..services.claude_client import call_intraday_exit, parse_json_response
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/intraday", tags=["intraday"])
+
+STRATEGY_PATH = Path(__file__).resolve().parent.parent.parent.parent / "strategy.json"
+
+
+def _load_hard_stop_pct() -> float:
+    """Read hard stop threshold from strategy.json (default 5.0%)."""
+    try:
+        with open(STRATEGY_PATH) as f:
+            data = json.load(f)
+        return float(data.get("intraday_monitor", {}).get("position_drop_from_entry_pct", 5.0))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return 5.0
+
+
+def _is_hard_stop(trigger: IntradayTriggerItem, hard_stop_pct: float) -> tuple[bool, float]:
+    """Check if position has hit the hard stop threshold.
+
+    Returns (is_hard_stop, drop_pct).
+    """
+    if not trigger.entry_price:
+        return False, 0.0
+    drop_pct = float((trigger.entry_price - trigger.current_price) / trigger.entry_price * 100)
+    return drop_pct >= hard_stop_pct, drop_pct
+
+
+async def _execute_sell(
+    trigger: IntradayTriggerItem,
+    sell_qty: Decimal,
+    db: AsyncSession,
+) -> tuple[dict | None, str | None]:
+    """Execute a sell via broker. Returns (trade_result, error_msg)."""
+    broker = get_broker(db)
+    try:
+        result = await broker.submit_sell(
+            symbol=trigger.symbol,
+            qty=sell_qty,
+            limit_price=trigger.current_price,
+            recommendation_id=None,
+        )
+        if result["status"] == "filled":
+            trade_result = {
+                "trade_id": result.get("trade_id"),
+                "shares": float(sell_qty),
+                "execution_price": float(result["filled_avg_price"]),
+                "realized_gain": float(result.get("realized_gain") or 0),
+            }
+            logger.info(
+                "Intraday exit executed: SELL %s %s shares @ %s",
+                trigger.symbol, sell_qty, result["filled_avg_price"],
+            )
+            return trade_result, None
+        return None, None
+    except Exception as e:
+        logger.error("Intraday sell failed for %s: %s", trigger.symbol, e)
+        return None, str(e)
 
 
 def _build_exit_prompt(trigger, market_ctx) -> str:
@@ -54,8 +112,32 @@ async def evaluate_triggers(
 ):
     """Evaluate triggered positions via Claude and execute exits."""
     decisions = []
+    hard_stop_pct = _load_hard_stop_pct()
 
     for trigger in body.triggers:
+        # ── Hard stop check — bypass Claude entirely ──────────────────
+        is_stop, drop_pct = _is_hard_stop(trigger, hard_stop_pct)
+        if is_stop:
+            logger.info("HARD STOP %s: down %.1f%% — auto-selling", trigger.symbol, drop_pct)
+            reasoning = (
+                f"Hard stop triggered: position down {drop_pct:.1f}% from entry "
+                f"(>= {hard_stop_pct:.1f}% threshold). Auto-exit without Claude evaluation."
+            )
+            trade_result, err = await _execute_sell(trigger, trigger.shares, db)
+            action = "exit_full"
+            if err:
+                reasoning += f" [SELL FAILED: {err}]"
+                action = "hold"
+
+            decisions.append(IntradayDecision(
+                symbol=trigger.symbol,
+                action=action,
+                reasoning=reasoning,
+                trade_result=trade_result,
+            ))
+            continue
+
+        # ── Normal Claude evaluation path ─────────────────────────────
         prompt = _build_exit_prompt(trigger, body.market_context)
 
         response, raw_text = call_intraday_exit(prompt)
@@ -90,28 +172,9 @@ async def evaluate_triggers(
                 sell_qty = (trigger.shares * Decimal(str(partial_pct)) / 100).quantize(Decimal("1"))
                 sell_qty = max(sell_qty, Decimal("1"))
 
-            broker = get_broker(db)
-            try:
-                result = await broker.submit_sell(
-                    symbol=trigger.symbol,
-                    qty=sell_qty,
-                    limit_price=trigger.current_price,
-                    recommendation_id=None,
-                )
-                if result["status"] == "filled":
-                    trade_result = {
-                        "trade_id": result.get("trade_id"),
-                        "shares": float(sell_qty),
-                        "execution_price": float(result["filled_avg_price"]),
-                        "realized_gain": float(result.get("realized_gain") or 0),
-                    }
-                    logger.info(
-                        "Intraday exit executed: SELL %s %s shares @ %s",
-                        trigger.symbol, sell_qty, result["filled_avg_price"],
-                    )
-            except Exception as e:
-                logger.error("Intraday sell failed for %s: %s", trigger.symbol, e)
-                reasoning += f" [SELL FAILED: {e}]"
+            trade_result, err = await _execute_sell(trigger, sell_qty, db)
+            if err:
+                reasoning += f" [SELL FAILED: {err}]"
                 action = "hold"
 
         decisions.append(IntradayDecision(
