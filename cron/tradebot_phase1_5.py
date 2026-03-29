@@ -12,47 +12,19 @@ Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 import json
 import os
 import pathlib
-import urllib.request
-import datetime
-import pytz
+import sys
 
-# Load .env from project root
-_env_file = pathlib.Path(__file__).parent.parent / ".env"
-if _env_file.exists():
-    for _line in _env_file.read_text().splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _, _v = _line.partition("=")
-            os.environ.setdefault(_k.strip(), _v.strip())
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from common import load_env, send_telegram, now_et
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+load_env()
+
 RECS_FILE = "/tmp/tradebot_recommendations.json"
 FILTERED_FILE = "/tmp/tradebot_recommendations.json"  # overwrites in place
 
 
-def send_telegram(text):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram env vars not set — skipping notification")
-        return
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"Telegram sent: {resp.read().decode()[:120]}")
-    except Exception as e:
-        print(f"Telegram error: {e}")
-
-
 def main():
-    est_tz = pytz.timezone("America/New_York")
-    now_est = datetime.datetime.now(est_tz)
-    today_str = now_est.date().strftime("%Y-%m-%d")
+    now_est, today_str = now_et()
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 1.5: circuit breaker for {today_str}")
 
@@ -72,9 +44,8 @@ def main():
         print("No recommendations to gate.")
         return
 
-    # Import circuit breaker (needs project on sys.path)
-    import sys
-    sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
+    # Import circuit breaker (needs project src/ on sys.path)
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
     import asyncio
     from scorched.circuit_breaker import run_circuit_breaker

@@ -11,76 +11,24 @@ Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 """
 import json
 import os
-import pathlib
-import urllib.request
-import urllib.error
-import datetime
-import pytz
+import sys
+from pathlib import Path
 
-# Load .env from project root so host cron has the same vars as the container.
-_env_file = pathlib.Path(__file__).parent.parent / ".env"
-if _env_file.exists():
-    for _line in _env_file.read_text().splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _, _v = _line.partition("=")
-            os.environ.setdefault(_k.strip(), _v.strip())
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
 
-BASE_URL = os.environ.get("TRADEBOT_URL", "http://localhost:8000")
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+load_env()
+
 RECS_FILE = "/tmp/tradebot_recommendations.json"
 
 
-def http_get(path):
-    req = urllib.request.Request(f"{BASE_URL}{path}")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read())
-
-
-def http_post(path, payload):
-    data = json.dumps(payload).encode()
-    headers = {"Content-Type": "application/json"}
-    pin = os.environ.get("SETTINGS_PIN", "")
-    if pin:
-        headers["X-Owner-Pin"] = pin
-    req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        return json.loads(resp.read())
-
-
-def send_telegram(text):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram env vars not set — skipping notification")
-        return
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"Telegram sent: {resp.read().decode()[:120]}")
-    except Exception as e:
-        print(f"Telegram error: {e}")
-
-
-def fmt_pct(val):
-    v = float(val)
-    return f"+{v:.2f}%" if v >= 0 else f"{v:.2f}%"
-
-
 def main():
-    est_tz = pytz.timezone("America/New_York")
-    now_est = datetime.datetime.now(est_tz)
-    today_str = now_est.date().strftime("%Y-%m-%d")
+    now_est, today_str = now_et()
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 1: generating recommendations for {today_str}")
 
     try:
-        session = http_post("/api/v1/recommendations/generate", {"session_date": today_str})
+        session = http_post("/api/v1/recommendations/generate", {"session_date": today_str}, timeout=600)
     except Exception as e:
         msg = f"TRADEBOT // {today_str} - Phase 1 failed\nError: {e}"
         send_telegram(msg)

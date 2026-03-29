@@ -9,60 +9,18 @@ Requirements: pip3 install pytz
 Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
               TRADEBOT_URL (optional, defaults to http://localhost:8000)
 """
-import json
-import os
-import urllib.request
 import urllib.parse
-import datetime
-import pytz
+import sys
+from pathlib import Path
 
-BASE_URL = os.environ.get("TRADEBOT_URL", "http://localhost:8000")
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
 
-
-def http_get(path):
-    req = urllib.request.Request(f"{BASE_URL}{path}")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read())
-
-
-def http_post(path, payload):
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"{BASE_URL}{path}", data=data, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read())
-
-
-def send_telegram(text):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram env vars not set — skipping notification")
-        return
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"Telegram sent: {resp.read().decode()[:120]}")
-    except Exception as e:
-        print(f"Telegram error: {e}")
-
-
-def fmt_pct(val):
-    v = float(val)
-    return f"+{v:.2f}%" if v >= 0 else f"{v:.2f}%"
+load_env()
 
 
 def main():
-    est_tz = pytz.timezone("America/New_York")
-    now_est = datetime.datetime.now(est_tz)
-    today_str = now_est.date().strftime("%Y-%m-%d")
+    now_est, today_str = now_et()
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 3: end-of-day summary for {today_str}")
 
