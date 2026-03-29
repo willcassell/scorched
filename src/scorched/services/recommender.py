@@ -17,6 +17,7 @@ from ..cost import record_usage
 from ..models import Portfolio, Position, RecommendationSession, TokenUsage, TradeHistory, TradeRecommendation
 from ..schemas import PortfolioSummary, RecommendationItem, RecommendationsResponse
 from .playbook import get_playbook, update_playbook
+from .risk_review import RISK_REVIEW_SYSTEM, build_risk_review_prompt, parse_risk_review_response
 from .portfolio import get_portfolio_summary
 from .strategy import load_analyst_guidance, load_strategy
 from .technicals import compute_technicals
@@ -449,6 +450,48 @@ async def generate_recommendations(
 
     research_summary = parsed.get("research_summary", "")
     raw_recs = parsed.get("recommendations", [])[:3]
+
+    # ── Call 3: Risk committee review (adversarial) ──────────────────────────
+    if raw_recs:
+        logger.info("Call 3: risk committee review of %d recommendations", len(raw_recs))
+        playbook_excerpt = playbook.content[:500] if playbook else ""
+        risk_prompt = build_risk_review_prompt(raw_recs, portfolio_dict, analysis_text, playbook_excerpt)
+
+        call3_response = claude_call_with_retry(
+            client, "Call 3 (risk review)",
+            model=MODEL,
+            max_tokens=1024,
+            system=RISK_REVIEW_SYSTEM,
+            messages=[{"role": "user", "content": risk_prompt}],
+        )
+
+        usage3 = call3_response.usage
+        await record_usage(
+            db,
+            session_id=session_row.id,
+            call_type="risk_review",
+            model=MODEL,
+            input_tokens=usage3.input_tokens,
+            output_tokens=usage3.output_tokens,
+        )
+
+        risk_decisions = parse_risk_review_response(call3_response.content[0].text)
+        rejected_symbols = {
+            d["symbol"].upper()
+            for d in risk_decisions
+            if d.get("verdict") == "reject" and d.get("action", "").lower() == "buy"
+        }
+        if rejected_symbols:
+            logger.info("Risk committee rejected buys: %s", rejected_symbols)
+            for d in risk_decisions:
+                if d.get("verdict") == "reject":
+                    logger.info("  %s %s: %s", d.get("action"), d.get("symbol"), d.get("reason"))
+
+        # Filter out rejected buy recommendations (sells always pass through)
+        raw_recs = [
+            r for r in raw_recs
+            if not (r.get("action", "").lower() == "buy" and r.get("symbol", "").upper() in rejected_symbols)
+        ]
 
     recommendation_rows = []
     for rec in raw_recs:
