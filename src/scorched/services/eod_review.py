@@ -11,6 +11,7 @@ from ..config import settings
 from ..cost import record_usage
 from ..models import Position, RecommendationSession, TradeHistory, TradeRecommendation
 from .playbook import get_playbook
+from .position_mgmt import POSITION_MGMT_SYSTEM, build_position_review_prompt
 from .research import fetch_market_eod, fetch_price_data
 
 logger = logging.getLogger(__name__)
@@ -229,6 +230,44 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
     await db.refresh(playbook)
 
     logger.info("EOD review complete — playbook updated to v%d", playbook.version)
+
+    # ── Call 4: Position management review ───────────────────────────────────
+    if positions:
+        logger.info("Call 4: position management review for %d positions", len(positions))
+        pos_list = []
+        for p in positions:
+            cp = float((eod_prices.get(p.symbol) or {}).get("current_price", float(p.avg_cost_basis)))
+            acb = float(p.avg_cost_basis)
+            pos_list.append({
+                "symbol": p.symbol,
+                "shares": float(p.shares),
+                "avg_cost_basis": acb,
+                "current_price": cp,
+                "unrealized_gain_pct": round((cp - acb) / acb * 100, 1) if acb > 0 else 0,
+                "days_held": (review_date - p.first_purchase_date).days,
+            })
+
+        market_summary = context[:500] if context else "Market data unavailable"
+        pos_prompt = build_position_review_prompt(pos_list, market_summary)
+
+        pos_response = client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=POSITION_MGMT_SYSTEM,
+            messages=[{"role": "user", "content": pos_prompt}],
+        )
+
+        await record_usage(
+            db,
+            session_id=None,
+            call_type="position_mgmt",
+            model=MODEL,
+            input_tokens=pos_response.usage.input_tokens,
+            output_tokens=pos_response.usage.output_tokens,
+        )
+
+        logger.info("Position management review: %s", pos_response.content[0].text[:200])
+
     return {
         "status": "completed",
         "review_date": review_date.isoformat(),
