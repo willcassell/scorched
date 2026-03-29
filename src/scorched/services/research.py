@@ -7,12 +7,22 @@ import yfinance as yf
 
 # Universe of large-cap, liquid stocks to consider each morning
 WATCHLIST = [
-    # Core 30
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM", "V", "MA",
-    "UNH", "JNJ", "XOM", "CVX", "WMT", "HD", "PG", "KO", "PEP", "ABBV",
-    "LLY", "MRK", "COST", "AVGO", "ORCL", "ADBE", "CRM", "AMD", "NFLX", "BA",
-    # 10 additions: broad sector coverage, high liquidity
-    "GS", "BLK", "SPGI", "NOW", "PANW", "UBER", "SCHW", "ICE", "DIS", "HOOD",
+    # Mega-cap tech (10)
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "ORCL", "CRM",
+    # Tech growth (8)
+    "AMD", "NFLX", "ADBE", "NOW", "PANW", "CRWD", "DDOG", "PLTR",
+    # Financials (8)
+    "JPM", "V", "MA", "GS", "BLK", "SPGI", "SCHW", "ICE",
+    # Healthcare (6)
+    "UNH", "JNJ", "ABBV", "LLY", "MRK", "PFE",
+    # Consumer (6)
+    "WMT", "HD", "COST", "PG", "KO", "PEP",
+    # Energy (6)
+    "XOM", "CVX", "COP", "SLB", "HAL", "OXY",
+    # Industrials (6)
+    "BA", "CAT", "HON", "GE", "RTX", "DE",
+    # Other high-liquidity (8)
+    "UBER", "DIS", "HOOD", "PYPL", "COIN", "NET", "SNOW", "SHOP",
 ]
 
 

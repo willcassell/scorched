@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 MODEL = "claude-sonnet-4-6"
-THINKING_BUDGET = 8000  # tokens; ~$0.024/day
+THINKING_BUDGET = 16000  # tokens; ~$0.048/day (Tier 2 upgrade from 8K)
 
 # ── Call 1: Analysis prompt ────────────────────────────────────────────────
 
@@ -269,7 +269,7 @@ async def generate_recommendations(
         finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
 
     # Run momentum screener first so screener_symbols is available for AV call and gather
-    screener_symbols = await fetch_momentum_screener(n=20)
+    screener_symbols = await fetch_momentum_screener(n=30)
     logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
     research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
     logger.info("Total research universe: %d symbols", len(research_symbols))
