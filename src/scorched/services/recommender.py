@@ -66,6 +66,31 @@ async def _get_existing_session(db: AsyncSession, session_date: date) -> Recomme
     ).scalars().first()
 
 
+async def list_sessions(
+    db: AsyncSession,
+    session_date: date | None = None,
+    limit: int = 10,
+) -> list[RecommendationSession]:
+    """Return recommendation sessions, optionally filtered by date."""
+    q = (
+        select(RecommendationSession)
+        .order_by(RecommendationSession.session_date.desc())
+        .limit(limit)
+    )
+    if session_date:
+        q = q.where(RecommendationSession.session_date == session_date)
+    return list((await db.execute(q)).scalars().all())
+
+
+async def get_session(db: AsyncSession, session_id: int) -> RecommendationSession | None:
+    """Return a single session by ID, or None."""
+    return (
+        await db.execute(
+            select(RecommendationSession).where(RecommendationSession.id == session_id)
+        )
+    ).scalars().first()
+
+
 async def _build_cached_response(
     session: RecommendationSession,
     portfolio_summary: PortfolioSummary,

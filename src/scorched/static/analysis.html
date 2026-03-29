@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRADEBOT // ANALYSIS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0c0f;
+    --surface:  #0f1217;
+    --border:   #253040;
+    --border2:  #344558;
+    --text:     #b8cce0;
+    --text-dim: #6a8099;
+    --text-hi:  #e8f2fc;
+    --amber:    #e8a030;
+    --amber-dim:#7a5018;
+    --green:    #2ec87a;
+    --green-dim:#134d30;
+    --red:      #e84040;
+    --red-dim:  #5a1818;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --fs-base: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: var(--fs-base);
+    line-height: 1.5;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  body.fs-s { zoom: 0.85; }
+  body.fs-m { zoom: 1; }
+  body.fs-l { zoom: 1.2; }
+  body.fs-xl { zoom: 1.4; }
+  body.fs-xxl { zoom: 1.65; }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 16px; }
+  .back-link {
+    color: var(--text-dim); text-decoration: none; font-size: 12px;
+    letter-spacing: 0.1em; transition: color 0.15s;
+  }
+  .back-link:hover { color: var(--amber); }
+  .page-title { font-size: 15px; font-weight: 600; color: var(--amber); letter-spacing: 0.15em; text-transform: uppercase; }
+  .page-title span { color: var(--text-dim); font-weight: 300; }
+  .topbar-right { display: flex; align-items: center; gap: 16px; }
+  .zoom-select {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 11px; padding: 3px 6px;
+    cursor: pointer; letter-spacing: 0.06em;
+    appearance: auto;
+  }
+  .zoom-select:focus { border-color: var(--amber); outline: none; }
+  .session-nav {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .session-nav button {
+    background: none; border: 1px solid var(--border); color: var(--text-dim);
+    font-family: var(--mono); font-size: 12px; padding: 4px 10px;
+    cursor: pointer; letter-spacing: 0.08em; transition: all 0.15s;
+  }
+  .session-nav button:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+  .session-nav button:disabled { opacity: 0.3; cursor: default; }
+  .session-date { font-size: 13px; color: var(--text-hi); font-weight: 500; letter-spacing: 0.05em; min-width: 100px; text-align: center; }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 20px; }
+
+  .section {
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+    background: var(--surface);
+  }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .section-header:hover { background: rgba(232,160,48,0.03); }
+  .section-label {
+    font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--amber); font-weight: 500;
+  }
+  .section-toggle {
+    font-size: 11px; color: var(--text-dim); letter-spacing: 0.1em;
+    transition: transform 0.2s;
+  }
+  .section-body {
+    padding: 16px;
+    font-family: var(--sans);
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.8;
+    font-weight: 300;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .section-body.collapsed { display: none; }
+  .section.thinking .section-label { color: var(--text-dim); }
+  .section.thinking .section-body {
+    font-size: 13px;
+    color: var(--text-dim);
+    border-left: 2px solid var(--border2);
+    margin: 0 16px 16px;
+    padding: 12px 16px;
+    line-height: 1.7;
+  }
+
+  .candidates-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .candidate-chip {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.08em;
+    padding: 4px 10px; border: 1px solid var(--border2);
+    color: var(--text-hi); background: rgba(200,216,232,0.04);
+    font-family: var(--mono);
+  }
+
+  .empty-state {
+    color: var(--text-dim); font-size: 14px; padding: 40px 0;
+    text-align: center; border: 1px dashed var(--border);
+  }
+
+  .skeleton { background: linear-gradient(90deg,var(--border) 25%,var(--border2) 50%,var(--border) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 2px; display: inline-block; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .sk-line { height: 14px; margin-bottom: 8px; width: 100%; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+  .loaded { animation: fadeIn 0.25s ease forwards; }
+
+  @media (max-width: 640px) {
+    .container { padding: 12px; }
+    .topbar {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 12px;
+    }
+    .topbar-right { width: 100%; flex-wrap: wrap; justify-content: space-between; }
+    .section-body { padding: 12px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <a href="/" class="back-link">&larr; DASHBOARD</a>
+    <div class="page-title">ANALYSIS <span>// DAILY</span></div>
+  </div>
+  <div class="topbar-right">
+    <div class="session-nav">
+      <button id="prev-btn" onclick="navSession(-1)" title="Previous session">&larr; PREV</button>
+      <span class="session-date" id="session-date">---</span>
+      <button id="next-btn" onclick="navSession(1)" title="Next session">NEXT &rarr;</button>
+    </div>
+    <select class="zoom-select" id="zoomSelect" onchange="setFontSize(this.value)">
+      <option value="s">Small</option>
+      <option value="m">Medium</option>
+      <option value="l">Large</option>
+      <option value="xl">X-Large</option>
+      <option value="xxl">XX-Large</option>
+    </select>
+  </div>
+</header>
+
+<div class="container">
+  <div id="content">
+    <div class="skeleton sk-line" style="width:100%"></div>
+    <div class="skeleton sk-line" style="width:90%"></div>
+    <div class="skeleton sk-line" style="width:95%"></div>
+    <div class="skeleton sk-line" style="width:80%"></div>
+    <div class="skeleton sk-line" style="width:85%"></div>
+  </div>
+</div>
+
+<script>
+const API = '/api/v1';
+
+// ── Font Size ───────────────────────────────────────────────────────────────
+function setFontSize(size) {
+  document.body.classList.remove('fs-s', 'fs-m', 'fs-l', 'fs-xl', 'fs-xxl');
+  document.body.classList.add('fs-' + size);
+  const sel = document.getElementById('zoomSelect');
+  if (sel) sel.value = size;
+  localStorage.setItem('tradebot-font-size', size);
+}
+(function() {
+  setFontSize(localStorage.getItem('tradebot-font-size') || 'm');
+})();
+
+// ── Session navigation ──────────────────────────────────────────────────────
+let sessions = [];
+let currentIdx = 0;
+
+async function loadSessions() {
+  const resp = await fetch(API + '/recommendations?limit=30');
+  sessions = await resp.json();
+  if (sessions.length) {
+    currentIdx = 0;
+    updateNav();
+    loadAnalysis(sessions[0].id);
+  } else {
+    const el = document.getElementById('content');
+    el.textContent = '';
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'No analysis sessions found';
+    el.appendChild(empty);
+    document.getElementById('session-date').textContent = '---';
+  }
+}
+
+function updateNav() {
+  const s = sessions[currentIdx];
+  document.getElementById('session-date').textContent = new Date(s.session_date + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric', year:'numeric'});
+  document.getElementById('prev-btn').disabled = (currentIdx >= sessions.length - 1);
+  document.getElementById('next-btn').disabled = (currentIdx <= 0);
+}
+
+function navSession(dir) {
+  const newIdx = currentIdx - dir;
+  if (newIdx < 0 || newIdx >= sessions.length) return;
+  currentIdx = newIdx;
+  updateNav();
+  loadAnalysis(sessions[currentIdx].id);
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function makeSectionHeader(labelText, toggleText) {
+  const header = document.createElement('div');
+  header.className = 'section-header';
+  const label = document.createElement('span');
+  label.className = 'section-label';
+  label.textContent = labelText;
+  const toggle = document.createElement('span');
+  toggle.className = 'section-toggle';
+  toggle.textContent = toggleText;
+  header.appendChild(label);
+  header.appendChild(toggle);
+  return header;
+}
+
+function toggleSection(body, header) {
+  const collapsed = body.classList.toggle('collapsed');
+  header.querySelector('.section-toggle').textContent = collapsed ? 'EXPAND' : 'COLLAPSE';
+}
+
+function showSkeleton(el) {
+  el.textContent = '';
+  for (let i = 0; i < 3; i++) {
+    const sk = document.createElement('div');
+    sk.className = 'skeleton sk-line';
+    sk.style.width = (85 + Math.random() * 15) + '%';
+    el.appendChild(sk);
+  }
+}
+
+// ── Load & Render ───────────────────────────────────────────────────────────
+async function loadAnalysis(sessionId) {
+  const el = document.getElementById('content');
+  showSkeleton(el);
+
+  try {
+    const [detail, analysisResp] = await Promise.all([
+      fetch(API + '/recommendations/' + sessionId).then(r => r.json()),
+      fetch(API + '/recommendations/' + sessionId + '/analysis').then(r => r.json()),
+    ]);
+
+    el.className = 'loaded';
+    el.textContent = '';
+
+    const analysisText = analysisResp.analysis_text || '';
+    if (!analysisText) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'Analysis not available for this session';
+      el.appendChild(empty);
+      return;
+    }
+
+    // Split on [THINKING] / [ANALYSIS] markers
+    const hasThinking = analysisText.includes('[THINKING]');
+    let thinking = '', analysis = analysisText;
+    if (hasThinking) {
+      const parts = analysisText.split('[ANALYSIS]');
+      thinking = parts[0].replace('[THINKING]', '').trim();
+      analysis = (parts[1] || '').trim();
+    }
+
+    // Market Analysis section (expanded by default)
+    const analysisSection = document.createElement('div');
+    analysisSection.className = 'section';
+    const analysisHeader = makeSectionHeader('Market Analysis', 'COLLAPSE');
+    const analysisBody = document.createElement('div');
+    analysisBody.className = 'section-body';
+    analysisBody.textContent = analysis;
+    analysisHeader.onclick = function() { toggleSection(analysisBody, analysisHeader); };
+    analysisSection.appendChild(analysisHeader);
+    analysisSection.appendChild(analysisBody);
+    el.appendChild(analysisSection);
+
+    // Candidates section
+    if (detail.recommendations && detail.recommendations.length) {
+      const candSection = document.createElement('div');
+      candSection.className = 'section';
+      const candHeader = makeSectionHeader('Candidates (' + detail.recommendations.length + ')', 'COLLAPSE');
+      const candBody = document.createElement('div');
+      candBody.className = 'section-body';
+      candBody.style.whiteSpace = 'normal';
+
+      const row = document.createElement('div');
+      row.className = 'candidates-row';
+      detail.recommendations.forEach(function(r) {
+        const chip = document.createElement('span');
+        chip.className = 'candidate-chip';
+        chip.style.borderColor = r.action === 'buy' ? 'var(--green-dim)' : 'var(--red-dim)';
+        chip.style.color = r.action === 'buy' ? 'var(--green)' : 'var(--red)';
+        chip.textContent = r.symbol + ' ' + r.action.toUpperCase();
+        row.appendChild(chip);
+      });
+      candBody.appendChild(row);
+
+      detail.recommendations.forEach(function(r) {
+        const item = document.createElement('div');
+        item.style.cssText = 'margin-top:14px;padding-top:12px;border-top:1px solid var(--border)';
+        const sym = document.createElement('div');
+        sym.style.cssText = 'font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text-hi);letter-spacing:0.05em;margin-bottom:4px';
+        sym.textContent = r.symbol + ' \u2014 ' + r.action.toUpperCase();
+        const reason = document.createElement('div');
+        reason.style.cssText = 'font-size:13px;line-height:1.7';
+        reason.textContent = r.reasoning;
+        item.appendChild(sym);
+        item.appendChild(reason);
+        if (r.key_risks) {
+          const risk = document.createElement('div');
+          risk.style.cssText = 'font-size:12px;color:var(--text-dim);font-style:italic;margin-top:6px';
+          risk.textContent = 'Risk: ' + r.key_risks;
+          item.appendChild(risk);
+        }
+        candBody.appendChild(item);
+      });
+
+      candHeader.onclick = function() { toggleSection(candBody, candHeader); };
+      candSection.appendChild(candHeader);
+      candSection.appendChild(candBody);
+      el.appendChild(candSection);
+    }
+
+    // Research summary section
+    if (detail.research_summary) {
+      const sumSection = document.createElement('div');
+      sumSection.className = 'section';
+      const sumHeader = makeSectionHeader('Research Summary', 'COLLAPSE');
+      const sumBody = document.createElement('div');
+      sumBody.className = 'section-body';
+      sumBody.textContent = detail.research_summary;
+      sumHeader.onclick = function() { toggleSection(sumBody, sumHeader); };
+      sumSection.appendChild(sumHeader);
+      sumSection.appendChild(sumBody);
+      el.appendChild(sumSection);
+    }
+
+    // Extended thinking section (collapsed by default)
+    if (thinking) {
+      const thinkSection = document.createElement('div');
+      thinkSection.className = 'section thinking';
+      const thinkHeader = makeSectionHeader('Extended Thinking (raw)', 'EXPAND');
+      const thinkBody = document.createElement('div');
+      thinkBody.className = 'section-body collapsed';
+      thinkBody.textContent = thinking;
+      thinkHeader.onclick = function() { toggleSection(thinkBody, thinkHeader); };
+      thinkSection.appendChild(thinkHeader);
+      thinkSection.appendChild(thinkBody);
+      el.appendChild(thinkSection);
+    }
+
+    // Strategy Playbook section (collapsed by default, not session-specific)
+    try {
+      const pb = await fetch(API + '/playbook').then(function(r) { return r.json(); });
+      if (pb && pb.content) {
+        const pbSection = document.createElement('div');
+        pbSection.className = 'section';
+        const verText = 'v' + pb.version + ' \u00b7 updated ' + new Date(pb.updated_at).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+        const pbHeader = makeSectionHeader('Strategy Playbook (' + verText + ')', 'EXPAND');
+        const pbBody = document.createElement('div');
+        pbBody.className = 'section-body collapsed';
+        pbBody.textContent = pb.content;
+        pbHeader.onclick = function() { toggleSection(pbBody, pbHeader); };
+        pbSection.appendChild(pbHeader);
+        pbSection.appendChild(pbBody);
+        el.appendChild(pbSection);
+      }
+    } catch(ignore) {}
+
+  } catch(e) {
+    el.className = 'loaded';
+    el.textContent = '';
+    const err = document.createElement('div');
+    err.className = 'empty-state';
+    err.style.color = 'var(--red)';
+    err.textContent = 'Failed to load analysis: ' + e.message;
+    el.appendChild(err);
+  }
+}
+
+loadSessions();
+</script>
+</body>
+</html>

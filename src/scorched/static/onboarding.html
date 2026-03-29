@@ -1,0 +1,2045 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup Wizard · Tradebot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0c0f;
+      --surface: #0f1217;
+      --border: #253040;
+      --border2: #344558;
+      --text: #b8cce0;
+      --text-dim: #6a8099;
+      --text-hi: #e8f2fc;
+      --amber: #e8a030;
+      --amber-dim: #7a5018;
+      --amber-glow: rgba(232, 160, 48, 0.08);
+      --amber-subtle: rgba(232, 160, 48, 0.12);
+      --green: #2ec87a;
+      --green-dim: #134d30;
+      --green-glow: rgba(46, 200, 122, 0.08);
+      --red: #e84040;
+      --red-dim: #5a1818;
+      --red-glow: rgba(232, 64, 64, 0.08);
+      --blue: #4a9eff;
+      --blue-dim: #1a3a5a;
+      --mono: 'IBM Plex Mono', monospace;
+      --sans: 'IBM Plex Sans', sans-serif;
+      --radius: 8px;
+      --radius-sm: 5px;
+      --header-h: 60px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: var(--header-h);
+      background: rgba(10, 12, 15, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo {
+      font-family: var(--mono);
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text-hi);
+      letter-spacing: 1.5px;
+    }
+    .logo span { color: var(--text-dim); font-weight: 300; }
+    .header-nav {
+      display: flex;
+      gap: 8px;
+    }
+    .nav-link {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 1px;
+      padding: 5px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .nav-link:hover { color: var(--text); border-color: var(--border2); }
+
+    /* ── Progress bar ── */
+    .progress-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 24px 24px 0;
+      max-width: 700px;
+      margin: 0 auto;
+    }
+    .progress-dot {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-dim);
+      transition: all 0.3s;
+      flex-shrink: 0;
+    }
+    .progress-dot.completed {
+      background: var(--green-dim);
+      border-color: var(--green);
+      color: var(--green);
+    }
+    .progress-dot.current {
+      background: var(--amber-glow);
+      border-color: var(--amber);
+      color: var(--amber);
+      box-shadow: 0 0 12px rgba(232, 160, 48, 0.2);
+    }
+    .progress-line {
+      flex: 1;
+      height: 2px;
+      background: var(--border);
+      transition: background 0.3s;
+    }
+    .progress-line.completed { background: var(--green-dim); }
+    .step-labels {
+      display: flex;
+      justify-content: center;
+      gap: 0;
+      max-width: 700px;
+      margin: 6px auto 0;
+      padding: 0 24px;
+    }
+    .step-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      text-align: center;
+      width: 32px;
+      flex-shrink: 0;
+      transition: color 0.3s;
+    }
+    .step-label.current { color: var(--amber); }
+    .step-label-spacer { flex: 1; }
+
+    /* ── Wizard container ── */
+    .wizard {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 32px 24px 120px;
+      position: relative;
+      overflow: hidden;
+    }
+    .step {
+      display: none;
+      animation: fadeIn 0.35s ease;
+    }
+    .step.active { display: block; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Step content styles ── */
+    .step-title {
+      font-family: var(--mono);
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-hi);
+      margin-bottom: 8px;
+    }
+    .step-subtitle {
+      color: var(--text-dim);
+      font-size: 14px;
+      margin-bottom: 28px;
+      line-height: 1.7;
+    }
+    .section-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+
+    /* ── Option cards (radio/checkbox) ── */
+    .option-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    .option-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-left: 3px solid transparent;
+      position: relative;
+    }
+    .option-card:hover {
+      border-color: var(--border2);
+      background: rgba(255,255,255,0.01);
+    }
+    .option-card.selected {
+      border-left-color: var(--amber);
+      background: var(--amber-glow);
+      border-color: var(--amber-dim);
+    }
+    .option-card.disabled {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+    .option-name {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-hi);
+      margin-bottom: 4px;
+    }
+    .option-desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .option-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      padding: 2px 8px;
+      border-radius: 3px;
+    }
+    .badge-recommended {
+      color: var(--green);
+      background: var(--green-glow);
+      border: 1px solid var(--green-dim);
+    }
+    .badge-caution {
+      color: var(--red);
+      background: var(--red-glow);
+      border: 1px solid var(--red-dim);
+    }
+
+    /* ── API key cards ── */
+    .key-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 16px;
+      border-left: 3px solid var(--border);
+      transition: all 0.3s;
+    }
+    .key-card.required { border-left-color: var(--red); }
+    .key-card.recommended { border-left-color: var(--amber); }
+    .key-card.optional { border-left-color: var(--border2); }
+    .key-card.validated { border-left-color: var(--green); background: var(--green-glow); }
+    .key-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .key-card-title {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-hi);
+    }
+    .key-tier-badge {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      padding: 2px 8px;
+      border-radius: 3px;
+    }
+    .tier-required {
+      color: var(--red);
+      background: var(--red-glow);
+      border: 1px solid var(--red-dim);
+    }
+    .tier-recommended {
+      color: var(--amber);
+      background: var(--amber-glow);
+      border: 1px solid var(--amber-dim);
+    }
+    .tier-optional {
+      color: var(--text-dim);
+      background: rgba(106, 128, 153, 0.08);
+      border: 1px solid var(--border);
+    }
+    .key-card-info {
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .key-card-info strong { color: var(--text); }
+    .key-instructions {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+    .key-instructions ol {
+      padding-left: 18px;
+      margin: 6px 0;
+    }
+    .key-instructions a {
+      color: var(--amber);
+      text-decoration: none;
+    }
+    .key-instructions a:hover { text-decoration: underline; }
+    .key-input-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .key-input-wrap {
+      flex: 1;
+      position: relative;
+    }
+    .key-input {
+      width: 100%;
+      padding: 10px 38px 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-hi);
+      font-family: var(--mono);
+      font-size: 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .key-input:focus { border-color: var(--amber); }
+    .key-input.valid { border-color: var(--green); }
+    .key-input.invalid { border-color: var(--red); }
+    .toggle-vis {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 4px;
+    }
+    .test-btn {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      padding: 10px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .test-btn:hover { border-color: var(--amber); color: var(--amber); }
+    .test-btn:disabled { opacity: 0.4; cursor: default; }
+    .test-btn.testing { color: var(--amber); border-color: var(--amber); }
+    .test-btn.success { color: var(--green); border-color: var(--green); }
+    .test-btn.fail { color: var(--red); border-color: var(--red); }
+    .key-status {
+      font-family: var(--mono);
+      font-size: 11px;
+      margin-top: 6px;
+      min-height: 16px;
+    }
+    .key-status.success { color: var(--green); }
+    .key-status.error { color: var(--red); }
+
+    /* ── Preset cards ── */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .preset-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 18px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-top: 3px solid transparent;
+    }
+    .preset-card:hover {
+      border-color: var(--border2);
+      background: rgba(255,255,255,0.01);
+    }
+    .preset-card.selected {
+      border-top-color: var(--amber);
+      background: var(--amber-glow);
+      border-color: var(--amber-dim);
+    }
+    .preset-card.suggested {
+      border-top-color: var(--green-dim);
+    }
+    .preset-name {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-hi);
+      margin-bottom: 6px;
+    }
+    .preset-desc {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .risk-meter {
+      display: flex;
+      gap: 3px;
+      margin-bottom: 8px;
+    }
+    .risk-bar {
+      width: 24px;
+      height: 6px;
+      border-radius: 2px;
+      background: var(--border);
+    }
+    .risk-bar.filled.low { background: var(--green); }
+    .risk-bar.filled.med { background: var(--amber); }
+    .risk-bar.filled.high { background: var(--red); }
+    .preset-detail {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      line-height: 1.8;
+    }
+
+    /* ── Capital input ── */
+    .capital-group {
+      margin-bottom: 24px;
+    }
+    .capital-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .capital-prefix {
+      font-family: var(--mono);
+      font-size: 24px;
+      font-weight: 300;
+      color: var(--text-dim);
+    }
+    .capital-input {
+      font-family: var(--mono);
+      font-size: 24px;
+      font-weight: 500;
+      color: var(--text-hi);
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid var(--border);
+      padding: 4px 0;
+      width: 200px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .capital-input:focus { border-color: var(--amber); }
+    .capital-guidance {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.7;
+      margin-top: 8px;
+    }
+    .capital-presets {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .capital-preset-btn {
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .capital-preset-btn:hover { border-color: var(--amber); color: var(--amber); }
+    .capital-preset-btn.selected { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+
+    /* ── Review section ── */
+    .review-group {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .review-group-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      color: var(--amber);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+    .review-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+    .review-label { color: var(--text-dim); }
+    .review-value {
+      color: var(--text-hi);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .review-value.configured { color: var(--green); }
+    .review-value.missing { color: var(--text-dim); font-style: italic; }
+    .env-preview {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--text-dim);
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* ── Info box ── */
+    .info-box {
+      background: rgba(74, 158, 255, 0.06);
+      border: 1px solid var(--blue-dim);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .info-box.warning {
+      background: var(--red-glow);
+      border-color: var(--red-dim);
+    }
+    .info-box.success {
+      background: var(--green-glow);
+      border-color: var(--green-dim);
+    }
+
+    /* ── Welcome hero ── */
+    .welcome-hero {
+      text-align: center;
+      padding: 32px 0 20px;
+    }
+    .welcome-hero h1 {
+      font-family: var(--mono);
+      font-size: 28px;
+      font-weight: 600;
+      color: var(--text-hi);
+      margin-bottom: 12px;
+    }
+    .welcome-hero p {
+      font-size: 15px;
+      color: var(--text-dim);
+      max-width: 520px;
+      margin: 0 auto;
+      line-height: 1.7;
+    }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 28px 0;
+    }
+    .feature-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .feature-icon {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    .feature-title {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-hi);
+      margin-bottom: 4px;
+    }
+    .feature-desc {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    /* ── Bottom nav ── */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(10, 12, 15, 0.95);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      z-index: 100;
+    }
+    .nav-btn {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      padding: 10px 28px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .nav-btn:hover { border-color: var(--amber); color: var(--amber); }
+    .nav-btn:disabled { opacity: 0.3; cursor: default; }
+    .nav-btn.primary {
+      background: var(--amber);
+      color: var(--bg);
+      border-color: var(--amber);
+      font-weight: 600;
+    }
+    .nav-btn.primary:hover { background: #d4901a; }
+    .nav-btn.primary:disabled { background: var(--amber-dim); border-color: var(--amber-dim); opacity: 0.6; }
+    .nav-btn.save-btn {
+      background: var(--green);
+      color: var(--bg);
+      border-color: var(--green);
+      font-weight: 600;
+    }
+    .nav-btn.save-btn:hover { background: #26a866; }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--surface);
+      border: 1px solid var(--green);
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 10px 24px;
+      border-radius: var(--radius);
+      opacity: 0;
+      transition: all 0.3s;
+      z-index: 200;
+      pointer-events: none;
+    }
+    .toast.error { border-color: var(--red); color: var(--red); }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Checkbox for live confirmation ── */
+    .confirm-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--red-dim);
+      border-radius: var(--radius-sm);
+      background: var(--red-glow);
+    }
+    .confirm-row input[type="checkbox"] {
+      margin-top: 3px;
+      accent-color: var(--red);
+    }
+    .confirm-row label {
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    /* ── Data strategy callout ── */
+    .data-strategy {
+      background: var(--amber-glow);
+      border: 1px solid var(--amber-dim);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      margin-bottom: 24px;
+    }
+    .data-strategy-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      color: var(--amber);
+      margin-bottom: 6px;
+    }
+    .data-strategy-text {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    /* ── Tour / completion ── */
+    .tour-timeline {
+      position: relative;
+      padding-left: 20px;
+      margin-bottom: 16px;
+    }
+    .tour-timeline::before {
+      content: '';
+      position: absolute;
+      left: 5px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: var(--border);
+    }
+    .tour-event {
+      display: flex;
+      gap: 16px;
+      padding: 10px 0;
+      position: relative;
+    }
+    .tour-event::before {
+      content: '';
+      position: absolute;
+      left: -19px;
+      top: 18px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--amber);
+      border: 2px solid var(--bg);
+    }
+    .tour-time {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--amber);
+      white-space: nowrap;
+      min-width: 80px;
+      padding-top: 2px;
+    }
+    .tour-event-title {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-hi);
+      margin-bottom: 2px;
+    }
+    .tour-event-desc {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .tour-pages {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .tour-page-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+      display: block;
+    }
+    .tour-page-card:hover {
+      border-color: var(--border2);
+      background: rgba(255,255,255,0.01);
+      transform: translateY(-2px);
+    }
+    .tour-page-primary {
+      border-color: var(--amber-dim);
+      background: var(--amber-glow);
+    }
+    .tour-page-primary:hover {
+      border-color: var(--amber);
+    }
+    .tour-page-icon {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    .tour-page-name {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-hi);
+      margin-bottom: 4px;
+    }
+    .tour-page-desc {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+      margin-bottom: 8px;
+    }
+    .tour-page-cta {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: var(--amber);
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .feature-grid { grid-template-columns: 1fr; }
+      .preset-grid { grid-template-columns: 1fr; }
+      .capital-input { font-size: 18px; width: 150px; }
+      .wizard { padding: 20px 16px 120px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">TRADEBOT <span>// SETUP</span></div>
+  </div>
+  <div class="header-nav">
+    <a href="/" class="nav-link">DASHBOARD</a>
+    <a href="/strategy" class="nav-link">STRATEGY</a>
+    <a href="/system" class="nav-link">SYSTEM</a>
+  </div>
+</div>
+
+<!-- ── Progress ── -->
+<div class="progress-bar" id="progress-bar"></div>
+<div class="step-labels" id="step-labels"></div>
+
+<!-- ── Wizard steps ── -->
+<div class="wizard">
+
+  <!-- Step 0: Welcome -->
+  <div class="step" data-step="0">
+    <div class="welcome-hero">
+      <h1>Welcome to Scorched</h1>
+      <p>An AI-powered trading assistant that analyzes markets daily and generates actionable trade recommendations using Claude.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-title">Daily Analysis</div>
+        <div class="feature-desc">Every morning, Claude analyzes market data, technicals, macro indicators, and news to find opportunities.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-title">Risk Committee</div>
+        <div class="feature-desc">A second AI pass challenges every recommendation with a skeptical, default-reject review before execution.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-title">Your Strategy</div>
+        <div class="feature-desc">You set the rules -- hold period, risk tolerance, position sizing, sectors. The AI follows your playbook.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-title">Paper or Live</div>
+        <div class="feature-desc">Start with simulated trading to test the system, then connect a broker when you're ready.</div>
+      </div>
+    </div>
+    <div class="info-box">
+      This wizard will walk you through setting up your data sources, choosing a strategy, and configuring your trading mode. It takes about 10 minutes.
+    </div>
+  </div>
+
+  <!-- Step 1: Experience -->
+  <div class="step" data-step="1">
+    <div class="step-title">Your Experience</div>
+    <div class="step-subtitle">This helps us tailor the setup and suggest appropriate defaults. Be honest -- there's no wrong answer.</div>
+    <div class="section-label">Trading experience</div>
+    <div class="option-grid" id="exp-options">
+      <div class="option-card" data-value="beginner" onclick="selectOption('experience', 'beginner')">
+        <div class="option-name">Beginner</div>
+        <div class="option-desc">New to stock trading or algorithmic systems. You want to learn how it works before risking real money.</div>
+        <span class="option-badge badge-recommended">GREAT START</span>
+      </div>
+      <div class="option-card" data-value="intermediate" onclick="selectOption('experience', 'intermediate')">
+        <div class="option-name">Intermediate</div>
+        <div class="option-desc">You've traded stocks before and understand basic concepts like stop losses, position sizing, and market orders.</div>
+      </div>
+      <div class="option-card" data-value="advanced" onclick="selectOption('experience', 'advanced')">
+        <div class="option-name">Advanced</div>
+        <div class="option-desc">Experienced trader comfortable with API keys, broker integrations, and managing real money algorithmically.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 2: Goals -->
+  <div class="step" data-step="2">
+    <div class="step-title">Your Goal</div>
+    <div class="step-subtitle">What do you want to accomplish with Scorched? This shapes the strategy preset and data sources we recommend.</div>
+    <div class="section-label">Primary goal</div>
+    <div class="option-grid" id="goal-options">
+      <div class="option-card" data-value="learning" onclick="selectOption('goal', 'learning')">
+        <div class="option-name">Learn how it works</div>
+        <div class="option-desc">Watch the system analyze markets and make decisions. Understand the reasoning. No real money at risk.</div>
+      </div>
+      <div class="option-card" data-value="testing" onclick="selectOption('goal', 'testing')">
+        <div class="option-name">Test strategies</div>
+        <div class="option-desc">Evaluate different strategy configurations and see how they perform before committing real capital.</div>
+      </div>
+      <div class="option-card" data-value="income" onclick="selectOption('goal', 'income')">
+        <div class="option-name">Generate returns</div>
+        <div class="option-desc">Deploy real capital with the goal of making money. You understand the risks of algorithmic trading.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3: Trading Mode -->
+  <div class="step" data-step="3">
+    <div class="step-title">Trading Mode</div>
+    <div class="step-subtitle">Choose how the system will execute trades. You can always change this later.</div>
+    <div class="section-label">Execution mode</div>
+    <div class="option-grid" id="mode-options">
+      <div class="option-card" data-value="paper" onclick="selectOption('tradingMode', 'paper')">
+        <div class="option-name">Paper Trading</div>
+        <div class="option-desc">Simulated trades in a local database. No broker needed, no real money involved. Perfect for learning and testing.</div>
+        <span class="option-badge badge-recommended">RECOMMENDED</span>
+      </div>
+      <div class="option-card" data-value="alpaca_paper" onclick="selectOption('tradingMode', 'alpaca_paper')">
+        <div class="option-name">Alpaca Paper Trading</div>
+        <div class="option-desc">Real orders submitted to Alpaca's paper trading environment. Realistic fills and rejections, but no real money. Requires a free Alpaca account.</div>
+      </div>
+      <div class="option-card" data-value="alpaca_live" id="live-option" onclick="selectOption('tradingMode', 'alpaca_live')">
+        <div class="option-name">Alpaca Live Trading</div>
+        <div class="option-desc">Real orders with real money. Only for experienced traders who have thoroughly tested in paper mode first.</div>
+        <span class="option-badge badge-caution">REAL MONEY</span>
+      </div>
+    </div>
+    <div class="confirm-row" id="live-confirm" style="display:none">
+      <input type="checkbox" id="live-ack" onchange="state.liveAcknowledged = this.checked; updateNav()">
+      <label for="live-ack">I understand that live trading uses real money and that algorithmic trading carries significant risk of loss. I have tested this system in paper mode first.</label>
+    </div>
+  </div>
+
+  <!-- Step 4: Data Sources -->
+  <div class="step" data-step="4">
+    <div class="step-title">Data Sources</div>
+    <div class="step-subtitle">Scorched pulls market data from multiple sources to give Claude the best analysis. Some require free API keys.</div>
+    <div class="data-strategy" id="data-strategy">
+      <div class="data-strategy-title">Your Data Strategy</div>
+      <div class="data-strategy-text" id="data-strategy-text"></div>
+    </div>
+    <div id="key-cards"></div>
+  </div>
+
+  <!-- Step 5: Strategy -->
+  <div class="step" data-step="5">
+    <div class="step-title">Strategy Preset</div>
+    <div class="step-subtitle">Choose a starting strategy. You can fine-tune every setting later on the Strategy page.</div>
+    <div id="suggested-preset-msg" class="info-box" style="display:none"></div>
+    <div class="preset-grid" id="preset-grid">
+      <div class="preset-card" data-preset="conservative" onclick="selectPreset('conservative')">
+        <div class="preset-name">Conservative Learner</div>
+        <div class="preset-desc">Small positions, hard stops, teaching-mode explanations. Designed for safety and learning.</div>
+        <div class="risk-meter">
+          <div class="risk-bar filled low"></div>
+          <div class="risk-bar filled low"></div>
+          <div class="risk-bar"></div>
+          <div class="risk-bar"></div>
+          <div class="risk-bar"></div>
+        </div>
+        <div class="preset-detail">
+          Max 3 holdings @ 15% each<br>
+          Equal-weight sizing<br>
+          Hard stop losses<br>
+          Teaching explanations
+        </div>
+      </div>
+      <div class="preset-card" data-preset="active" onclick="selectPreset('active')">
+        <div class="preset-name">Active Trader</div>
+        <div class="preset-desc">Balanced and adaptive -- adjusts aggressiveness to market conditions. The default starting point.</div>
+        <div class="risk-meter">
+          <div class="risk-bar filled low"></div>
+          <div class="risk-bar filled low"></div>
+          <div class="risk-bar filled med"></div>
+          <div class="risk-bar"></div>
+          <div class="risk-bar"></div>
+        </div>
+        <div class="preset-detail">
+          Max 5 holdings @ 20% each<br>
+          Conviction-weighted sizing<br>
+          Scale-out exits<br>
+          Standard explanations
+        </div>
+      </div>
+      <div class="preset-card" data-preset="aggressive" onclick="selectPreset('aggressive')">
+        <div class="preset-name">Aggressive Growth</div>
+        <div class="preset-desc">Maximum activity and larger positions. For experienced traders seeking high growth.</div>
+        <div class="risk-meter">
+          <div class="risk-bar filled low"></div>
+          <div class="risk-bar filled med"></div>
+          <div class="risk-bar filled med"></div>
+          <div class="risk-bar filled high"></div>
+          <div class="risk-bar"></div>
+        </div>
+        <div class="preset-detail">
+          Max 7 holdings @ 25% each<br>
+          Conviction-weighted sizing<br>
+          Trailing stop exits<br>
+          Brief explanations
+        </div>
+      </div>
+    </div>
+    <div style="text-align:center; margin-top: 8px;">
+      <a href="/strategy" target="_blank" class="nav-link" style="display:inline-block">Or customize every setting manually (opens new tab)</a>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Configure your strategy in the new tab, then come back here to continue setup.</div>
+    </div>
+  </div>
+
+  <!-- Step 6: Capital -->
+  <div class="step" data-step="6">
+    <div class="step-title">Starting Capital</div>
+    <div class="step-subtitle" id="capital-subtitle">How much money (real or simulated) should the system manage?</div>
+    <div class="capital-group">
+      <div class="capital-input-wrap">
+        <span class="capital-prefix">$</span>
+        <input type="text" class="capital-input" id="capital-input"
+               value="100,000" oninput="onCapitalInput(this)" onblur="formatCapital(this)">
+      </div>
+      <div class="capital-guidance" id="capital-guidance"></div>
+      <div class="capital-presets" id="capital-presets"></div>
+    </div>
+  </div>
+
+  <!-- Step 7: Review -->
+  <div class="step" data-step="7">
+    <div class="step-title">Review &amp; Deploy</div>
+    <div class="step-subtitle">Here's a summary of your configuration. Review everything, then save to apply.</div>
+
+    <div class="review-group" id="review-profile"></div>
+    <div class="review-group" id="review-keys"></div>
+    <div class="review-group" id="review-strategy"></div>
+    <div class="review-group" id="review-capital"></div>
+
+    <div class="section-label" style="margin-top:24px">Environment file preview</div>
+    <div class="env-preview" id="env-preview"></div>
+
+    <div class="info-box" style="margin-top:16px">
+      After saving, you'll need to restart the server for changes to take effect.<br>
+      Docker: <code style="color:var(--amber)">docker compose up -d --build tradebot</code><br>
+      Local: restart the <code style="color:var(--amber)">uvicorn</code> process
+    </div>
+    <div id="save-result" style="display:none"></div>
+  </div>
+
+  <!-- Step 8: All Set / Tour -->
+  <div class="step" data-step="8">
+    <div class="welcome-hero" style="padding-bottom:12px">
+      <h1>You're All Set</h1>
+      <p>Your configuration has been saved. Here's what happens next and where to find everything.</p>
+    </div>
+
+    <div class="info-box success" style="margin-bottom:24px">
+      <strong>Restart required.</strong> Your settings are saved to disk but the server needs a restart to pick them up.<br>
+      Docker: <code style="color:var(--amber)">docker compose up -d --build tradebot</code>&nbsp;&nbsp;|&nbsp;&nbsp;Local: restart <code style="color:var(--amber)">uvicorn</code>
+    </div>
+
+    <div class="section-label">Your daily cycle</div>
+    <div class="tour-timeline">
+      <div class="tour-event">
+        <div class="tour-time">8:30 AM ET</div>
+        <div class="tour-event-body">
+          <div class="tour-event-title">Phase 1: Morning Analysis</div>
+          <div class="tour-event-desc">Claude analyzes market data, technicals, macro indicators, and news. Generates trade recommendations with full reasoning.</div>
+        </div>
+      </div>
+      <div class="tour-event">
+        <div class="tour-time">9:30 AM ET</div>
+        <div class="tour-event-body">
+          <div class="tour-event-title">Phase 1.5: Circuit Breaker</div>
+          <div class="tour-event-desc">Safety gate checks each buy recommendation against real-time conditions -- gap-downs, price drift, VIX spikes. Blocks risky entries.</div>
+        </div>
+      </div>
+      <div class="tour-event">
+        <div class="tour-time">9:35 AM ET</div>
+        <div class="tour-event-body">
+          <div class="tour-event-title">Phase 2: Trade Execution</div>
+          <div class="tour-event-desc">Approved recommendations are executed via your broker (or recorded in paper mode). Fills are logged to the database.</div>
+        </div>
+      </div>
+      <div class="tour-event">
+        <div class="tour-time">4:01 PM ET</div>
+        <div class="tour-event-body">
+          <div class="tour-event-title">Phase 3: End-of-Day Review</div>
+          <div class="tour-event-desc">Claude reviews all open positions, suggests stop adjustments, and updates the strategy playbook with lessons learned.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label" style="margin-top:28px">Explore your dashboard</div>
+    <div class="tour-pages">
+      <a href="/?tour=1" class="tour-page-card tour-page-primary">
+        <div class="tour-page-icon">&#x1f4ca;</div>
+        <div class="tour-page-name">Dashboard</div>
+        <div class="tour-page-desc">Portfolio performance, open positions, today's recommendations, tax summary, and token costs. Start here.</div>
+        <div class="tour-page-cta">Open with guided tour</div>
+      </a>
+      <a href="/strategy" class="tour-page-card">
+        <div class="tour-page-icon">&#x2699;</div>
+        <div class="tour-page-name">Strategy</div>
+        <div class="tour-page-desc">Fine-tune every aspect of how Claude trades -- entry styles, exit rules, position sizing, risk guardrails.</div>
+      </a>
+      <a href="/analysis" class="tour-page-card">
+        <div class="tour-page-icon">&#x1f50d;</div>
+        <div class="tour-page-name">Analysis</div>
+        <div class="tour-page-desc">Deep dive into Claude's daily reasoning. Read the full analysis, see candidates, and review extended thinking.</div>
+      </a>
+      <a href="/system" class="tour-page-card">
+        <div class="tour-page-icon">&#x1f6e1;</div>
+        <div class="tour-page-name">System Health</div>
+        <div class="tour-page-desc">Monitor API connectivity, error rates, and 7-day trends for all data sources and services.</div>
+      </a>
+    </div>
+
+    <div class="info-box" style="margin-top:24px">
+      <strong>First morning?</strong> After restarting, you can manually trigger Phase 1 to see the system in action:<br>
+      <code style="color:var(--amber)">curl -X POST http://localhost:8000/api/v1/recommendations/generate</code><br>
+      Then check the Dashboard to see the analysis and recommendations.
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Bottom nav ── -->
+<div class="bottom-nav">
+  <button class="nav-btn" id="btn-back" onclick="prevStep()">Back</button>
+  <button class="nav-btn primary" id="btn-next" onclick="nextStep()">Next</button>
+</div>
+
+<!-- ── Toast ── -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Escape a string for safe insertion into the DOM via textContent-like patterns */
+function esc(str) {
+  var d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+/** Build a DOM element from a tag, attributes, and children */
+function el(tag, attrs, children) {
+  var e = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function(k) {
+    if (k === 'className') e.className = attrs[k];
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+    else e.setAttribute(k, attrs[k]);
+  });
+  if (children) {
+    if (typeof children === 'string') e.textContent = children;
+    else if (Array.isArray(children)) children.forEach(function(c) {
+      if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+      else if (c) e.appendChild(c);
+    });
+    else e.appendChild(children);
+  }
+  return e;
+}
+
+// ── State ──────────────────────────────────────────────────────────────────────
+
+var STEPS = ['Welcome', 'Experience', 'Goals', 'Mode', 'Data', 'Strategy', 'Capital', 'Review', 'Done'];
+var STORAGE_KEY = 'scorched-onboarding-progress';
+
+var state = {
+  currentStep: 0,
+  experience: null,
+  goal: null,
+  tradingMode: null,
+  strategyPreset: null,
+  capital: 100000,
+  validatedKeys: {},
+  keyValues: {},
+  liveAcknowledged: false,
+};
+
+// ── Strategy presets ──────────────────────────────────────────────────────────
+
+var PRESETS = {
+  conservative: {
+    objective: "learning",
+    rec_style: "selective",
+    no_trade_threshold: "high_bar",
+    rec_explanation: "teach",
+    hold_period: "3-10d",
+    entry_style: ["pullback_uptrend", "relative_strength"],
+    sell_discipline: "full_target",
+    loss_management: "hard_stop",
+    partial_sell: "never",
+    sizing_style: "equal_weight",
+    concentration: { max_position_pct: 15, max_sector_pct: 33, max_holdings: 3 },
+    add_vs_rotate: "never_add",
+    risk_guardrails: ["max_portfolio_dd", "weak_regime_cash", "vix_pause"],
+    market_regime: "cash_weak",
+    event_risk: ["exit_before_earnings", "no_weekend"],
+    sectors: ["no_preference"],
+    notes: "",
+  },
+  active: {
+    objective: "balanced",
+    rec_style: "adaptive",
+    no_trade_threshold: "adaptive",
+    rec_explanation: "standard",
+    hold_period: "3-10d",
+    entry_style: ["momentum_cont", "pullback_uptrend", "breakout"],
+    sell_discipline: "scale_out",
+    loss_management: "time_price_hybrid",
+    partial_sell: "adaptive",
+    sizing_style: "conviction_weighted",
+    concentration: { max_position_pct: 20, max_sector_pct: 40, max_holdings: 5 },
+    add_vs_rotate: "adaptive",
+    risk_guardrails: ["max_portfolio_dd", "weak_regime_cash"],
+    market_regime: "adaptive",
+    event_risk: ["reduce_before_earnings", "no_new_before_earnings"],
+    sectors: ["no_preference"],
+    notes: "",
+  },
+  aggressive: {
+    objective: "growth",
+    rec_style: "aggressive",
+    no_trade_threshold: "always_trade",
+    rec_explanation: "brief",
+    hold_period: "1-3d",
+    entry_style: ["momentum_cont", "breakout", "relative_strength"],
+    sell_discipline: "trailing_stop",
+    loss_management: "hard_stop",
+    partial_sell: "always_ladder",
+    sizing_style: "conviction_weighted",
+    concentration: { max_position_pct: 25, max_sector_pct: 50, max_holdings: 7 },
+    add_vs_rotate: "add_winners",
+    risk_guardrails: ["max_portfolio_dd"],
+    market_regime: "always_active",
+    event_risk: ["hold_through_earnings"],
+    sectors: ["technology"],
+    notes: "",
+  },
+};
+
+// ── API key definitions ──────────────────────────────────────────────────────
+
+var KEY_DEFS = [
+  {
+    id: 'anthropic',
+    name: 'Anthropic (Claude AI)',
+    envKey: 'ANTHROPIC_API_KEY',
+    infoText: 'Required. Powers all trade analysis and decision-making. This is the brain of the system.',
+    instructionSteps: [
+      ['Go to ', 'console.anthropic.com', 'https://console.anthropic.com/'],
+      ['Create an account or sign in'],
+      ['Go to API Keys in the left sidebar'],
+      ['Click Create Key, give it a name'],
+      ['Copy the key (starts with sk-ant-) and paste it below'],
+    ],
+    costNote: 'Cost: ~$0.10-0.30/day for 4 Claude calls. Pay-as-you-go billing.',
+    alwaysRequired: true,
+  },
+  {
+    id: 'fred',
+    name: 'FRED (Federal Reserve)',
+    envKey: 'FRED_API_KEY',
+    infoText: 'Macro indicators. Fed funds rate, treasury yields, CPI, unemployment, credit spreads, consumer sentiment -- 11 economic indicators that give Claude big-picture context.',
+    instructionSteps: [
+      ['Go to ', 'fred.stlouisfed.org', 'https://fred.stlouisfed.org/docs/api/api_key.html'],
+      ['Click Request or view your API keys'],
+      ['Create a free account (email verification required)'],
+      ['Your key appears on the API keys page'],
+    ],
+    costNote: 'Free tier: Unlimited calls. No cost ever.',
+  },
+  {
+    id: 'polygon',
+    name: 'Polygon.io (News)',
+    envKey: 'POLYGON_API_KEY',
+    infoText: 'Better news. Higher-quality market news headlines with article descriptions. Without this, the system falls back to yfinance news (less detailed).',
+    instructionSteps: [
+      ['Go to ', 'polygon.io', 'https://polygon.io/'],
+      ['Sign up for a free account'],
+      ['Your API key is on the dashboard under API Keys'],
+    ],
+    costNote: 'Free tier: 5 calls/minute (sufficient for this system).',
+  },
+  {
+    id: 'alpha_vantage',
+    name: 'Alpha Vantage (RSI)',
+    envKey: 'ALPHA_VANTAGE_API_KEY',
+    infoText: 'Technical indicator. Provides RSI (Relative Strength Index) for momentum screening. Used to filter the top stock candidates each morning.',
+    instructionSteps: [
+      ['Go to ', 'alphavantage.co', 'https://www.alphavantage.co/support/#api-key'],
+      ['Enter your email -- key is sent instantly (no account needed)'],
+    ],
+    costNote: 'Free tier: 25 calls/day (the system uses ~20/day).',
+  },
+  {
+    id: 'finnhub',
+    name: 'Finnhub (Analyst Consensus)',
+    envKey: 'FINNHUB_API_KEY',
+    infoText: 'Wall Street ratings. Analyst buy/sell/hold consensus, price targets, and recommendation trends. Helps Claude gauge professional sentiment.',
+    instructionSteps: [
+      ['Go to ', 'finnhub.io', 'https://finnhub.io/'],
+      ['Sign up for a free account'],
+      ['Your API key is on the dashboard'],
+    ],
+    costNote: 'Free tier: 60 calls/minute (more than enough).',
+  },
+  {
+    id: 'alpaca',
+    name: 'Alpaca (Broker)',
+    envKey: 'ALPACA_API_KEY',
+    envKeySecret: 'ALPACA_SECRET_KEY',
+    infoText: 'Trade execution. Connects to Alpaca Markets to submit real buy/sell orders. Required for paper trading with realistic fills or live trading.',
+    instructionSteps: [
+      ['Go to ', 'alpaca.markets', 'https://app.alpaca.markets/signup'],
+      ['Create an account'],
+      ['In the dashboard, switch to Paper Trading (top right toggle)'],
+      ['Go to API Keys on the left sidebar'],
+      ['Click Generate New Key'],
+      ['Copy both the API Key (starts with PK) and Secret Key'],
+    ],
+    costNote: 'Free: No cost for paper trading. Live trading requires a funded account.',
+    hasSecret: true,
+    brokerOnly: true,
+  },
+];
+
+// ── Data strategy engine ──────────────────────────────────────────────────────
+
+function getDataStrategy() {
+  var mode = state.tradingMode || 'paper';
+  if (mode === 'paper') {
+    return {
+      required: ['anthropic'],
+      recommended: [],
+      optional: ['fred', 'polygon', 'alpha_vantage', 'finnhub'],
+      message: "You can run with just the Anthropic key. The system works without the others -- they just improve analysis quality. Add them whenever you're ready.",
+    };
+  }
+  if (mode === 'alpaca_paper') {
+    return {
+      required: ['anthropic', 'alpaca'],
+      recommended: ['fred', 'polygon', 'alpha_vantage', 'finnhub'],
+      optional: [],
+      message: "Get all the free data API keys for the best analysis quality. They only take a few minutes each to set up. Start with Alpaca paper trading for at least 2 weeks before considering live.",
+    };
+  }
+  return {
+    required: ['anthropic', 'alpaca', 'fred', 'polygon', 'alpha_vantage', 'finnhub'],
+    recommended: [],
+    optional: [],
+    message: "All data sources are required for live trading. You need every edge available when real money is on the line. Make sure you've tested in paper mode for at least 30 days first.",
+  };
+}
+
+function getKeyTier(keyId) {
+  var ds = getDataStrategy();
+  if (ds.required.indexOf(keyId) >= 0) return 'required';
+  if (ds.recommended.indexOf(keyId) >= 0) return 'recommended';
+  return 'optional';
+}
+
+// ── Progress bar ──────────────────────────────────────────────────────────────
+
+function renderProgress() {
+  var bar = document.getElementById('progress-bar');
+  var labels = document.getElementById('step-labels');
+  bar.textContent = '';
+  labels.textContent = '';
+
+  STEPS.forEach(function(name, i) {
+    var dot = el('div', { className: 'progress-dot' + (i < state.currentStep ? ' completed' : '') + (i === state.currentStep ? ' current' : '') }, String(i + 1));
+    bar.appendChild(dot);
+
+    var label = el('div', { className: 'step-label' + (i === state.currentStep ? ' current' : '') }, name);
+    labels.appendChild(label);
+
+    if (i < STEPS.length - 1) {
+      bar.appendChild(el('div', { className: 'progress-line' + (i < state.currentStep ? ' completed' : '') }));
+      labels.appendChild(el('div', { className: 'step-label-spacer' }));
+    }
+  });
+}
+
+// ── Step navigation ──────────────────────────────────────────────────────────
+
+function showStep(n) {
+  document.querySelectorAll('.step').forEach(function(s) { s.classList.remove('active'); });
+  var step = document.querySelector('.step[data-step="' + n + '"]');
+  if (step) step.classList.add('active');
+
+  state.currentStep = n;
+  renderProgress();
+  updateNav();
+  saveProgress();
+
+  if (n === 3) renderModeStep();
+  if (n === 4) renderDataStep();
+  if (n === 5) renderStrategyStep();
+  if (n === 6) renderCapitalStep();
+  if (n === 7) renderReviewStep();
+
+  window.scrollTo(0, 0);
+}
+
+function nextStep() {
+  if (state.currentStep === 7) { saveConfig(); return; }
+  if (state.currentStep === 8) return; // no next from completion
+  if (state.currentStep < STEPS.length - 1) showStep(state.currentStep + 1);
+}
+
+function prevStep() {
+  if (state.currentStep > 0) showStep(state.currentStep - 1);
+}
+
+function updateNav() {
+  var back = document.getElementById('btn-back');
+  var next = document.getElementById('btn-next');
+  var nav = document.querySelector('.bottom-nav');
+
+  // Hide entire bottom nav on completion step
+  if (state.currentStep === 8) {
+    nav.style.display = 'none';
+    return;
+  }
+  nav.style.display = '';
+
+  back.style.display = state.currentStep === 0 ? 'none' : '';
+
+  if (state.currentStep === 7) {
+    next.textContent = 'Save Configuration';
+    next.className = 'nav-btn save-btn';
+  } else {
+    next.textContent = 'Next';
+    next.className = 'nav-btn primary';
+  }
+
+  var canAdvance = true;
+  if (state.currentStep === 1 && !state.experience) canAdvance = false;
+  if (state.currentStep === 2 && !state.goal) canAdvance = false;
+  if (state.currentStep === 3) {
+    if (!state.tradingMode) canAdvance = false;
+    if (state.tradingMode === 'alpaca_live' && !state.liveAcknowledged) canAdvance = false;
+  }
+  if (state.currentStep === 4) {
+    var ds = getDataStrategy();
+    var missingInput = ds.required.filter(function(k) {
+      if (k === 'alpaca') return !state.keyValues['alpaca'] || !state.keyValues['alpaca_secret'];
+      return !state.keyValues[k];
+    });
+    if (missingInput.length > 0) canAdvance = false;
+  }
+  if (state.currentStep === 5 && !state.strategyPreset) canAdvance = false;
+
+  next.disabled = !canAdvance;
+}
+
+// ── Option selection ──────────────────────────────────────────────────────────
+
+function selectOption(field, value) {
+  state[field] = value;
+
+  var containerId = { experience: 'exp-options', goal: 'goal-options', tradingMode: 'mode-options' }[field];
+  document.querySelectorAll('#' + containerId + ' .option-card').forEach(function(c) {
+    c.classList.toggle('selected', c.dataset.value === value);
+  });
+
+  if (field === 'tradingMode') {
+    document.getElementById('live-confirm').style.display = value === 'alpaca_live' ? '' : 'none';
+    if (value !== 'alpaca_live') state.liveAcknowledged = false;
+  }
+
+  updateNav();
+  saveProgress();
+}
+
+// ── Mode step rendering ──────────────────────────────────────────────────────
+
+function renderModeStep() {
+  var liveOption = document.getElementById('live-option');
+  if (state.experience === 'beginner') {
+    liveOption.classList.add('disabled');
+  } else {
+    liveOption.classList.remove('disabled');
+  }
+  document.querySelectorAll('#mode-options .option-card').forEach(function(c) {
+    c.classList.toggle('selected', c.dataset.value === state.tradingMode);
+  });
+  document.getElementById('live-confirm').style.display =
+    state.tradingMode === 'alpaca_live' ? '' : 'none';
+}
+
+// ── Data sources step (DOM-based) ────────────────────────────────────────────
+
+function renderDataStep() {
+  var ds = getDataStrategy();
+  document.getElementById('data-strategy-text').textContent = ds.message;
+
+  var container = document.getElementById('key-cards');
+  container.textContent = '';
+
+  var visibleKeys = KEY_DEFS.filter(function(k) {
+    if (k.brokerOnly && state.tradingMode === 'paper') return false;
+    return true;
+  });
+
+  var order = { required: 0, recommended: 1, optional: 2 };
+  visibleKeys.sort(function(a, b) { return order[getKeyTier(a.id)] - order[getKeyTier(b.id)]; });
+
+  visibleKeys.forEach(function(def) {
+    var tier = getKeyTier(def.id);
+    var validated = state.validatedKeys[def.id];
+    var cardClass = 'key-card ' + (validated ? 'validated' : tier);
+    var tierLabel = tier === 'required' ? 'REQUIRED' : tier === 'recommended' ? 'RECOMMENDED' : 'OPTIONAL';
+    var tierClass = 'key-tier-badge ' + (tier === 'required' ? 'tier-required' : tier === 'recommended' ? 'tier-recommended' : 'tier-optional');
+
+    var card = el('div', { className: cardClass, id: 'card-' + def.id });
+
+    // Header row
+    var header = el('div', { className: 'key-card-header' }, [
+      el('div', { className: 'key-card-title' }, def.name),
+      el('span', { className: tierClass }, tierLabel),
+    ]);
+    card.appendChild(header);
+
+    // Info
+    var info = el('div', { className: 'key-card-info' });
+    info.textContent = def.infoText;
+    card.appendChild(info);
+
+    // Instructions (collapsible)
+    var details = document.createElement('details');
+    details.className = 'key-instructions';
+    var summary = el('summary', { style: 'cursor:pointer;color:var(--amber);font-family:var(--mono);font-size:11px;letter-spacing:0.5px' }, 'HOW TO GET THIS KEY');
+    details.appendChild(summary);
+
+    var instructionContent = document.createElement('div');
+    instructionContent.style.marginTop = '8px';
+    var ol = document.createElement('ol');
+    def.instructionSteps.forEach(function(step) {
+      var li = document.createElement('li');
+      if (step.length === 3) {
+        li.appendChild(document.createTextNode(step[0]));
+        var a = el('a', { href: step[2], target: '_blank' }, step[1]);
+        li.appendChild(a);
+      } else {
+        li.textContent = step[0];
+      }
+      ol.appendChild(li);
+    });
+    instructionContent.appendChild(ol);
+    if (def.costNote) {
+      var costP = el('div', { style: 'margin-top:6px;font-weight:500' }, def.costNote);
+      instructionContent.appendChild(costP);
+    }
+    details.appendChild(instructionContent);
+    card.appendChild(details);
+
+    // Key input(s)
+    if (def.hasSecret) {
+      card.appendChild(buildKeyInputRow(def.id, 'API Key (starts with PK...)', false));
+      var spacer = document.createElement('div');
+      spacer.style.height = '8px';
+      card.appendChild(spacer);
+      card.appendChild(buildKeyInputRow(def.id + '_secret', 'Secret Key', true, def.id));
+    } else {
+      card.appendChild(buildKeyInputRow(def.id, 'Paste your API key here', true, def.id));
+    }
+
+    // Status line
+    var statusDiv = el('div', { className: 'key-status', id: 'status-' + def.id });
+    card.appendChild(statusDiv);
+
+    container.appendChild(card);
+  });
+}
+
+function buildKeyInputRow(inputId, placeholder, showTestBtn, testServiceId) {
+  var row = el('div', { className: 'key-input-row' });
+
+  var wrap = el('div', { className: 'key-input-wrap' });
+  var input = document.createElement('input');
+  input.type = 'password';
+  input.className = 'key-input' + (state.validatedKeys[testServiceId || inputId] ? ' valid' : '');
+  input.id = 'key-' + inputId;
+  input.placeholder = placeholder;
+  input.value = state.keyValues[inputId] || '';
+  input.addEventListener('input', function() { onKeyInput(inputId, this.value); });
+  wrap.appendChild(input);
+
+  var toggleBtn = el('button', {
+    className: 'toggle-vis',
+    onClick: function() { input.type = input.type === 'password' ? 'text' : 'password'; }
+  }, '\u{1F441}');
+  wrap.appendChild(toggleBtn);
+  row.appendChild(wrap);
+
+  if (showTestBtn) {
+    var svcId = testServiceId || inputId;
+    var validated = state.validatedKeys[svcId];
+    var btn = el('button', {
+      className: 'test-btn' + (validated ? ' success' : ''),
+      id: 'test-' + svcId,
+      onClick: function() { testKey(svcId); }
+    }, validated ? 'Verified' : 'Test');
+    row.appendChild(btn);
+  }
+
+  return row;
+}
+
+function onKeyInput(keyId, value) {
+  state.keyValues[keyId] = value;
+  var baseId = keyId.replace('_secret', '');
+  state.validatedKeys[baseId] = false;
+  var statusEl = document.getElementById('status-' + baseId);
+  if (statusEl) statusEl.textContent = '';
+  var btnEl = document.getElementById('test-' + baseId);
+  if (btnEl) { btnEl.textContent = 'Test'; btnEl.className = 'test-btn'; }
+  var cardEl = document.getElementById('card-' + baseId);
+  if (cardEl) {
+    cardEl.className = 'key-card ' + getKeyTier(baseId);
+  }
+  updateNav();
+}
+
+async function testKey(serviceId) {
+  var btn = document.getElementById('test-' + serviceId);
+  var statusEl = document.getElementById('status-' + serviceId);
+  var input = document.getElementById('key-' + serviceId);
+
+  var key = state.keyValues[serviceId] || '';
+  if (!key) {
+    statusEl.textContent = 'Enter a key first';
+    statusEl.className = 'key-status error';
+    return;
+  }
+
+  btn.textContent = 'Testing...';
+  btn.className = 'test-btn testing';
+  btn.disabled = true;
+
+  var body = { service: serviceId, key: key };
+  if (serviceId === 'alpaca') {
+    body.secret = state.keyValues['alpaca_secret'] || '';
+    if (!body.secret) {
+      statusEl.textContent = 'Enter both API key and secret';
+      statusEl.className = 'key-status error';
+      btn.textContent = 'Test';
+      btn.className = 'test-btn';
+      btn.disabled = false;
+      return;
+    }
+  }
+
+  try {
+    var resp = await fetch('/api/v1/onboarding/validate-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var data = await resp.json();
+
+    if (data.valid) {
+      state.validatedKeys[serviceId] = true;
+      btn.textContent = 'Verified';
+      btn.className = 'test-btn success';
+      statusEl.textContent = data.message;
+      statusEl.className = 'key-status success';
+      input.className = 'key-input valid';
+      var cardEl = document.getElementById('card-' + serviceId);
+      if (cardEl) cardEl.className = 'key-card validated';
+      if (serviceId === 'alpaca') {
+        var secretInput = document.getElementById('key-alpaca_secret');
+        if (secretInput) secretInput.className = 'key-input valid';
+      }
+    } else {
+      state.validatedKeys[serviceId] = false;
+      btn.textContent = 'Failed';
+      btn.className = 'test-btn fail';
+      statusEl.textContent = data.message;
+      statusEl.className = 'key-status error';
+      input.className = 'key-input invalid';
+    }
+  } catch (e) {
+    btn.textContent = 'Error';
+    btn.className = 'test-btn fail';
+    statusEl.textContent = 'Network error -- is the server running?';
+    statusEl.className = 'key-status error';
+  }
+  btn.disabled = false;
+  updateNav();
+}
+
+// ── Strategy step ────────────────────────────────────────────────────────────
+
+function getSuggestedPreset() {
+  if (state.experience === 'beginner' || state.goal === 'learning') return 'conservative';
+  if (state.experience === 'advanced' && state.goal === 'income') return 'aggressive';
+  return 'active';
+}
+
+function selectPreset(name) {
+  state.strategyPreset = name;
+  document.querySelectorAll('.preset-card').forEach(function(c) {
+    c.classList.toggle('selected', c.dataset.preset === name);
+  });
+  updateNav();
+  saveProgress();
+}
+
+function renderStrategyStep() {
+  var suggested = getSuggestedPreset();
+  var msg = document.getElementById('suggested-preset-msg');
+  var labels = { conservative: 'Conservative Learner', active: 'Active Trader', aggressive: 'Aggressive Growth' };
+
+  msg.style.display = '';
+  msg.textContent = 'Based on your profile, we suggest ' + labels[suggested] + '. But feel free to pick any option.';
+
+  document.querySelectorAll('.preset-card').forEach(function(c) {
+    c.classList.toggle('suggested', c.dataset.preset === suggested);
+    c.classList.toggle('selected', c.dataset.preset === state.strategyPreset);
+  });
+
+  if (!state.strategyPreset) selectPreset(suggested);
+}
+
+// ── Capital step ──────────────────────────────────────────────────────────────
+
+function renderCapitalStep() {
+  var mode = state.tradingMode || 'paper';
+  var guidance = document.getElementById('capital-guidance');
+  var presets = document.getElementById('capital-presets');
+  var subtitle = document.getElementById('capital-subtitle');
+
+  var guidanceText, presetValues;
+
+  if (mode === 'paper') {
+    subtitle.textContent = 'This is simulated money -- pick any amount to test with.';
+    guidanceText = 'Since you\'re paper trading, this number only affects position sizing math. $100,000 is a common choice for realistic simulations.';
+    presetValues = ['10,000', '50,000', '100,000', '500,000'];
+  } else if (mode === 'alpaca_paper') {
+    subtitle.textContent = 'How much simulated capital for Alpaca paper trading?';
+    guidanceText = 'Alpaca paper accounts typically start with $100,000 in simulated funds. Match this to your Alpaca paper balance for accurate tracking.';
+    presetValues = ['1,000', '10,000', '100,000'];
+  } else {
+    subtitle.textContent = 'How much real money will you allocate?';
+    guidanceText = 'This is real money. Start small. We strongly recommend beginning with $1,000-$5,000 while you validate the system\'s performance with your strategy settings.';
+    presetValues = ['1,000', '5,000', '10,000', '25,000'];
+  }
+
+  guidance.textContent = guidanceText;
+  presets.textContent = '';
+  presetValues.forEach(function(v) {
+    var btn = el('button', {
+      className: 'capital-preset-btn',
+      onClick: function() { setCapital(v); }
+    }, '$' + v);
+    presets.appendChild(btn);
+  });
+
+  document.getElementById('capital-input').value = formatNumber(state.capital);
+  highlightCapitalPreset();
+}
+
+function setCapital(formatted) {
+  var val = parseInt(formatted.replace(/,/g, ''));
+  state.capital = val;
+  document.getElementById('capital-input').value = formatNumber(val);
+  highlightCapitalPreset();
+  saveProgress();
+}
+
+function onCapitalInput(el) {
+  var raw = el.value.replace(/[^0-9]/g, '');
+  state.capital = parseInt(raw) || 0;
+  updateNav();
+}
+
+function formatCapital(el) {
+  el.value = formatNumber(state.capital);
+  highlightCapitalPreset();
+  saveProgress();
+}
+
+function highlightCapitalPreset() {
+  document.querySelectorAll('.capital-preset-btn').forEach(function(btn) {
+    var val = parseInt(btn.textContent.replace(/[$,]/g, ''));
+    btn.classList.toggle('selected', val === state.capital);
+  });
+}
+
+function formatNumber(n) {
+  return n.toLocaleString('en-US');
+}
+
+// ── Review step (DOM-based) ──────────────────────────────────────────────────
+
+function renderReviewStep() {
+  var modeLabels = { paper: 'Paper Trading (simulated)', alpaca_paper: 'Alpaca Paper Trading', alpaca_live: 'Alpaca Live Trading' };
+  var expLabels = { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced' };
+  var goalLabels = { learning: 'Learning', testing: 'Testing strategies', income: 'Generating returns' };
+  var presetLabels = { conservative: 'Conservative Learner', active: 'Active Trader', aggressive: 'Aggressive Growth' };
+
+  // Profile
+  var profileDiv = document.getElementById('review-profile');
+  profileDiv.textContent = '';
+  profileDiv.appendChild(el('div', { className: 'review-group-title' }, 'PROFILE'));
+  profileDiv.appendChild(reviewRow('Experience', expLabels[state.experience] || '--'));
+  profileDiv.appendChild(reviewRow('Goal', goalLabels[state.goal] || '--'));
+  profileDiv.appendChild(reviewRow('Trading mode', modeLabels[state.tradingMode] || '--'));
+
+  // Keys
+  var keysDiv = document.getElementById('review-keys');
+  keysDiv.textContent = '';
+  keysDiv.appendChild(el('div', { className: 'review-group-title' }, 'DATA SOURCES'));
+  KEY_DEFS.forEach(function(k) {
+    if (k.brokerOnly && state.tradingMode === 'paper') return;
+    var has = state.validatedKeys[k.id];
+    var entered = !!state.keyValues[k.id];
+    var label = has ? 'Verified' : entered ? 'Entered (not tested)' : 'Not configured';
+    var cls = has ? 'configured' : entered ? '' : 'missing';
+    keysDiv.appendChild(reviewRow(k.name, label, cls));
+  });
+
+  // Strategy
+  var stratDiv = document.getElementById('review-strategy');
+  stratDiv.textContent = '';
+  stratDiv.appendChild(el('div', { className: 'review-group-title' }, 'STRATEGY'));
+  var preset = PRESETS[state.strategyPreset];
+  stratDiv.appendChild(reviewRow('Preset', presetLabels[state.strategyPreset] || '--'));
+  stratDiv.appendChild(reviewRow('Max holdings', preset ? String(preset.concentration.max_holdings) : '--'));
+  stratDiv.appendChild(reviewRow('Max position %', preset ? preset.concentration.max_position_pct + '%' : '--'));
+  stratDiv.appendChild(reviewRow('Hold period', preset ? preset.hold_period : '--'));
+
+  // Capital
+  var capDiv = document.getElementById('review-capital');
+  capDiv.textContent = '';
+  capDiv.appendChild(el('div', { className: 'review-group-title' }, 'CAPITAL'));
+  capDiv.appendChild(reviewRow('Starting capital', '$' + formatNumber(state.capital)));
+
+  // Env preview
+  renderEnvPreview();
+}
+
+function reviewRow(label, value, extraClass) {
+  var row = el('div', { className: 'review-row' });
+  row.appendChild(el('span', { className: 'review-label' }, label));
+  row.appendChild(el('span', { className: 'review-value' + (extraClass ? ' ' + extraClass : '') }, value));
+  return row;
+}
+
+function renderEnvPreview() {
+  var env = buildEnvObject();
+  var preview = document.getElementById('env-preview');
+  preview.textContent = '';
+
+  var lines = [
+    '# Generated by Scorched Onboarding Wizard',
+    '',
+    '# Required',
+    'ANTHROPIC_API_KEY=' + mask(env.ANTHROPIC_API_KEY),
+    '',
+    '# Portfolio',
+    'STARTING_CAPITAL=' + env.STARTING_CAPITAL,
+    '',
+    '# Data Sources',
+    'FRED_API_KEY=' + mask(env.FRED_API_KEY),
+    'POLYGON_API_KEY=' + mask(env.POLYGON_API_KEY),
+    'ALPHA_VANTAGE_API_KEY=' + mask(env.ALPHA_VANTAGE_API_KEY),
+    'FINNHUB_API_KEY=' + mask(env.FINNHUB_API_KEY),
+    '',
+    '# Broker',
+    'BROKER_MODE=' + env.BROKER_MODE,
+  ];
+
+  if (state.tradingMode !== 'paper') {
+    lines.push('ALPACA_API_KEY=' + mask(env.ALPACA_API_KEY));
+    lines.push('ALPACA_SECRET_KEY=' + mask(env.ALPACA_SECRET_KEY));
+  }
+
+  preview.textContent = lines.join('\n');
+}
+
+function mask(val) {
+  if (!val) return '';
+  if (val.length <= 8) return '****';
+  return val.substring(0, 4) + '****' + val.substring(val.length - 4);
+}
+
+function buildEnvObject() {
+  return {
+    ANTHROPIC_API_KEY: state.keyValues.anthropic || '',
+    STARTING_CAPITAL: String(state.capital || 100000),
+    FRED_API_KEY: state.keyValues.fred || '',
+    POLYGON_API_KEY: state.keyValues.polygon || '',
+    ALPHA_VANTAGE_API_KEY: state.keyValues.alpha_vantage || '',
+    FINNHUB_API_KEY: state.keyValues.finnhub || '',
+    BROKER_MODE: state.tradingMode === 'paper' ? 'paper' : state.tradingMode || 'paper',
+    ALPACA_API_KEY: state.keyValues.alpaca || '',
+    ALPACA_SECRET_KEY: state.keyValues.alpaca_secret || '',
+  };
+}
+
+// ── Save configuration ──────────────────────────────────────────────────────
+
+async function saveConfig() {
+  var btn = document.getElementById('btn-next');
+  btn.textContent = 'Saving...';
+  btn.disabled = true;
+
+  var env = buildEnvObject();
+  var strategy = PRESETS[state.strategyPreset] || PRESETS.active;
+  var confirmLive = state.tradingMode === 'alpaca_live' && state.liveAcknowledged;
+
+  try {
+    var resp = await fetch('/api/v1/onboarding/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env: env, strategy: strategy, confirm_live: confirmLive }),
+    });
+
+    var data = await resp.json();
+
+    if (resp.ok && data.success) {
+      localStorage.removeItem(STORAGE_KEY);
+      showStep(8); // transition to completion/tour step
+    } else {
+      showToast(data.detail || data.message || 'Save failed', true);
+      btn.textContent = 'Save Configuration';
+      btn.disabled = false;
+    }
+  } catch (e) {
+    showToast('Network error -- is the server running?', true);
+    btn.textContent = 'Save Configuration';
+    btn.disabled = false;
+  }
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+
+function showToast(message, isError) {
+  var toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = 'toast' + (isError ? ' error' : '') + ' show';
+  setTimeout(function() { toast.classList.remove('show'); }, 4000);
+}
+
+// ── Persistence (non-sensitive only) ─────────────────────────────────────────
+
+function saveProgress() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      currentStep: state.currentStep,
+      experience: state.experience,
+      goal: state.goal,
+      tradingMode: state.tradingMode,
+      strategyPreset: state.strategyPreset,
+      capital: state.capital,
+    }));
+  } catch (e) { /* ignore */ }
+}
+
+function loadProgress() {
+  try {
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    var data = JSON.parse(raw);
+    state.currentStep = data.currentStep || 0;
+    state.experience = data.experience || null;
+    state.goal = data.goal || null;
+    state.tradingMode = data.tradingMode || null;
+    state.strategyPreset = data.strategyPreset || null;
+    state.capital = data.capital || 100000;
+  } catch (e) { /* ignore */ }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+function init() {
+  loadProgress();
+
+  if (state.experience) {
+    document.querySelectorAll('#exp-options .option-card').forEach(function(c) {
+      c.classList.toggle('selected', c.dataset.value === state.experience);
+    });
+  }
+  if (state.goal) {
+    document.querySelectorAll('#goal-options .option-card').forEach(function(c) {
+      c.classList.toggle('selected', c.dataset.value === state.goal);
+    });
+  }
+
+  showStep(state.currentStep);
+}
+
+init();
+</script>
+</body>
+</html>

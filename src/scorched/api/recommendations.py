@@ -1,11 +1,9 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import RecommendationSession
 from ..schemas import GenerateRecommendationsRequest, RecommendationsResponse, SessionDetail, SessionListItem
 from ..services import recommender as recommender_svc
 from .deps import require_owner_pin
@@ -31,14 +29,7 @@ async def list_sessions(
     limit: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    q = (
-        select(RecommendationSession)
-        .order_by(RecommendationSession.session_date.desc())
-        .limit(limit)
-    )
-    if session_date:
-        q = q.where(RecommendationSession.session_date == session_date)
-    rows = (await db.execute(q)).scalars().all()
+    rows = await recommender_svc.list_sessions(db, session_date=session_date, limit=limit)
     return [
         SessionListItem(
             id=r.id,
@@ -53,11 +44,7 @@ async def list_sessions(
 @router.get("/{session_id}/analysis")
 async def get_session_analysis(session_id: int, db: AsyncSession = Depends(get_db)):
     from fastapi import HTTPException
-    row = (
-        await db.execute(
-            select(RecommendationSession).where(RecommendationSession.id == session_id)
-        )
-    ).scalars().first()
+    row = await recommender_svc.get_session(db, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session_id": session_id, "analysis_text": row.analysis_text}
@@ -67,16 +54,12 @@ async def get_session_analysis(session_id: int, db: AsyncSession = Depends(get_d
 async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
     import json
     from decimal import Decimal
+    from fastapi import HTTPException
     from ..schemas import RecommendationItem
 
-    row = (
-        await db.execute(
-            select(RecommendationSession).where(RecommendationSession.id == session_id)
-        )
-    ).scalars().first()
+    row = await recommender_svc.get_session(db, session_id)
 
     if row is None:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Session not found")
 
     research_summary = ""

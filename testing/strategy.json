@@ -6,7 +6,7 @@
   "hold_period": "3-10d",
   "entry_style": [],
   "sell_discipline": "scale_out",
-  "loss_management": "time_price_hybrid",
+  "loss_management": "hard_stop",
   "partial_sell": "adaptive",
   "sizing_style": "conviction_weighted",
   "concentration": {

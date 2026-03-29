@@ -28,6 +28,11 @@
     --fs-base: 14px;
     --card-bg: #111820;
   }
+  body.fs-s { zoom: 0.85; }
+  body.fs-m { zoom: 1; }
+  body.fs-l { zoom: 1.2; }
+  body.fs-xl { zoom: 1.4; }
+  body.fs-xxl { zoom: 1.65; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: var(--bg);
@@ -310,10 +315,13 @@
 </style>
 </head>
 <body>
+<script>
+(function(){var s=localStorage.getItem('tradebot-font-size')||'m';document.body.className='fs-'+s;})();
+</script>
 
 <div class="topbar">
   <div class="topbar-left">
-    <a href="/static/dashboard.html" class="back-link">&lt; DASHBOARD</a>
+    <a href="/" class="back-link">&lt; DASHBOARD</a>
     <div class="logo">SYSTEM HEALTH <span>// OPS</span></div>
   </div>
   <div class="topbar-right">

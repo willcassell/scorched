@@ -33,6 +33,11 @@
       --header-h: 60px;
     }
 
+    body.fs-s { zoom: 0.85; }
+    body.fs-m { zoom: 1; }
+    body.fs-l { zoom: 1.2; }
+    body.fs-xl { zoom: 1.4; }
+    body.fs-xxl { zoom: 1.65; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html { scroll-behavior: smooth; }
@@ -497,8 +502,16 @@
     /* ── Responsive ── */
     @media (max-width: 600px) {
       .page { padding: 20px 16px 60px; }
-      .header { padding: 0 16px; }
+      .header {
+        padding: 8px 12px;
+        height: auto;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
       .header-back span { display: none; }
+      .header-center { order: -1; width: 100%; align-items: flex-start; }
+      .header-right { margin-left: auto; }
+      .save-btn { padding: 8px 14px; font-size: 12px; }
       .question { padding: 16px; }
       .group-header { padding: 14px 16px; }
       .options-grid, .options-grid.wide {
@@ -589,6 +602,9 @@
   </style>
 </head>
 <body>
+<script>
+(function(){var s=localStorage.getItem('tradebot-font-size')||'m';document.body.className='fs-'+s;})();
+</script>
 
   <!-- Sticky header -->
   <header class="header">

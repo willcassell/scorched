@@ -1,0 +1,47 @@
+# Isolated testing environment — runs on port 8001, separate DB volume.
+# Does NOT touch production .env, strategy.json, or postgres_data.
+#
+# Usage:
+#   cd testing
+#   docker compose up -d --build
+#   open http://localhost:8001/onboarding
+#   docker compose down          # stop
+#   docker compose down -v       # stop + wipe test DB
+
+services:
+  postgres-test:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scorched
+      POSTGRES_PASSWORD: scorched
+      POSTGRES_DB: scorched
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scorched"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tradebot-test:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scorched:scorched@postgres-test:5432/scorched
+    volumes:
+      - ../logs:/app/logs
+      - ./strategy.json:/app/strategy.json
+    working_dir: /app
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_test_data:

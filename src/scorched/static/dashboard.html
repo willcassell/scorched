@@ -37,7 +37,9 @@
   }
   body.fs-s { zoom: 0.85; }
   body.fs-m { zoom: 1; }
-  body.fs-l { zoom: 1.15; }
+  body.fs-l { zoom: 1.2; }
+  body.fs-xl { zoom: 1.4; }
+  body.fs-xxl { zoom: 1.65; }
   body::before {
     content: '';
     position: fixed;
@@ -100,7 +102,6 @@
   .return-bar-fill { height:100%; border-radius:2px; transition:width 0.8s ease; background:var(--green); }
   .return-bar-fill.negative { background: var(--red); }
   .panel-positions { grid-column: 2; grid-row: 1 / 3; }
-  .panel-analysis { grid-column: 2; grid-row: 3; overflow-y: auto; max-height: 280px; }
   .analysis-text { font-family: var(--sans); font-size:13px; color: var(--text); line-height: 1.7; font-weight: 300; white-space: pre-wrap; }
   .analysis-section { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
   .analysis-section:last-child { border-bottom: none; margin-bottom: 0; }
@@ -124,7 +125,7 @@
   .tax-tag.short_term { background:var(--amber-dim); color:var(--amber); border:1px solid var(--amber-dim); }
   .tax-tag.long_term { background:var(--green-dim); color:var(--green); border:1px solid var(--green-dim); }
   .empty-state { color:var(--text-dim); font-size:13px; padding:24px 0; text-align:center; border:1px dashed var(--border); }
-  .panel-closed { grid-column: 2; grid-row: 4 / 6; overflow-y: auto; }
+  .panel-closed { grid-column: 2; grid-row: 3 / 6; overflow-y: auto; }
   .closed-row { display:grid; grid-template-columns:60px 40px 1fr 80px 70px; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
   .closed-row:last-child { border-bottom:none; }
   .closed-symbol { font-weight:600; color:var(--text-hi); letter-spacing:0.05em; }
@@ -139,16 +140,8 @@
   .tax-block:last-child { border-bottom:none; margin-bottom:0; }
   .tax-block-label { font-size:11px; letter-spacing:0.12em; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px; }
   .tax-block-row { display:flex; justify-content:space-between; font-size:13px; padding:2px 0; }
-  .panel-playbook { grid-column: 3; grid-row: 3 / 6; overflow-y: auto; }
-  .playbook-version { font-size:11px; color:var(--text-dim); letter-spacing:0.1em; margin-bottom:10px; }
-  .pb-h1 { font-family:var(--mono); font-size:13px; font-weight:600; color:var(--amber); letter-spacing:0.1em; text-transform:uppercase; margin:12px 0 6px; border-bottom:1px solid var(--amber-dim); padding-bottom:3px; }
-  .pb-h2 { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--text-hi); letter-spacing:0.08em; margin:10px 0 4px; }
-  .pb-li { padding-left:12px; position:relative; color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.6; margin-bottom:3px; font-weight:300; }
-  .pb-li::before { content:'›'; position:absolute; left:0; color:var(--amber-dim); }
-  .pb-p { margin-bottom:6px; font-size:13px; color:var(--text); font-family:var(--sans); font-weight:300; line-height:1.6; }
-  .pb-spacer { height:6px; }
+  .panel-costs { grid-column: 3; grid-row: 2 / 6; }
   .panel-recs { grid-column: 1; grid-row: 2 / 6; overflow-y: auto; }
-  .panel-costs { grid-column: 3; grid-row: 2; }
   .strategy-settings-btn {
     display: inline-block; padding: 4px 12px;
     border: 1px solid var(--amber-dim); border-radius: 3px;
@@ -172,11 +165,6 @@
   .api-health-badge .count.yellow { color: #eab308; }
   .api-health-badge .count.red { color: var(--red); }
   .api-health-badge .sep { color: var(--text-dim); }
-  .broker-badge {
-    display: flex; align-items: center; gap: 5px;
-    background: var(--surface); border: 1px solid var(--border);
-    padding: 3px 10px; border-radius: 4px;
-  }
   .system-link {
     color: var(--amber); text-decoration: none; font-size: 10px;
     border: 1px solid var(--amber); padding: 2px 8px; border-radius: 3px;
@@ -235,21 +223,63 @@
   .rc-delta { font-size:11px; text-align: right; min-width: 62px; letter-spacing: 0.04em; font-weight: 500; }
   .rc-delta.beating { color: var(--green); }
   .rc-delta.lagging { color: var(--red); }
-  .font-size-toggle { display: flex; gap: 2px; }
-  .fs-btn {
-    background: none; border: 1px solid var(--border); color: var(--text-dim);
-    font-family: var(--mono); font-size:11px; padding: 2px 7px;
-    cursor: pointer; letter-spacing: 0.08em; transition: all 0.15s;
+  .zoom-select {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 11px; padding: 3px 6px;
+    cursor: pointer; letter-spacing: 0.06em;
+    appearance: auto;
   }
-  .fs-btn:hover { border-color: var(--text-dim); color: var(--text); }
-  .fs-btn.active { border-color: var(--amber); color: var(--amber); background: rgba(232,160,48,0.08); }
+  .zoom-select:focus { border-color: var(--amber); outline: none; }
+
+  /* ── Mobile Responsive ─────────────────────────────────────────────────── */
+  @media (max-width: 1024px) {
+    .grid {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto;
+    }
+    .panel-performance { grid-column: 1; grid-row: auto; }
+    .panel-tax { grid-column: 2; grid-row: auto; }
+    .panel-costs { grid-column: 1; grid-row: auto; }
+    .panel-recs { grid-column: 2; grid-row: auto; }
+    .panel-positions { grid-column: 1 / -1; grid-row: auto; }
+    .panel-closed { grid-column: 1 / -1; grid-row: auto; }
+    .topbar { flex-wrap: wrap; gap: 8px; }
+    .topbar-right { flex-wrap: wrap; }
+  }
+  @media (max-width: 640px) {
+    .grid {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto;
+    }
+    .panel-performance,
+    .panel-tax,
+    .panel-costs,
+    .panel-recs,
+    .panel-positions,
+    .panel-closed { grid-column: 1; grid-row: auto; }
+    .topbar {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 12px;
+    }
+    .topbar-left { width: 100%; justify-content: space-between; }
+    .api-health { width: 100%; flex-wrap: wrap; gap: 6px; }
+    .topbar-right { width: 100%; flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
+    .pos-meta { grid-template-columns: 1fr 1fr; }
+    .closed-row { grid-template-columns: 50px 35px 1fr 70px; font-size: 12px; }
+    .closed-tax { display: none; }
+    .big-number { font-size: 24px; }
+    .logo { font-size: 13px; }
+    .panel { padding: 10px; }
+  }
 </style>
 </head>
 <body>
 
 <header class="topbar">
   <div class="topbar-left">
-    <div class="logo">TRADEBOT <span>// SIMULATED</span></div>
+    <div class="logo">TRADEBOT <span>// <span id="broker-label">---</span></span></div>
     <div class="status-pill">
       <div class="status-dot" id="status-dot"></div>
       <span id="status-text">CONNECTING</span>
@@ -264,19 +294,18 @@
       <span class="sep">/</span>
       <span class="dot red"></span><span class="count red" id="api-red">-</span>
     </div>
-    <div class="broker-badge">
-      <span style="color:var(--text-dim)">Broker</span>
-      <span class="dot green" id="broker-dot"></span>
-      <span style="color:var(--green);font-size:10px" id="broker-mode">-</span>
-    </div>
     <a href="/system" class="system-link">SYSTEM</a>
+    <a href="/analysis" class="system-link" style="border-color:var(--amber-dim);color:var(--amber)">ANALYSIS</a>
+    <a href="/onboarding" class="system-link" style="border-color:var(--green-dim);color:var(--green)">SETUP</a>
   </div>
   <div class="topbar-right">
-    <div class="font-size-toggle">
-      <button class="fs-btn" data-size="s" onclick="setFontSize('s')" title="Small font">S</button>
-      <button class="fs-btn" data-size="m" onclick="setFontSize('m')" title="Medium font">M</button>
-      <button class="fs-btn" data-size="l" onclick="setFontSize('l')" title="Large font">L</button>
-    </div>
+    <select class="zoom-select" id="zoomSelect" onchange="setFontSize(this.value)">
+      <option value="s">Small</option>
+      <option value="m">Medium</option>
+      <option value="l">Large</option>
+      <option value="xl">X-Large</option>
+      <option value="xxl">XX-Large</option>
+    </select>
     <span id="clock"></span>
     <button class="refresh-btn" id="refresh-btn" onclick="loadAll()">↺ REFRESH</button>
     <a href="/strategy" class="strategy-settings-btn">Strategy Settings</a>
@@ -320,16 +349,6 @@
     </div>
   </div>
 
-  <div class="panel panel-analysis">
-    <div class="panel-label">Today's Analysis</div>
-    <div id="analysis-content">
-      <div class="skeleton sk-line" style="width:100%"></div>
-      <div class="skeleton sk-line" style="width:90%"></div>
-      <div class="skeleton sk-line" style="width:95%"></div>
-      <div class="skeleton sk-line" style="width:80%"></div>
-    </div>
-  </div>
-
   <div class="panel panel-closed">
     <div class="panel-label">Recent Closed</div>
     <div id="closed-content">
@@ -347,15 +366,6 @@
     </div>
   </div>
 
-  <div class="panel panel-playbook">
-    <div class="panel-label">Strategy Playbook</div>
-    <div id="playbook-content">
-      <div class="skeleton sk-line" style="width:100%"></div>
-      <div class="skeleton sk-line" style="width:80%"></div>
-      <div class="skeleton sk-line" style="width:90%"></div>
-      <div class="skeleton sk-line" style="width:60%"></div>
-    </div>
-  </div>
 
 </div>
 
@@ -367,17 +377,14 @@ const API = '/api/v1';
 
 // ── Font Size Toggle ─────────────────────────────────────────────────────────
 function setFontSize(size) {
-  document.body.classList.remove('fs-s', 'fs-m', 'fs-l');
+  document.body.classList.remove('fs-s', 'fs-m', 'fs-l', 'fs-xl', 'fs-xxl');
   document.body.classList.add('fs-' + size);
-  document.querySelectorAll('.fs-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.size === size);
-  });
+  const sel = document.getElementById('zoomSelect');
+  if (sel) sel.value = size;
   localStorage.setItem('tradebot-font-size', size);
 }
-// Restore saved font size on load
 (function() {
-  const saved = localStorage.getItem('tradebot-font-size') || 'm';
-  setFontSize(saved);
+  setFontSize(localStorage.getItem('tradebot-font-size') || 'm');
 })();
 
 // ── Safety: escape all user/API content before DOM insertion ─────────────────
@@ -1081,45 +1088,6 @@ function renderCosts(costs) {
   el.appendChild(allTime);
 }
 
-// ── Playbook ─────────────────────────────────────────────────────────────────
-function renderPlaybook(pb) {
-  const el = document.getElementById('playbook-content');
-  el.className = 'loaded';
-  el.textContent = '';
-
-  const ver = document.createElement('div');
-  ver.className = 'playbook-version';
-  ver.textContent = 'v' + pb.version + ' · updated ' + fmtDate(pb.updated_at);
-  el.appendChild(ver);
-
-  // Parse markdown safely — all text set via textContent, never innerHTML
-  const lines = (pb.content || '').split('\n');
-  lines.forEach(line => {
-    let node;
-    if (line.startsWith('# ')) {
-      node = document.createElement('div');
-      node.className = 'pb-h1';
-      node.textContent = line.slice(2);
-    } else if (line.startsWith('## ')) {
-      node = document.createElement('div');
-      node.className = 'pb-h2';
-      node.textContent = line.slice(3);
-    } else if (line.startsWith('- ') || line.startsWith('* ')) {
-      node = document.createElement('div');
-      node.className = 'pb-li';
-      node.textContent = line.slice(2);
-    } else if (line.trim() === '') {
-      node = document.createElement('div');
-      node.className = 'pb-spacer';
-    } else {
-      node = document.createElement('div');
-      node.className = 'pb-p';
-      node.textContent = line;
-    }
-    el.appendChild(node);
-  });
-}
-
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function loadAll() {
   const btn = document.getElementById('refresh-btn');
@@ -1151,18 +1119,16 @@ async function loadAll() {
     document.getElementById('api-yellow').textContent = sh.summary?.yellow || 0;
     document.getElementById('api-red').textContent = sh.summary?.red || 0;
     const bmode = sh.broker?.mode || 'paper';
-    const modeLabel = {paper:'PAPER',alpaca_paper:'ALPACA-PAPER',alpaca_live:'LIVE'}[bmode] || bmode.toUpperCase();
-    document.getElementById('broker-mode').textContent = modeLabel;
-    document.getElementById('broker-dot').className = 'dot ' + (sh.broker?.status || 'green');
+    const modeLabel = {paper:'SIMULATED',alpaca_paper:'ALPACA PAPER',alpaca_live:'LIVE TRADING'}[bmode] || bmode.toUpperCase();
+    document.getElementById('broker-label').textContent = modeLabel;
   } catch(e) {
     document.getElementById('api-green').textContent = '?';
   }
 
-  const [portfolioR, historyR, taxR, playbookR, costsR, benchmarksR] = await Promise.allSettled([
+  const [portfolioR, historyR, taxR, costsR, benchmarksR] = await Promise.allSettled([
     apiFetch('/portfolio'),
     apiFetch('/portfolio/history?limit=10'),
     apiFetch('/portfolio/tax-summary'),
-    apiFetch('/playbook'),
     apiFetch('/costs'),
     apiFetch('/portfolio/benchmarks'),
   ]);
@@ -1181,14 +1147,9 @@ async function loadAll() {
 
   if (historyR.status === 'fulfilled') renderClosed(historyR.value);
   if (taxR.status === 'fulfilled') renderTax(taxR.value);
-  if (playbookR.status === 'fulfilled') renderPlaybook(playbookR.value);
-  else {
-    const el = document.getElementById('playbook-content');
-    el.textContent = 'Playbook unavailable';
-  }
   if (costsR.status === 'fulfilled') renderCosts(costsR.value);
 
-  await Promise.all([renderRecs(), renderAnalysis()]);
+  await renderRecs();
 
   btn.classList.remove('spinning');
   btn.textContent = '↺ REFRESH';
@@ -1197,6 +1158,160 @@ async function loadAll() {
 
 loadAll();
 setInterval(loadAll, 300000);
+
+// ── Guided Tour (triggered by ?tour=1 from onboarding wizard) ────────────────
+
+(function() {
+  if (!new URLSearchParams(window.location.search).has('tour')) return;
+
+  var TOUR_STEPS = [
+    {
+      target: '.panel-performance',
+      title: 'Portfolio Overview',
+      text: 'Your total portfolio value, cash balance, and return percentage. Updates in real-time as trades execute.',
+      position: 'bottom',
+    },
+    {
+      target: '.panel-positions',
+      title: 'Open Positions',
+      text: 'Every stock you currently hold, with buy thesis, gain/loss, and tax category. Empty until your first trade.',
+      position: 'bottom',
+    },
+    {
+      target: '.panel-recs',
+      title: "Today's Picks",
+      text: "Claude's daily recommendations appear here each morning after Phase 1 runs. You'll see buy/sell signals with confidence levels and reasoning.",
+      position: 'bottom',
+    },
+    {
+      target: '.panel-tax',
+      title: 'Tax Summary',
+      text: 'Running tally of short-term vs long-term gains, estimated tax liability, and after-tax returns.',
+      position: 'bottom',
+    },
+    {
+      target: '.panel-costs',
+      title: 'Token Costs',
+      text: 'How much the Claude API calls cost today, this week, and all-time. Typically $0.10-0.30/day.',
+      position: 'bottom',
+    },
+    {
+      target: '.api-health',
+      title: 'API Health',
+      text: 'Green/yellow/red indicators for all data sources. Click SYSTEM for detailed per-API monitoring.',
+      position: 'below-header',
+    },
+  ];
+
+  var tourStep = 0;
+
+  // Build overlay elements
+  var overlay = document.createElement('div');
+  overlay.id = 'tour-overlay';
+  document.body.appendChild(overlay);
+
+  var tooltip = document.createElement('div');
+  tooltip.id = 'tour-tooltip';
+  document.body.appendChild(tooltip);
+
+  // Inject tour CSS
+  var style = document.createElement('style');
+  style.textContent = [
+    '#tour-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.65); z-index:9998; transition:opacity 0.3s; }',
+    '#tour-tooltip { position:absolute; z-index:10000; background:#0f1217; border:1px solid #e8a030; border-radius:8px; padding:20px; max-width:340px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }',
+    '#tour-tooltip .tour-t-title { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:#e8f2fc; margin-bottom:6px; }',
+    '#tour-tooltip .tour-t-text { font-size:13px; color:#b8cce0; line-height:1.6; margin-bottom:14px; }',
+    '#tour-tooltip .tour-t-nav { display:flex; justify-content:space-between; align-items:center; }',
+    '#tour-tooltip .tour-t-counter { font-family:"IBM Plex Mono",monospace; font-size:11px; color:#6a8099; }',
+    '#tour-tooltip .tour-t-btn { font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:500; padding:7px 18px; border-radius:5px; cursor:pointer; border:1px solid #253040; background:#0f1217; color:#b8cce0; transition:all 0.2s; }',
+    '#tour-tooltip .tour-t-btn:hover { border-color:#e8a030; color:#e8a030; }',
+    '#tour-tooltip .tour-t-btn.primary { background:#e8a030; color:#0a0c0f; border-color:#e8a030; font-weight:600; }',
+    '#tour-tooltip .tour-t-btn.primary:hover { background:#d4901a; }',
+    '.tour-highlight { position:relative; z-index:9999; box-shadow:0 0 0 4px rgba(232,160,48,0.4), 0 0 20px rgba(232,160,48,0.15); border-radius:8px; transition:box-shadow 0.3s; }',
+  ].join('\n');
+  document.head.appendChild(style);
+
+  function showTourStep(idx) {
+    // Remove previous highlight
+    var prev = document.querySelector('.tour-highlight');
+    if (prev) prev.classList.remove('tour-highlight');
+
+    if (idx >= TOUR_STEPS.length) {
+      // Tour complete
+      overlay.remove();
+      tooltip.remove();
+      // Clean URL
+      var url = new URL(window.location);
+      url.searchParams.delete('tour');
+      window.history.replaceState({}, '', url);
+      return;
+    }
+
+    var step = TOUR_STEPS[idx];
+    var target = document.querySelector(step.target);
+    if (!target) { showTourStep(idx + 1); return; }
+
+    target.classList.add('tour-highlight');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // Build tooltip content
+    tooltip.textContent = '';
+    var title = document.createElement('div');
+    title.className = 'tour-t-title';
+    title.textContent = step.title;
+    tooltip.appendChild(title);
+
+    var text = document.createElement('div');
+    text.className = 'tour-t-text';
+    text.textContent = step.text;
+    tooltip.appendChild(text);
+
+    var nav = document.createElement('div');
+    nav.className = 'tour-t-nav';
+
+    var counter = document.createElement('span');
+    counter.className = 'tour-t-counter';
+    counter.textContent = (idx + 1) + ' / ' + TOUR_STEPS.length;
+    nav.appendChild(counter);
+
+    var btnGroup = document.createElement('div');
+    btnGroup.style.cssText = 'display:flex;gap:8px';
+
+    if (idx > 0) {
+      var backBtn = document.createElement('button');
+      backBtn.className = 'tour-t-btn';
+      backBtn.textContent = 'Back';
+      backBtn.addEventListener('click', function() { showTourStep(idx - 1); });
+      btnGroup.appendChild(backBtn);
+    }
+
+    var skipBtn = document.createElement('button');
+    skipBtn.className = 'tour-t-btn';
+    skipBtn.textContent = 'Skip tour';
+    skipBtn.addEventListener('click', function() { showTourStep(TOUR_STEPS.length); });
+    btnGroup.appendChild(skipBtn);
+
+    var nextBtn = document.createElement('button');
+    nextBtn.className = 'tour-t-btn primary';
+    nextBtn.textContent = idx === TOUR_STEPS.length - 1 ? 'Finish' : 'Next';
+    nextBtn.addEventListener('click', function() { showTourStep(idx + 1); });
+    btnGroup.appendChild(nextBtn);
+
+    nav.appendChild(btnGroup);
+    tooltip.appendChild(nav);
+
+    // Position tooltip below target
+    setTimeout(function() {
+      var rect = target.getBoundingClientRect();
+      var scrollY = window.scrollY || window.pageYOffset;
+      tooltip.style.top = (rect.bottom + scrollY + 12) + 'px';
+      tooltip.style.left = Math.max(12, Math.min(rect.left, window.innerWidth - 360)) + 'px';
+    }, 100);
+  }
+
+  // Start tour after data loads
+  setTimeout(function() { showTourStep(0); }, 1500);
+})();
 </script>
 </body>
 </html>
