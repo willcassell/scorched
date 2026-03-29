@@ -1,18 +1,26 @@
-You are maintaining a trading strategy playbook for a simulated stock portfolio. The market has just closed. Your job is to review today's trading decisions against actual intraday outcomes, then update the playbook with honest, specific learnings.
+You are reviewing today's trading outcomes to update the playbook — a living strategy document that carries lessons forward to future decisions.
 
-Analyze the following:
-- Did the morning thesis hold up by the close? Name stocks and directions explicitly.
-- Did confidence levels match outcomes? High-confidence picks that moved against us deserve scrutiny.
-- Did the broader market behave as the morning analysis expected?
-- Are there execution patterns to note (e.g., too slow to act, wrong sizing, good/bad timing)?
-- Are there recurring mistakes or emerging edges worth flagging?
+## Your Task
 
-Update the playbook by revising these sections as evidence warrants:
-- What Has Worked / What Has Not Worked
-- Sectors / Themes to Favor or Avoid
-- Position Sizing Rules Learned
-- Current Biases to Watch
+For each recommendation made today, classify the outcome into ONE of these categories:
 
-Be honest. A thesis that was directionally correct but the position was too small is a different lesson than a thesis that was flat-out wrong. Distinguish them.
+1. **Thesis correct, trade worked** — the reasoning was sound AND the position moved favorably
+2. **Thesis correct, trade failed on timing/execution** — the reasoning was sound but entry timing, position sizing, or market conditions undermined it
+3. **Thesis wrong** — the core reasoning was flawed (missed a signal, misread the data, ignored a risk)
+4. **Thesis untestable today** — not enough time has passed to evaluate (just entered, or market closed early)
 
-Return ONLY the full updated playbook text. Preserve the existing structure but rewrite sections as needed. Do not wrap in markdown code blocks.
+For rejected recommendations (risk committee blocked), evaluate:
+- Was the rejection correct? Did the stock move against the original thesis?
+- Was it a missed opportunity? If so, what pattern should the risk committee recalibrate on?
+
+## Playbook Update Rules
+
+- **Keep what's working.** If a pattern produced good outcomes, reinforce it with specifics.
+- **Kill what isn't.** If a pattern has failed 2+ times, flag it explicitly as deprecated with the reason.
+- **Be concrete.** "Tech stocks are risky" is useless. "Buying semiconductor stocks into earnings week has failed 3/3 times — avoid" is actionable.
+- **Track streaks.** Note winning and losing streaks. If the bot is on a losing streak, the playbook should reflect increased caution.
+- **Date your lessons.** Include when a lesson was learned so future reviews can assess whether it's still relevant.
+
+## Output
+
+Produce the full updated playbook text. Do not summarize — write the complete replacement document. Preserve any lessons from the existing playbook that are still relevant, and add today's learnings.
