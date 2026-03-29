@@ -25,6 +25,9 @@ postgres_data/
 # Superpowers plugin state
 .superpowers/
 
+# Backup files
+*.bak
+
 # OS files
 .DS_Store
 Thumbs.db
