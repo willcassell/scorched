@@ -157,6 +157,32 @@
     transition: all 0.15s;
   }
   .strategy-settings-btn:hover { border-color: var(--amber); background: rgba(232,160,48,0.06); }
+  .api-health { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+  .api-health-badge {
+    display: flex; align-items: center; gap: 5px;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 4px;
+  }
+  .api-health-badge .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .api-health-badge .dot.green { background: var(--green); }
+  .api-health-badge .dot.yellow { background: #eab308; }
+  .api-health-badge .dot.red { background: var(--red); }
+  .api-health-badge .count { font-weight: 600; }
+  .api-health-badge .count.green { color: var(--green); }
+  .api-health-badge .count.yellow { color: #eab308; }
+  .api-health-badge .count.red { color: var(--red); }
+  .api-health-badge .sep { color: var(--text-dim); }
+  .broker-badge {
+    display: flex; align-items: center; gap: 5px;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 4px;
+  }
+  .system-link {
+    color: var(--amber); text-decoration: none; font-size: 10px;
+    border: 1px solid var(--amber); padding: 2px 8px; border-radius: 3px;
+    letter-spacing: 0.1em; transition: all 0.15s;
+  }
+  .system-link:hover { background: var(--amber); color: var(--bg); }
   .cost-bar-wrap { margin: 6px 0 10px; }
   .cost-bar-track { height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
   .cost-bar-fill { height: 100%; background: var(--amber); border-radius: 2px; transition: width 0.6s ease; }
@@ -228,6 +254,22 @@
       <div class="status-dot" id="status-dot"></div>
       <span id="status-text">CONNECTING</span>
     </div>
+  </div>
+  <div class="api-health" id="api-health">
+    <div class="api-health-badge">
+      <span style="color:var(--text-dim)">APIs</span>
+      <span class="dot green"></span><span class="count green" id="api-green">-</span>
+      <span class="sep">/</span>
+      <span class="dot yellow"></span><span class="count yellow" id="api-yellow">-</span>
+      <span class="sep">/</span>
+      <span class="dot red"></span><span class="count red" id="api-red">-</span>
+    </div>
+    <div class="broker-badge">
+      <span style="color:var(--text-dim)">Broker</span>
+      <span class="dot green" id="broker-dot"></span>
+      <span style="color:var(--green);font-size:10px" id="broker-mode">-</span>
+    </div>
+    <a href="/system" class="system-link">SYSTEM</a>
   </div>
   <div class="topbar-right">
     <div class="font-size-toggle">
@@ -1100,6 +1142,20 @@ async function loadAll() {
   } catch(e) {
     document.getElementById('status-dot').classList.add('offline');
     document.getElementById('status-text').textContent = 'OFFLINE';
+  }
+
+  // API health status bar
+  try {
+    const sh = await apiFetch('/system/health');
+    document.getElementById('api-green').textContent = sh.summary?.green || 0;
+    document.getElementById('api-yellow').textContent = sh.summary?.yellow || 0;
+    document.getElementById('api-red').textContent = sh.summary?.red || 0;
+    const bmode = sh.broker?.mode || 'paper';
+    const modeLabel = {paper:'PAPER',alpaca_paper:'ALPACA-PAPER',alpaca_live:'LIVE'}[bmode] || bmode.toUpperCase();
+    document.getElementById('broker-mode').textContent = modeLabel;
+    document.getElementById('broker-dot').className = 'dot ' + (sh.broker?.status || 'green');
+  } catch(e) {
+    document.getElementById('api-green').textContent = '?';
   }
 
   const [portfolioR, historyR, taxR, playbookR, costsR, benchmarksR] = await Promise.allSettled([
