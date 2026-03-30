@@ -4,7 +4,6 @@
     "position_drop_from_entry_pct": 5.0,
     "position_drop_from_open_pct": 3.0,
     "spy_intraday_drop_pct": 2.0,
-    "vix_absolute_max": 30,
     "volume_surge_multiplier": 3.0,
     "cooldown_minutes": 30
   },

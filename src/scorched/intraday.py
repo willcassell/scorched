@@ -87,7 +87,12 @@ def check_market_triggers(
     vix_current: Decimal,
     config: dict,
 ) -> list[GateResult]:
-    """Run SPY + VIX checks. Returns list of FIRED results only."""
+    """Run SPY check. Returns list of FIRED results only.
+
+    VIX is intentionally excluded as a trigger — a sustained high VIX
+    causes repeated alerts for every position. VIX level is still passed
+    to Claude as market_context so it informs exit decisions.
+    """
     fired: list[GateResult] = []
 
     spy_result = check_spy_intraday_drop(
@@ -95,12 +100,6 @@ def check_market_triggers(
     )
     if not spy_result.passed:
         fired.append(spy_result)
-
-    vix_result = check_vix_level(
-        vix_current, config.get("vix_absolute_max", 30)
-    )
-    if not vix_result.passed:
-        fired.append(vix_result)
 
     return fired
 
