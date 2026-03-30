@@ -4,6 +4,8 @@ An AI-powered stock trading bot you can actually talk to. Every weekday, Scorche
 
 Starts as paper trading with simulated money. When you're ready, connect an Alpaca brokerage account to trade for real.
 
+## New here? Start with [START_HERE.md](START_HERE.md)
+
 ---
 
 ## Two Ways to Use It

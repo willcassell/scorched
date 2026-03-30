@@ -20,6 +20,16 @@ The bot runs completely on its own. Once set up, you don't need to do anything �
 
 ## What You'll Need
 
+### The Short Version
+
+1. Install Docker (instructions below)
+2. Run: `git clone https://github.com/willcassell/scorched.git && cd scorched`
+3. Run: `docker compose up -d --build`
+4. Go to `http://localhost:8000/onboarding` and enter your Anthropic API key
+5. Done — the bot handles the rest
+
+The rest of this doc covers optional enhancements, data source keys that improve analysis quality, and how to set up the automated daily schedule.
+
 ### 1. An Anthropic API Key (required)
 
 This is how you pay for Claude's "brain." The bot makes up to 7 AI calls per day and costs about **$0.15-0.25 per day** (~$5-8/month). Most days it's fewer — the intraday monitor only calls Claude when a position hits a trigger.
@@ -191,9 +201,10 @@ crontab -e
 
 Then paste these lines (they schedule the bot to run at the right times on weekdays):
 
+> **Timezone note:** The cron times below are in UTC and are correct from **mid-March through early November** (US Daylight Saving Time). When US clocks fall back in November, you need to add 1 hour to each UTC value. There is a reminder in the FAQ below.
+
 ```cron
-# Scorched daily trading cycle (times in UTC — adjust for your timezone)
-# These times are for US Eastern Daylight Time (Mar-Nov). See DEPLOY.md for winter times.
+# Scorched daily trading cycle (times in UTC — DST, see timezone note above)
 
 # 8:30 AM ET: Research and generate recommendations
 30 12 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1.py >> ~/scorched/cron.log 2>&1
@@ -273,3 +284,20 @@ No. The setup wizard handles configuration, the dashboard shows results, and the
 
 **What can I ask my bot?**
 Anything about your portfolio, its trades, the market, or its strategy. It pulls live data when you ask. Some examples: "Why did you buy NVDA?", "What's my total return?", "How did the market do today?", "What does your playbook say about holding through earnings?" The bot has 7 tools that Claude calls automatically — you never need to know they exist.
+
+**The dashboard shows no recommendations — what's wrong?**
+The bot only generates picks at 8:30 AM ET on weekdays when the market is open. If you just started it, wait until the next trading day morning, or trigger it manually right now with:
+```bash
+curl -s -X POST http://localhost:8000/api/v1/recommendations/generate \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+Check the result — if it says `"market_closed": true` that means today is a holiday or weekend and that's expected behavior.
+
+**Do I need to update anything when the clocks change?**
+Yes, twice a year. The cron jobs use UTC times, and US Eastern Time shifts by 1 hour in spring and fall.
+
+- **Spring (around March 8):** Subtract 1 hour from each UTC value in your crontab. Example: `30 13` becomes `30 12`.
+- **Fall (around November 1):** Add 1 hour back. Example: `30 12` becomes `30 13`.
+
+To edit: run `crontab -e` on your server and update the hour values. The [timeanddate.com DST calculator](https://www.timeanddate.com/time/dst/) can confirm the exact dates each year.

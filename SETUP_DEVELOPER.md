@@ -1,3 +1,7 @@
+> **Note:** This guide is for developers setting up a local development environment. If you just want to run the bot, see [START_HERE.md](START_HERE.md) instead.
+
+---
+
 # Scorched AI Trading Bot — Setup Guide
 
 A Claude-powered stock trading bot you can talk to in plain English. Generates daily trade recommendations using fundamental analysis, technical signals, and macro data, then executes them automatically. Connect Claude Desktop to ask your bot questions, review its picks, and understand its reasoning — no trading or coding knowledge required.
