@@ -1,5 +1,5 @@
 """System health, error log, and trend endpoints."""
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import cast, func, select
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/system", tags=["system"])
 @router.get("/health")
 async def system_health(db: AsyncSession = Depends(get_db)):
     """Return per-service health based on today's api_call_log records."""
-    today = datetime.now(timezone.utc).date()
+    today = datetime.utcnow().date()
     result = await db.execute(
         select(ApiCallLog).where(
             cast(ApiCallLog.created_at, Date) == today
@@ -88,7 +88,7 @@ async def system_errors(db: AsyncSession = Depends(get_db)):
 @router.get("/trend")
 async def system_trend(db: AsyncSession = Depends(get_db)):
     """Return daily success % per service for the last 7 days."""
-    cutoff = datetime.now(timezone.utc).date() - timedelta(days=6)
+    cutoff = datetime.utcnow().date() - timedelta(days=6)
 
     day_col = cast(ApiCallLog.created_at, Date).label("day")
     success_col = func.sum(

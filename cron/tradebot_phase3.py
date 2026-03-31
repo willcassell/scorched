@@ -14,13 +14,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
+from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et, acquire_lock, release_lock, check_expected_hour
 
 load_env()
 
 
 def main():
     now_est, today_str = now_et()
+    check_expected_hour(16, "Phase 3")
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 3: end-of-day summary for {today_str}")
 
@@ -131,4 +132,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    acquire_lock("phase3")
+    try:
+        main()
+    except Exception as e:
+        try:
+            from common import send_telegram
+            send_telegram(f"TRADEBOT // Phase 3 CRASHED\n{type(e).__name__}: {str(e)[:300]}")
+        except Exception:
+            pass
+        raise
+    finally:
+        release_lock("phase3")

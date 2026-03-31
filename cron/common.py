@@ -2,10 +2,37 @@
 import json
 import os
 import pathlib
+import sys
 import urllib.request
 import urllib.error
 import datetime
 import pytz
+
+
+def acquire_lock(name):
+    """Acquire a PID lock file. Exits if another instance is running."""
+    lock_path = f"/tmp/tradebot_{name}.lock"
+    if os.path.exists(lock_path):
+        try:
+            with open(lock_path) as f:
+                old_pid = int(f.read().strip())
+            # Check if process is still running
+            os.kill(old_pid, 0)  # signal 0 = check existence
+            print(f"Another {name} instance running (PID {old_pid}), exiting")
+            sys.exit(0)
+        except (ProcessLookupError, ValueError):
+            pass  # Stale lock, remove it
+    with open(lock_path, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def release_lock(name):
+    """Release the PID lock file."""
+    lock_path = f"/tmp/tradebot_{name}.lock"
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        pass
 
 
 def load_env():
@@ -75,3 +102,13 @@ def now_et():
     est_tz = pytz.timezone("America/New_York")
     now = datetime.datetime.now(est_tz)
     return now, now.date().strftime("%Y-%m-%d")
+
+
+def check_expected_hour(expected_hour, script_name):
+    """Warn if the script is running at an unexpected ET hour (DST drift)."""
+    now_est_time, _ = now_et()
+    actual_hour = now_est_time.hour
+    if actual_hour != expected_hour:
+        msg = f"TRADEBOT // TIMING WARNING: {script_name} ran at {now_est_time.strftime('%H:%M %Z')} instead of expected {expected_hour}:xx"
+        print(msg)
+        send_telegram(msg)

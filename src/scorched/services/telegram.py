@@ -25,6 +25,10 @@ async def send_telegram(text: str) -> bool:
             })
             resp.raise_for_status()
             return True
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Telegram send failed: status=%s", exc.response.status_code)
+        return False
     except Exception:
-        logger.warning("Telegram send failed", exc_info=True)
+        # Log without exc_info to avoid leaking the bot token from the URL
+        logger.warning("Telegram send failed: status=%s", "unknown")
         return False

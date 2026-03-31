@@ -36,6 +36,24 @@ class AlpacaBroker(BrokerAdapter):
         """Alpaca SDK is sync — call from executor."""
         return self.client.submit_order(order_data=order_data)
 
+    async def _submit_order_with_retry(self, order_data, max_retries=1):
+        """Submit order via executor with retry on transient (non-4xx) failures."""
+        loop = asyncio.get_event_loop()
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await loop.run_in_executor(None, self._submit_order_sync, order_data)
+            except Exception as exc:
+                last_exc = exc
+                exc_str = str(exc).lower()
+                # Don't retry client errors (4xx)
+                if any(code in exc_str for code in ("400", "401", "403", "404", "422")):
+                    raise
+                if attempt < max_retries:
+                    logger.warning("Alpaca order attempt %d failed, retrying in 3s: %s", attempt + 1, exc)
+                    await asyncio.sleep(3)
+        raise last_exc
+
     def _get_order_sync(self, order_id: str):
         return self.client.get_order_by_id(order_id=order_id)
 
@@ -55,8 +73,7 @@ class AlpacaBroker(BrokerAdapter):
             limit_price=float(limit_price),
         )
 
-        loop = asyncio.get_event_loop()
-        order = await loop.run_in_executor(None, self._submit_order_sync, order_data)
+        order = await self._submit_order_with_retry(order_data)
 
         filled_order = await self._wait_for_fill(str(order.id), timeout=60)
 
@@ -85,8 +102,13 @@ class AlpacaBroker(BrokerAdapter):
         """Get a single position from Alpaca. Returns None if not held."""
         try:
             return self.client.get_open_position(symbol)
-        except Exception:
-            return None
+        except Exception as exc:
+            # Alpaca returns 404 / 40410000 when position doesn't exist
+            exc_str = str(exc).lower()
+            if "not found" in exc_str or "404" in exc_str or "40410000" in exc_str:
+                return None
+            logger.warning("Unexpected error fetching Alpaca position for %s: %s", symbol, exc)
+            raise
 
     async def submit_sell(
         self,
@@ -125,7 +147,7 @@ class AlpacaBroker(BrokerAdapter):
             limit_price=float(limit_price),
         )
 
-        order = await loop.run_in_executor(None, self._submit_order_sync, order_data)
+        order = await self._submit_order_with_retry(order_data)
 
         filled_order = await self._wait_for_fill(str(order.id), timeout=60)
 

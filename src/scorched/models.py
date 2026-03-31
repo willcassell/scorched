@@ -94,7 +94,7 @@ class TradeHistory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     recommendation_id: Mapped[int | None] = mapped_column(
-        ForeignKey("trade_recommendations.id"), nullable=True
+        ForeignKey("trade_recommendations.id"), nullable=True, unique=True
     )
     symbol: Mapped[str] = mapped_column(String(10), nullable=False)
     action: Mapped[str] = mapped_column(String(4), nullable=False)

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from decimal import Decimal
 
@@ -9,7 +10,10 @@ from ..database import get_db
 from ..models import TradeRecommendation, Position
 from ..schemas import ConfirmTradeRequest, ConfirmTradeResponse, PositionDetail, RejectTradeRequest, RejectTradeResponse
 from ..broker import get_broker
+from ..services.telegram import send_telegram
 from .deps import require_owner_pin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/trades", tags=["trades"])
 
@@ -29,19 +33,44 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
 
     broker = get_broker(db)
 
-    if rec.action == "buy":
-        result = await broker.submit_buy(
-            symbol=rec.symbol,
-            qty=body.shares,
-            limit_price=body.execution_price,
-            recommendation_id=body.recommendation_id,
+    try:
+        if rec.action == "buy":
+            result = await broker.submit_buy(
+                symbol=rec.symbol,
+                qty=body.shares,
+                limit_price=body.execution_price,
+                recommendation_id=body.recommendation_id,
+            )
+        else:
+            result = await broker.submit_sell(
+                symbol=rec.symbol,
+                qty=body.shares,
+                limit_price=body.execution_price,
+                recommendation_id=body.recommendation_id,
+            )
+    except Exception as exc:
+        logger.error(
+            "Broker order failed: symbol=%s action=%s recommendation_id=%s error=%s",
+            rec.symbol, rec.action, body.recommendation_id, exc,
+            exc_info=True,
         )
-    else:
-        result = await broker.submit_sell(
-            symbol=rec.symbol,
-            qty=body.shares,
-            limit_price=body.execution_price,
-            recommendation_id=body.recommendation_id,
+        alert = (
+            f"🚨 BROKER ERROR — order may have filled on Alpaca!\n"
+            f"Symbol: {rec.symbol}\n"
+            f"Action: {rec.action}\n"
+            f"Shares: {body.shares}\n"
+            f"Recommendation ID: {body.recommendation_id}\n"
+            f"Error: {exc}"
+        )
+        await send_telegram(alert)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Broker call failed for {rec.action} {rec.symbol} "
+                f"(rec_id={body.recommendation_id}). "
+                f"The order may have filled on Alpaca — check broker dashboard. "
+                f"Error: {exc}"
+            ),
         )
 
     if result["status"] != "filled":

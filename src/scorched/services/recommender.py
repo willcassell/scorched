@@ -197,19 +197,26 @@ async def generate_recommendations(
     logger.info("Total research universe: %d symbols", len(research_symbols))
 
     # Phase 1 parallel fetch — everything that doesn't depend on Claude's output
-    (
-        price_data, news_data, earnings_surprise, insider_activity,
-        market_context, fred_macro, polygon_news, av_technicals
-    ) = await asyncio.gather(
-        fetch_price_data(research_symbols, tracker=tracker),
-        fetch_news(research_symbols, tracker=tracker),
-        fetch_earnings_surprise(research_symbols, tracker=tracker),
-        fetch_edgar_insider(research_symbols, tracker=tracker),
-        fetch_market_context(session_date, research_symbols, tracker=tracker),
-        fetch_fred_macro(settings.fred_api_key, tracker=tracker),
-        fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker),
-        fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker),
-    )
+    try:
+        (
+            price_data, news_data, earnings_surprise, insider_activity,
+            market_context, fred_macro, polygon_news, av_technicals
+        ) = await asyncio.wait_for(
+            asyncio.gather(
+                fetch_price_data(research_symbols, tracker=tracker),
+                fetch_news(research_symbols, tracker=tracker),
+                fetch_earnings_surprise(research_symbols, tracker=tracker),
+                fetch_edgar_insider(research_symbols, tracker=tracker),
+                fetch_market_context(session_date, research_symbols, tracker=tracker),
+                fetch_fred_macro(settings.fred_api_key, tracker=tracker),
+                fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker),
+                fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker),
+            ),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Phase 1 parallel data fetch timed out after 300s — pipeline cannot proceed without data")
+        raise
 
     # Compute technical indicators from price history (pure math, no I/O)
     technicals = compute_technicals(price_data)

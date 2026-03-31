@@ -18,24 +18,39 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
+from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et, acquire_lock, release_lock, check_expected_hour
 
 load_env()
 
-RECS_FILE = "/tmp/tradebot_recommendations.json"
+GATED_FILE = "/tmp/tradebot_recommendations_gated.json"
+ORIGINAL_FILE = "/tmp/tradebot_recommendations.json"
+
+
+def _cleanup_recs_file(path):
+    """Remove the recommendations file, ignoring if already gone."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 def main():
     now_est, today_str = now_et()
+    check_expected_hour(9, "Phase 2")
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 2: confirming trades for {today_str}")
 
-    if not os.path.exists(RECS_FILE):
+    # Prefer gated file (Phase 1.5 output); fall back to original (circuit breaker disabled/not run)
+    if os.path.exists(GATED_FILE):
+        recs_file = GATED_FILE
+    elif os.path.exists(ORIGINAL_FILE):
+        recs_file = ORIGINAL_FILE
+    else:
         send_telegram(f"TRADEBOT // {today_str} - Phase 2 skipped: no Phase 1 data found.")
         print("No recommendations file found.")
         return
 
-    with open(RECS_FILE) as f:
+    with open(recs_file) as f:
         stored = json.load(f)
 
     if stored["date"] != today_str:
@@ -43,7 +58,7 @@ def main():
             f"TRADEBOT // {today_str} - Phase 2 skipped: "
             f"recommendations are for {stored['date']}, not today."
         )
-        os.remove(RECS_FILE)
+        _cleanup_recs_file(recs_file)
         print(f"Date mismatch: {stored['date']} != {today_str}")
         return
 
@@ -53,111 +68,142 @@ def main():
 
     if not pending:
         send_telegram(f"TRADEBOT // {today_str} - Phase 2: no trades to confirm.")
-        os.remove(RECS_FILE)
+        _cleanup_recs_file(recs_file)
         return
 
-    # Fetch broker mode for reporting
     try:
-        broker_info = http_get("/api/v1/broker/status")
-        broker_mode = broker_info.get("broker_mode", "paper")
-    except Exception:
-        broker_mode = "paper"
-
-    # Fetch opening prices (used as limit price for broker orders)
-    try:
-        qs = urllib.parse.urlencode({"symbols": ",".join(symbols), "date": today_str})
-        prices_resp = http_get(f"/api/v1/market/opening-prices?{qs}")
-        opening_prices = prices_resp.get("opening_prices", {})
-    except Exception as e:
-        print(f"Opening prices fetch failed: {e}")
-        opening_prices = {}
-
-    trades_detail = ""
-    for r in pending:
-        rec_id = r["id"]
-        symbol = r["symbol"]
-        action = r["action"].upper()
-        qty = float(r["quantity"])
-        suggested = float(r["suggested_price"])
-        open_price = opening_prices.get(symbol)
-        fill_price = open_price if open_price is not None else suggested
-
+        # Fetch broker mode for reporting
         try:
-            result = http_post("/api/v1/trades/confirm", {
-                "recommendation_id": rec_id,
-                "execution_price": fill_price,
-                "shares": qty,
-            })
-            print(f"confirm_trade {symbol}: {result}")
-            if "error" in result:
-                print(f"  skipping {symbol}: {result['error']}")
-                continue
-            gain = result.get("realized_gain")
-            actual_price = float(result.get("execution_price", fill_price))
-            slip = actual_price - suggested
-            trades_detail += f"  {action} {symbol} - {qty:.0f}sh @ ${actual_price:.2f} (slippage: {'+' if slip>=0 else ''}{slip:.2f})\n"
-            if gain is not None:
-                gain_f = float(gain)
-                trades_detail += f"    Realized P&L: {'+' if gain_f>=0 else ''}${gain_f:,.2f}\n"
-        except urllib.error.HTTPError as e:
-            body = e.read().decode() if hasattr(e, 'read') else str(e)
-            print(f"confirm_trade {symbol} failed ({e.code}): {body}")
-            trades_detail += f"  {action} {symbol} - NOT FILLED: {body[:100]}\n"
-        except Exception as e:
-            print(f"confirm_trade {symbol} failed: {e}")
-            trades_detail += f"  {action} {symbol} - ERROR: {e}\n"
+            broker_info = http_get("/api/v1/broker/status")
+            broker_mode = broker_info.get("broker_mode", "paper")
+        except Exception:
+            broker_mode = "paper"
+            broker_info = {}
 
-    # Fetch updated portfolio
-    try:
-        portfolio = http_get("/api/v1/portfolio")
-        total = float(portfolio.get("total_value", 0))
-        ret_pct = portfolio.get("all_time_return_pct", 0)
-        cash = float(portfolio.get("cash_balance", 0))
-        positions = portfolio.get("positions", [])
-    except Exception as e:
-        print(f"Portfolio fetch failed: {e}")
-        portfolio = {}
-        total = cash = 0
-        ret_pct = 0
-        positions = []
+        # Pre-trade reconciliation check
+        pre_recon_warning = ""
+        if broker_mode in ("alpaca_paper", "alpaca_live"):
+            try:
+                recon = broker_info.get("reconciliation", {})
+                if recon.get("has_mismatches"):
+                    pre_recon_warning = "--- PRE-TRADE RECONCILIATION WARNING ---\n"
+                    pre_recon_warning += "Position mismatches detected BEFORE trading:\n"
+                    for m in recon.get("mismatches", []):
+                        pre_recon_warning += f"  {m['symbol']}: local={m['local_qty']}, broker={m['broker_qty']}\n"
+                    pre_recon_warning += "Proceeding with trades anyway.\n\n"
+                    print(f"PRE-TRADE RECONCILIATION WARNING: {recon.get('mismatches')}")
+            except Exception as e:
+                print(f"Pre-trade reconciliation check failed: {e}")
 
-    mode_label = {"paper": "PAPER", "alpaca_paper": "ALPACA-PAPER", "alpaca_live": "LIVE"}.get(broker_mode, broker_mode.upper())
-    msg = f"TRADEBOT [{mode_label}] // {today_str} - Executed at open\n"
-    msg += f"Portfolio: ${total:,.2f} ({fmt_pct(ret_pct)})\n\n"
-    msg += "Trades Executed:\n" + trades_detail
-
-    if positions:
-        msg += "\nOpen Positions:\n"
-        for p in positions:
-            gain = float(p.get("unrealized_gain", 0))
-            gain_pct = float(p.get("unrealized_gain_pct", 0))
-            tax = "ST" if "short" in p.get("tax_category", "") else "LT"
-            sign = "+" if gain >= 0 else ""
-            msg += (
-                f"  {p['symbol']}: {float(p['shares']):.0f}sh | "
-                f"avg ${float(p['avg_cost_basis']):.2f} | "
-                f"now ${float(p['current_price']):.2f} | "
-                f"{sign}${gain:,.2f} ({sign}{gain_pct:.1f}%) [{tax}]\n"
-            )
-
-    # Reconciliation check — compare local DB vs broker
-    if broker_mode in ("alpaca_paper", "alpaca_live"):
+        # Fetch opening prices (used as limit price for broker orders)
         try:
-            recon = http_get("/api/v1/broker/status").get("reconciliation", {})
-            if recon.get("has_mismatches"):
-                msg += "\n--- RECONCILIATION WARNING ---\n"
-                msg += "Position mismatches detected:\n"
-                for m in recon.get("mismatches", []):
-                    msg += f"  {m['symbol']}: local={m['local_qty']}, broker={m['broker_qty']}\n"
-                msg += "Check dashboard for details.\n"
-                print(f"RECONCILIATION WARNING: {recon.get('mismatches')}")
+            qs = urllib.parse.urlencode({"symbols": ",".join(symbols), "date": today_str})
+            prices_resp = http_get(f"/api/v1/market/opening-prices?{qs}")
+            opening_prices = prices_resp.get("opening_prices", {})
         except Exception as e:
-            print(f"Reconciliation check failed: {e}")
+            print(f"Opening prices fetch failed: {e}")
+            opening_prices = {}
 
-    send_telegram(msg)
-    os.remove(RECS_FILE)
-    print("Phase 2 complete.")
+        trades_detail = ""
+        for r in pending:
+            rec_id = r["id"]
+            symbol = r["symbol"]
+            action = r["action"].upper()
+            qty = float(r["quantity"])
+            suggested = float(r["suggested_price"])
+            open_price = opening_prices.get(symbol)
+            fill_price = open_price if open_price is not None else suggested
+
+            try:
+                result = http_post("/api/v1/trades/confirm", {
+                    "recommendation_id": rec_id,
+                    "execution_price": fill_price,
+                    "shares": qty,
+                })
+                print(f"confirm_trade {symbol}: {result}")
+                if "error" in result:
+                    print(f"  skipping {symbol}: {result['error']}")
+                    continue
+                gain = result.get("realized_gain")
+                actual_price = float(result.get("execution_price", fill_price))
+                slip = actual_price - suggested
+                trades_detail += f"  {action} {symbol} - {qty:.0f}sh @ ${actual_price:.2f} (slippage: {'+' if slip>=0 else ''}{slip:.2f})\n"
+                if gain is not None:
+                    gain_f = float(gain)
+                    trades_detail += f"    Realized P&L: {'+' if gain_f>=0 else ''}${gain_f:,.2f}\n"
+            except urllib.error.HTTPError as e:
+                body = e.read().decode() if hasattr(e, 'read') else str(e)
+                print(f"confirm_trade {symbol} failed ({e.code}): {body}")
+                trades_detail += f"  {action} {symbol} - NOT FILLED: {body[:100]}\n"
+            except Exception as e:
+                print(f"confirm_trade {symbol} failed: {e}")
+                trades_detail += f"  {action} {symbol} - ERROR: {e}\n"
+
+        # Fetch updated portfolio
+        try:
+            portfolio = http_get("/api/v1/portfolio")
+            total = float(portfolio.get("total_value", 0))
+            ret_pct = portfolio.get("all_time_return_pct", 0)
+            cash = float(portfolio.get("cash_balance", 0))
+            positions = portfolio.get("positions", [])
+        except Exception as e:
+            print(f"Portfolio fetch failed: {e}")
+            portfolio = {}
+            total = cash = 0
+            ret_pct = 0
+            positions = []
+
+        mode_label = {"paper": "PAPER", "alpaca_paper": "ALPACA-PAPER", "alpaca_live": "LIVE"}.get(broker_mode, broker_mode.upper())
+        msg = f"TRADEBOT [{mode_label}] // {today_str} - Executed at open\n"
+        if pre_recon_warning:
+            msg += "\n" + pre_recon_warning
+        msg += f"Portfolio: ${total:,.2f} ({fmt_pct(ret_pct)})\n\n"
+        msg += "Trades Executed:\n" + trades_detail
+
+        if positions:
+            msg += "\nOpen Positions:\n"
+            for p in positions:
+                gain = float(p.get("unrealized_gain", 0))
+                gain_pct = float(p.get("unrealized_gain_pct", 0))
+                tax = "ST" if "short" in p.get("tax_category", "") else "LT"
+                sign = "+" if gain >= 0 else ""
+                msg += (
+                    f"  {p['symbol']}: {float(p['shares']):.0f}sh | "
+                    f"avg ${float(p['avg_cost_basis']):.2f} | "
+                    f"now ${float(p['current_price']):.2f} | "
+                    f"{sign}${gain:,.2f} ({sign}{gain_pct:.1f}%) [{tax}]\n"
+                )
+
+        # Reconciliation check — compare local DB vs broker
+        if broker_mode in ("alpaca_paper", "alpaca_live"):
+            try:
+                recon = http_get("/api/v1/broker/status").get("reconciliation", {})
+                if recon.get("has_mismatches"):
+                    msg += "\n--- RECONCILIATION WARNING ---\n"
+                    msg += "Position mismatches detected:\n"
+                    for m in recon.get("mismatches", []):
+                        msg += f"  {m['symbol']}: local={m['local_qty']}, broker={m['broker_qty']}\n"
+                    msg += "Check dashboard for details.\n"
+                    print(f"RECONCILIATION WARNING: {recon.get('mismatches')}")
+            except Exception as e:
+                print(f"Reconciliation check failed: {e}")
+
+        send_telegram(msg)
+        print("Phase 2 complete.")
+    finally:
+        _cleanup_recs_file(recs_file)
 
 
 if __name__ == "__main__":
-    main()
+    acquire_lock("phase2")
+    try:
+        main()
+    except Exception as e:
+        try:
+            from common import send_telegram
+            send_telegram(f"TRADEBOT // Phase 2 CRASHED\n{type(e).__name__}: {str(e)[:300]}")
+        except Exception:
+            pass
+        raise
+    finally:
+        release_lock("phase2")

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete
@@ -93,7 +93,7 @@ def track_call(
                 "response_time_ms": elapsed_ms,
                 "error_message": error_message,
                 "symbol": symbol,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.utcnow().isoformat(),
             }
         )
 

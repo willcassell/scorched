@@ -1,9 +1,12 @@
 """Stock research: price data, fundamentals, news, macro, and market context via yfinance + FRED."""
 import asyncio
 import logging
+import socket
 from contextlib import nullcontext
 from datetime import date, timedelta
 from decimal import Decimal
+
+socket.setdefaulttimeout(30)
 
 import yfinance as yf
 
@@ -796,6 +799,19 @@ def build_research_context(
             lines.append("  News:")
             for h in yf_headlines[:3]:
                 lines.append(f"    - {h}")
+
+    # Data quality notes for Claude
+    missing = []
+    if not price_data: missing.append("price data")
+    if not news_data: missing.append("news")
+    if not polygon_news: missing.append("Polygon news")
+    if not analyst_consensus: missing.append("analyst consensus")
+    if not fred_macro: missing.append("FRED macro")
+    if not av_technicals: missing.append("Alpha Vantage technicals")
+    if not insider_activity: missing.append("insider activity")
+    if not earnings_surprise: missing.append("earnings surprise")
+    if missing:
+        lines.append(f"\n## Data Availability Note\nThe following data sources returned no data: {', '.join(missing)}. Analysis should account for these gaps.")
 
     return "\n".join(lines)
 

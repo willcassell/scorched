@@ -6,8 +6,11 @@ calls the pure checkers.
 """
 import asyncio
 import logging
+import socket
 from dataclasses import dataclass
 from decimal import Decimal
+
+socket.setdefaulttimeout(30)
 
 logger = logging.getLogger(__name__)
 

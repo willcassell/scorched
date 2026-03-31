@@ -10,15 +10,19 @@ Cron: */5 13-19 * * 1-5  (script self-gates on ET market hours)
 """
 import json
 import os
+import socket
 import sys
+import tempfile
 import time
 from datetime import time as dt_time
 from decimal import Decimal
 from pathlib import Path
 
+socket.setdefaulttimeout(30)
+
 # Add cron directory to path for common module
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_env, http_get, http_post, send_telegram, now_et
+from common import load_env, http_get, http_post, send_telegram, now_et, acquire_lock, release_lock
 
 load_env()
 
@@ -46,8 +50,14 @@ def load_cooldowns() -> dict:
 
 
 def save_cooldowns(cooldowns: dict) -> None:
-    with open(COOLDOWN_FILE, "w") as f:
-        json.dump(cooldowns, f)
+    fd, tmp_path = tempfile.mkstemp(dir="/tmp", prefix="tradebot_cooldown_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cooldowns, f)
+        os.rename(tmp_path, COOLDOWN_FILE)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
 
 def is_on_cooldown(symbol: str, cooldowns: dict, cooldown_minutes: int) -> bool:
@@ -248,4 +258,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    acquire_lock("intraday")
+    try:
+        main()
+    except Exception as e:
+        try:
+            from common import send_telegram
+            send_telegram(f"TRADEBOT // Intraday Monitor CRASHED\n{type(e).__name__}: {str(e)[:300]}")
+        except Exception:
+            pass
+        raise
+    finally:
+        release_lock("intraday")

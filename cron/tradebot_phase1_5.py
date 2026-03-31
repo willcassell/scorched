@@ -13,18 +13,20 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from common import load_env, send_telegram, now_et
+from common import load_env, send_telegram, now_et, acquire_lock, release_lock, check_expected_hour
 
 load_env()
 
 RECS_FILE = "/tmp/tradebot_recommendations.json"
-FILTERED_FILE = "/tmp/tradebot_recommendations.json"  # overwrites in place
+FILTERED_FILE = "/tmp/tradebot_recommendations_gated.json"
 
 
 def main():
     now_est, today_str = now_et()
+    check_expected_hour(9, "Phase 1.5")
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 1.5: circuit breaker for {today_str}")
 
@@ -87,14 +89,34 @@ def main():
 
     send_telegram(msg)
 
-    # Write filtered file for Phase 2
+    # Write filtered file for Phase 2 (atomic write via temp file + rename)
     stored["recommendations"] = passed
     stored["symbols"] = [r["symbol"] for r in passed]
-    with open(FILTERED_FILE, "w") as f:
-        json.dump(stored, f)
+    fd, tmp_path = tempfile.mkstemp(dir="/tmp", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(stored, f)
+        os.rename(tmp_path, FILTERED_FILE)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
     print(f"Phase 1.5 complete: {len(passed)} passed, {len(blocked)} blocked.")
 
 
 if __name__ == "__main__":
-    main()
+    acquire_lock("phase1_5")
+    try:
+        main()
+    except Exception as e:
+        try:
+            from common import send_telegram
+            send_telegram(f"TRADEBOT // Phase 1.5 CRASHED\n{type(e).__name__}: {str(e)[:300]}")
+        except Exception:
+            pass
+        raise
+    finally:
+        release_lock("phase1_5")
