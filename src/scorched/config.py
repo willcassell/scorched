@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     alpaca_secret_key: str = ""
     finnhub_api_key: str = ""
 
+    # Telegram (optional — used for reconciliation alerts from FastAPI process)
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     host: str = "0.0.0.0"
     port: int = 8000
     strategy_file: Path = Path("strategy.json")

@@ -282,11 +282,15 @@ def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol:
                 for a in articles
                 if a.get("title")
             ]
-        except Exception:
+        except Exception as exc:
             logger.warning("Polygon news fetch failed for %s", symbol, exc_info=True)
             result[symbol] = []
-        # Rate limit: Polygon free tier = 5 calls/min; paid = higher but still throttle
-        time.sleep(0.25)
+            # Stop on rate limit — no point burning through remaining symbols
+            if "429" in str(exc):
+                logger.info("Polygon rate limit hit after %d symbols, stopping", len(result))
+                break
+        # Rate limit: Polygon free tier = 5 calls/min
+        time.sleep(12.5)
     return result
 
 

@@ -15,9 +15,6 @@ def _mock_client():
             period="2026-03-01",
         )
     ]
-    client.price_target.return_value = MagicMock(
-        target_high=200.0, target_low=140.0, target_mean=175.0, target_median=172.0,
-    )
     return client
 
 
@@ -28,7 +25,6 @@ class TestFetchAnalystConsensus:
         assert "AAPL" in result
         assert result["AAPL"]["strong_buy"] == 3
         assert result["AAPL"]["buy"] == 10
-        assert result["AAPL"]["target_mean"] == 175.0
 
     def test_empty_on_no_client(self):
         result = fetch_analyst_consensus_sync(["AAPL"], None)
@@ -37,7 +33,6 @@ class TestFetchAnalystConsensus:
     def test_handles_api_error_gracefully(self):
         client = MagicMock()
         client.recommendation_trends.side_effect = Exception("API error")
-        client.price_target.side_effect = Exception("API error")
         result = fetch_analyst_consensus_sync(["AAPL"], client)
         assert result.get("AAPL") is None or result == {}
 

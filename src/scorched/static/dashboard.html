@@ -126,7 +126,7 @@
   .tax-tag.long_term { background:var(--green-dim); color:var(--green); border:1px solid var(--green-dim); }
   .empty-state { color:var(--text-dim); font-size:13px; padding:24px 0; text-align:center; border:1px dashed var(--border); }
   .panel-closed { grid-column: 2; grid-row: 3 / 6; overflow-y: auto; }
-  .closed-row { display:grid; grid-template-columns:60px 40px 1fr 80px 70px; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .closed-row { display:grid; grid-template-columns:60px 40px 55px 45px 70px 80px; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
   .closed-row:last-child { border-bottom:none; }
   .closed-symbol { font-weight:600; color:var(--text-hi); letter-spacing:0.05em; }
   .closed-action { font-size:11px; letter-spacing:0.1em; padding:1px 4px; }
@@ -165,6 +165,29 @@
   .api-health-badge .count.yellow { color: #eab308; }
   .api-health-badge .count.red { color: var(--red); }
   .api-health-badge .sep { color: var(--text-dim); }
+  .recon-badge {
+    display: flex; align-items: center; gap: 5px;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 4px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .recon-badge:hover { border-color: var(--text-dim); }
+  .recon-badge .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .recon-badge .dot.green { background: var(--green); }
+  .recon-badge .dot.red { background: var(--red); animation: pulse 2s infinite; }
+  .recon-badge .dot.gray { background: var(--text-dim); }
+  .recon-badge .recon-label { font-weight: 600; font-size: 11px; }
+  .recon-badge .recon-label.green { color: var(--green); }
+  .recon-badge .recon-label.red { color: var(--red); }
+  .recon-badge .recon-label.gray { color: var(--text-dim); }
+  .recon-detail {
+    display: none; background: rgba(232,64,64,0.04); border: 1px solid var(--red-dim);
+    padding: 10px 20px; font-size: 12px; color: var(--text);
+  }
+  .recon-detail.visible { display: block; }
+  .recon-detail-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .recon-detail-row:last-child { border-bottom: none; }
+  .recon-detail-header { font-size: 11px; color: var(--red); letter-spacing: 0.1em; margin-bottom: 6px; font-weight: 600; }
   .system-link {
     color: var(--amber); text-decoration: none; font-size: 10px;
     border: 1px solid var(--amber); padding: 2px 8px; border-radius: 3px;
@@ -267,8 +290,8 @@
     .api-health { width: 100%; flex-wrap: wrap; gap: 6px; }
     .topbar-right { width: 100%; flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
     .pos-meta { grid-template-columns: 1fr 1fr; }
-    .closed-row { grid-template-columns: 50px 35px 1fr 70px; font-size: 12px; }
-    .closed-tax { display: none; }
+    .closed-row { grid-template-columns: 50px 35px 1fr 50px 70px; font-size: 12px; }
+    .closed-tax, .closed-shares { display: none; }
     .big-number { font-size: 24px; }
     .logo { font-size: 13px; }
     .panel { padding: 10px; }
@@ -294,6 +317,11 @@
       <span class="sep">/</span>
       <span class="dot red"></span><span class="count red" id="api-red">-</span>
     </div>
+    <div class="recon-badge" id="recon-badge" onclick="toggleReconDetail()">
+      <span style="color:var(--text-dim)">RECON</span>
+      <span class="dot gray" id="recon-dot"></span>
+      <span class="recon-label gray" id="recon-label">---</span>
+    </div>
     <a href="/system" class="system-link">SYSTEM</a>
     <a href="/analysis" class="system-link" style="border-color:var(--amber-dim);color:var(--amber)">ANALYSIS</a>
     <a href="/onboarding" class="system-link" style="border-color:var(--green-dim);color:var(--green)">SETUP</a>
@@ -311,6 +339,8 @@
     <a href="/strategy" class="strategy-settings-btn">Strategy Settings</a>
   </div>
 </header>
+
+<div class="recon-detail" id="recon-detail"></div>
 
 <div class="grid">
   <div class="panel panel-performance">
@@ -350,7 +380,7 @@
   </div>
 
   <div class="panel panel-closed">
-    <div class="panel-label">Recent Closed</div>
+    <div class="panel-label">Recent Trades</div>
     <div id="closed-content">
       <div class="skeleton sk-line" style="width:100%"></div>
       <div class="skeleton sk-line" style="width:85%"></div>
@@ -688,31 +718,29 @@ async function renderPositions(positions) {
   });
 }
 
-// ── Closed Trades ────────────────────────────────────────────────────────────
-function renderClosed(history) {
+// ── Recent Trades ───────────────────────────────────────────────────────────
+function renderTrades(history) {
   const el = document.getElementById('closed-content');
   el.className = 'loaded';
   el.textContent = '';
 
-  const sells = history.filter(h => h.action === 'sell').slice(0, 8);
-
-  if (!sells.length) {
+  if (!history.length) {
     const e = document.createElement('div');
     e.className = 'empty-state';
     e.style.padding = '12px 0';
-    e.textContent = 'NO CLOSED TRADES YET';
+    e.textContent = 'NO TRADES IN LAST 30 DAYS';
     el.appendChild(e);
     return;
   }
 
-  sells.forEach(h => {
+  history.forEach(h => {
     const gain = parseFloat(h.realized_gain) || 0;
     const row = document.createElement('div');
     row.className = 'closed-row';
 
     const sym = document.createElement('span');
     sym.className = 'closed-symbol';
-    sym.textContent = h.symbol;
+    sym.textContent = esc(h.symbol);
 
     const act = document.createElement('span');
     act.className = 'closed-action ' + h.action;
@@ -722,17 +750,88 @@ function renderClosed(history) {
     dt.className = 'closed-date';
     dt.textContent = fmtDate(h.executed_at);
 
+    const sh = document.createElement('span');
+    sh.className = 'closed-shares';
+    sh.style.cssText = 'color:var(--text-dim);font-size:12px;text-align:right';
+    sh.textContent = parseFloat(h.shares).toFixed(0);
+
+    const px = document.createElement('span');
+    px.style.cssText = 'color:var(--text);font-size:12px;text-align:right';
+    px.textContent = '$' + parseFloat(h.execution_price).toFixed(2);
+
     const g = document.createElement('span');
-    g.className = 'closed-gain ' + gainCls(gain);
-    g.textContent = (gain >= 0 ? '+' : '') + fmt$(gain);
+    g.className = 'closed-gain';
+    if (h.action === 'sell') {
+      g.className += ' ' + gainCls(gain);
+      g.textContent = (gain >= 0 ? '+' : '') + fmt$(gain);
+    } else {
+      g.style.color = 'var(--text-dim)';
+      g.textContent = '\u2014';
+    }
 
-    const tx = document.createElement('span');
-    tx.className = 'closed-tax';
-    tx.textContent = h.tax_category === 'short_term' ? 'ST' : h.tax_category === 'long_term' ? 'LT' : '—';
-
-    [sym, act, dt, g, tx].forEach(c => row.appendChild(c));
+    [sym, act, dt, sh, px, g].forEach(c => row.appendChild(c));
     el.appendChild(row);
   });
+}
+
+// ── Reconciliation ──────────────────────────────────────────────────────────
+function toggleReconDetail() {
+  document.getElementById('recon-detail').classList.toggle('visible');
+}
+
+function renderRecon(brokerStatus) {
+  const dot = document.getElementById('recon-dot');
+  const label = document.getElementById('recon-label');
+  const panel = document.getElementById('recon-detail');
+
+  if (!brokerStatus || brokerStatus.broker_mode === 'paper') {
+    dot.className = 'dot green';
+    label.className = 'recon-label green';
+    label.textContent = 'N/A';
+    panel.textContent = '';
+    panel.classList.remove('visible');
+    return;
+  }
+
+  const recon = brokerStatus.reconciliation;
+  if (!recon) {
+    dot.className = 'dot gray';
+    label.className = 'recon-label gray';
+    label.textContent = '---';
+    return;
+  }
+
+  if (recon.has_mismatches) {
+    const n = recon.mismatches.length;
+    dot.className = 'dot red';
+    label.className = 'recon-label red';
+    label.textContent = n + ' MISMATCH' + (n > 1 ? 'ES' : '');
+
+    panel.textContent = '';
+    const hdr = document.createElement('div');
+    hdr.className = 'recon-detail-header';
+    hdr.textContent = 'POSITION MISMATCHES \u2014 LOCAL DB vs BROKER';
+    panel.appendChild(hdr);
+
+    recon.mismatches.forEach(function(m) {
+      const row = document.createElement('div');
+      row.className = 'recon-detail-row';
+      const symSpan = document.createElement('span');
+      symSpan.style.cssText = 'font-weight:600;color:var(--text-hi)';
+      symSpan.textContent = m.symbol;
+      const qtySpan = document.createElement('span');
+      qtySpan.textContent = 'Local: ' + m.local_qty + ' / Broker: ' + m.broker_qty;
+      row.appendChild(symSpan);
+      row.appendChild(qtySpan);
+      panel.appendChild(row);
+    });
+  } else {
+    dot.className = 'dot green';
+    label.className = 'recon-label green';
+    label.textContent = 'OK';
+    panel.textContent = '';
+    panel.classList.remove('visible');
+  }
 }
 
 // ── Tax Summary ──────────────────────────────────────────────────────────────
@@ -1125,12 +1224,13 @@ async function loadAll() {
     document.getElementById('api-green').textContent = '?';
   }
 
-  const [portfolioR, historyR, taxR, costsR, benchmarksR] = await Promise.allSettled([
+  const [portfolioR, historyR, taxR, costsR, benchmarksR, brokerR] = await Promise.allSettled([
     apiFetch('/portfolio'),
-    apiFetch('/portfolio/history?limit=10'),
+    apiFetch('/portfolio/history?limit=30'),
     apiFetch('/portfolio/tax-summary'),
     apiFetch('/costs'),
     apiFetch('/portfolio/benchmarks'),
+    apiFetch('/broker/status'),
   ]);
 
   if (portfolioR.status === 'fulfilled') {
@@ -1145,9 +1245,10 @@ async function loadAll() {
 
   if (benchmarksR.status === 'fulfilled') renderBenchmarks(benchmarksR.value);
 
-  if (historyR.status === 'fulfilled') renderClosed(historyR.value);
+  if (historyR.status === 'fulfilled') renderTrades(historyR.value);
   if (taxR.status === 'fulfilled') renderTax(taxR.value);
   if (costsR.status === 'fulfilled') renderCosts(costsR.value);
+  if (brokerR.status === 'fulfilled') renderRecon(brokerR.value);
 
   await renderRecs();
 

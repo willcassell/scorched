@@ -140,6 +140,20 @@ def main():
                 f"{sign}${gain:,.2f} ({sign}{gain_pct:.1f}%) [{tax}]\n"
             )
 
+    # Reconciliation check — compare local DB vs broker
+    if broker_mode in ("alpaca_paper", "alpaca_live"):
+        try:
+            recon = http_get("/api/v1/broker/status").get("reconciliation", {})
+            if recon.get("has_mismatches"):
+                msg += "\n--- RECONCILIATION WARNING ---\n"
+                msg += "Position mismatches detected:\n"
+                for m in recon.get("mismatches", []):
+                    msg += f"  {m['symbol']}: local={m['local_qty']}, broker={m['broker_qty']}\n"
+                msg += "Check dashboard for details.\n"
+                print(f"RECONCILIATION WARNING: {recon.get('mismatches')}")
+        except Exception as e:
+            print(f"Reconciliation check failed: {e}")
+
     send_telegram(msg)
     os.remove(RECS_FILE)
     print("Phase 2 complete.")

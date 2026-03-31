@@ -57,7 +57,7 @@ async def _execute_sell(
         result = await broker.submit_sell(
             symbol=trigger.symbol,
             qty=sell_qty,
-            limit_price=trigger.current_price,
+            limit_price=Decimal(str(trigger.current_price)).quantize(Decimal("0.01")),
             recommendation_id=None,
         )
         if result["status"] == "filled":
@@ -188,4 +188,21 @@ async def evaluate_triggers(
         ))
 
     await db.commit()
+
+    # Run reconciliation after any sells executed
+    any_sells = any(d.trade_result is not None for d in decisions)
+    if any_sells:
+        try:
+            from ..services.reconciliation import check_reconciliation
+            from ..services.telegram import send_telegram as tg_send
+            recon = await check_reconciliation(db)
+            if recon["has_mismatches"]:
+                lines = ["TRADEBOT // RECON WARNING (intraday)"]
+                for m in recon["mismatches"]:
+                    lines.append(f"  {m['symbol']}: local={m['local_qty']}, broker={m['broker_qty']}")
+                await tg_send("\n".join(lines))
+                logger.warning("Reconciliation mismatch after intraday sell: %s", recon["mismatches"])
+        except Exception:
+            logger.warning("Post-sell reconciliation check failed", exc_info=True)
+
     return IntradayEvaluateResponse(decisions=decisions)

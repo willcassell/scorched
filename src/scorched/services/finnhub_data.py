@@ -63,7 +63,8 @@ def fetch_analyst_consensus_sync(
         try:
             data: dict[str, Any] = {}
 
-            # Recommendation trends
+            # Recommendation trends (1 call/symbol)
+            # Note: price_target endpoint requires paid Finnhub plan (403 on free tier)
             try:
                 with _api_ctx(tracker, "finnhub", "recommendation_trends", symbol):
                     trends = client.recommendation_trends(symbol)
@@ -77,22 +78,11 @@ def fetch_analyst_consensus_sync(
             except Exception as exc:
                 logger.warning("Finnhub recommendation_trends failed for %s: %s", symbol, exc)
 
-            # Price targets
-            try:
-                with _api_ctx(tracker, "finnhub", "price_target", symbol):
-                    pt = client.price_target(symbol)
-                if pt:
-                    data["target_high"] = _get_val(pt, "target_high", "targetHigh")
-                    data["target_low"] = _get_val(pt, "target_low", "targetLow")
-                    data["target_mean"] = _get_val(pt, "target_mean", "targetMean")
-            except Exception as exc:
-                logger.warning("Finnhub price_target failed for %s: %s", symbol, exc)
-
             if data:
                 results[symbol] = data
 
-            # Rate limit: Finnhub free tier = 60 calls/min; 2 calls/symbol so ~0.1s spacing
-            time.sleep(0.12)
+            # Rate limit: Finnhub free tier = 60 calls/min; 1 call/symbol
+            time.sleep(1.1)
 
         except Exception as exc:
             logger.warning("Finnhub fetch failed for %s: %s", symbol, exc)

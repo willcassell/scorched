@@ -49,9 +49,9 @@ def main():
 
     import asyncio
     from scorched.circuit_breaker import run_circuit_breaker
-    from scorched.services.strategy import load_strategy
+    from scorched.services.strategy import load_strategy_json
 
-    strategy = load_strategy()
+    strategy = load_strategy_json()
     cb_config = strategy.get("circuit_breaker", {"enabled": False})
 
     if not cb_config.get("enabled", False):

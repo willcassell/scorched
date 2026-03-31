@@ -46,6 +46,7 @@ class AlpacaBroker(BrokerAdapter):
         limit_price: Decimal,
         recommendation_id: int | None,
     ) -> dict:
+        limit_price = Decimal(str(limit_price)).quantize(Decimal("0.01"))
         order_data = LimitOrderRequest(
             symbol=symbol,
             qty=float(qty),
@@ -80,6 +81,13 @@ class AlpacaBroker(BrokerAdapter):
             "new_cash_balance": new_cash,
         }
 
+    def _get_position_sync(self, symbol: str):
+        """Get a single position from Alpaca. Returns None if not held."""
+        try:
+            return self.client.get_open_position(symbol)
+        except Exception:
+            return None
+
     async def submit_sell(
         self,
         symbol: str,
@@ -87,6 +95,28 @@ class AlpacaBroker(BrokerAdapter):
         limit_price: Decimal,
         recommendation_id: int | None,
     ) -> dict:
+        # Guard: verify position exists on Alpaca to prevent accidental shorts
+        loop = asyncio.get_event_loop()
+        alpaca_pos = await loop.run_in_executor(None, self._get_position_sync, symbol)
+        if alpaca_pos is None:
+            logger.warning(
+                "Sell rejected for %s: no position held on Alpaca (would create short)", symbol
+            )
+            # Fall back to paper broker for DB-only sell of legacy positions
+            from .paper import PaperBroker
+            paper = PaperBroker(self.db)
+            return await paper.submit_sell(symbol, qty, limit_price, recommendation_id)
+
+        # Cap sell qty at what Alpaca actually holds to prevent partial shorts
+        alpaca_qty = Decimal(str(alpaca_pos.qty))
+        if qty > alpaca_qty:
+            logger.warning(
+                "Sell qty %s > Alpaca holding %s for %s — capping to Alpaca qty",
+                qty, alpaca_qty, symbol,
+            )
+            qty = alpaca_qty
+
+        limit_price = Decimal(str(limit_price)).quantize(Decimal("0.01"))
         order_data = LimitOrderRequest(
             symbol=symbol,
             qty=float(qty),
@@ -95,7 +125,6 @@ class AlpacaBroker(BrokerAdapter):
             limit_price=float(limit_price),
         )
 
-        loop = asyncio.get_event_loop()
         order = await loop.run_in_executor(None, self._submit_order_sync, order_data)
 
         filled_order = await self._wait_for_fill(str(order.id), timeout=60)
@@ -190,7 +219,7 @@ class AlpacaBroker(BrokerAdapter):
                 symbol=symbol,
                 shares=qty,
                 avg_cost_basis=price,
-                first_purchase_date=datetime.now(timezone.utc).date(),
+                first_purchase_date=datetime.utcnow().date(),
             )
             self.db.add(pos)
         else:
@@ -215,7 +244,7 @@ class AlpacaBroker(BrokerAdapter):
             shares=qty,
             execution_price=price,
             total_value=total_cost,
-            executed_at=datetime.now(timezone.utc),
+            executed_at=datetime.utcnow(),
         )
         self.db.add(history)
         await self.db.commit()
@@ -230,7 +259,7 @@ class AlpacaBroker(BrokerAdapter):
 
         total_proceeds = (qty * price).quantize(Decimal("0.01"))
         realized_gain = ((price - pos.avg_cost_basis) * qty).quantize(Decimal("0.01")) if pos else Decimal("0")
-        tax_cat = classify_gain(pos.first_purchase_date, datetime.now(timezone.utc).date()) if pos else "short_term"
+        tax_cat = classify_gain(pos.first_purchase_date, datetime.utcnow().date()) if pos else "short_term"
 
         if pos:
             pos.shares -= qty
@@ -253,7 +282,7 @@ class AlpacaBroker(BrokerAdapter):
             shares=qty,
             execution_price=price,
             total_value=total_proceeds,
-            executed_at=datetime.now(timezone.utc),
+            executed_at=datetime.utcnow(),
             realized_gain=realized_gain,
             tax_category=tax_cat,
         )
