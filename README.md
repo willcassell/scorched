@@ -41,7 +41,8 @@ The bot also runs fully autonomously on a daily schedule — no manual intervent
 ```
 Cron (VM)
     │
-    │  8:30 AM ET — Research + generate recommendations
+    │  7:30 AM ET — Data prefetch (zero LLM cost)
+    │  8:30 AM ET — Claude analysis + recommendations
     │  9:30 AM ET — Circuit breaker safety gate
     │  9:35 AM ET — Execute approved trades
     │  Every 5 min — Intraday position monitoring
@@ -50,9 +51,9 @@ Cron (VM)
     ▼
 Scorched (FastAPI + PostgreSQL)
     │
-    ├── Fetches market data (yfinance, FRED, Polygon, Alpha Vantage, EDGAR)
-    ├── Runs momentum screener (top S&P 500 movers)
-    ├── Calls Claude (claude-sonnet-4-6) — multi-call pipeline
+    ├── Phase 0: Fetches market data (yfinance, FRED, Polygon, Alpha Vantage, EDGAR)
+    ├── Phase 0: Runs momentum screener (top 20 S&P 500 movers)
+    ├── Phase 1: Calls Claude (claude-sonnet-4-6) — multi-call pipeline
     │     Call 1: Analysis w/ extended thinking → identify candidates
     │     Call 2: Decision → 0–3 concrete trade recommendations
     │     Call 3: Risk committee → challenge and reject weak picks

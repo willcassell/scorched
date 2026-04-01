@@ -206,7 +206,10 @@ Then paste these lines (they schedule the bot to run at the right times on weekd
 ```cron
 # Scorched daily trading cycle (times in UTC — DST, see timezone note above)
 
-# 8:30 AM ET: Research and generate recommendations
+# 7:30 AM ET: Data prefetch — fetches all market data, caches for Phase 1 (zero LLM cost)
+30 11 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase0.py >> ~/scorched/cron.log 2>&1
+
+# 8:30 AM ET: Claude analysis and recommendations (loads Phase 0 cache)
 30 12 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1.py >> ~/scorched/cron.log 2>&1
 
 # 9:30 AM ET: Circuit breaker safety checks
@@ -232,11 +235,12 @@ Save and close. The bot will now run automatically every trading day.
 
 | Time (ET) | What the Bot Does |
 |-----------|-------------------|
-| **8:30 AM** | Researches ~100 stocks: prices, news, analyst ratings, insider activity, economic data. Asks Claude to analyze everything and pick up to 3 trades. |
-| **9:30 AM** | Safety check — blocks any buys where the stock gapped down overnight or the market looks dangerous. |
-| **9:35 AM** | Executes approved trades at the actual opening price. |
-| **9:35 AM–3:55 PM** | Intraday monitor checks held positions every 5 minutes against 5 triggers (position drop, SPY drop, VIX spike, volume surge). If any fire, Claude decides whether to exit. Zero cost on quiet days. |
-| **4:01 PM** | Reviews the day's performance. Updates its "playbook" — a living document of what strategies are working and what isn't. Tomorrow's picks will reflect today's lessons. |
+| **7:30 AM** | **Phase 0:** Prefetches all market data — prices, news, analyst ratings, insider activity, economic indicators, momentum screener. Caches for Phase 1. Zero LLM cost. |
+| **8:30 AM** | **Phase 1:** Loads cached data. Asks Claude to analyze ~80 stocks and pick up to 3 trades. Takes ~3 min (was 20+ min before Phase 0). |
+| **9:30 AM** | **Phase 1.5:** Safety check — blocks any buys where the stock gapped down overnight or the market looks dangerous. |
+| **9:35 AM** | **Phase 2:** Executes approved trades at the actual opening price. |
+| **9:35 AM–3:55 PM** | **Intraday:** Checks held positions every 5 minutes against 5 triggers (position drop, SPY drop, VIX spike, volume surge). If any fire, Claude decides whether to exit. Zero cost on quiet days. |
+| **4:01 PM** | **Phase 3:** Reviews the day's performance. Updates its "playbook" — a living document of what strategies are working and what isn't. Tomorrow's picks will reflect today's lessons. |
 
 ---
 

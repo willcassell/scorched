@@ -178,7 +178,8 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **`force: true` on recommendations** — NULLs out `token_usage.session_id` (nullable FK) before deleting the session, avoiding FK violation. Don't skip this step.
 - **Recommendation caching** — `get_recommendations` returns the existing session if one exists for today, unless `force=True`. This is intentional.
 - **NYSE holidays** — detected in `_is_market_open()` using `pandas_market_calendars`. Returns early before any DB or Claude work.
-- **VM cron times are UTC** — DST (US clocks spring forward ~March 8): ET shifts from UTC-5 → UTC-4. After DST: Phase 1 at `30 12`, Phase 1.5 at `30 13`, Phase 2 at `35 13`, Phase 3 at `02 20`. Before DST: shift each forward 1hr.
+- **Phase 0 cache** — `generate_recommendations()` checks for `/tmp/tradebot_research_cache_{date}.json` written by Phase 0. If found, skips all data fetches and uses cached data. If missing, falls back to inline fetch.
+- **VM cron times are ET** — DST (US clocks spring forward ~March 8): no crontab change needed since cron uses ET directly. Each cron script has a `check_expected_hour()` call that sends a Telegram warning if it runs at the wrong ET hour.
 - **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
 - **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
 - **Wash sale detection** — buys within 30 days of a same-symbol sell get a `⚠️ WASH SALE WARNING` prepended to `key_risks`.

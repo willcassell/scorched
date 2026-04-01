@@ -43,6 +43,7 @@ tradebot/
 ├── alembic/              ← database migrations
 ├── cron/                 ← daily automation scripts
 │   ├── common.py
+│   ├── tradebot_phase0.py
 │   ├── tradebot_phase1.py
 │   ├── tradebot_phase1_5.py
 │   ├── tradebot_phase2.py
@@ -215,7 +216,10 @@ Add these lines (all times are UTC — see DST table below):
 ```cron
 # ── Tradebot daily cycle (times in UTC, after DST) ──────────────────────────
 
-# Phase 1: Pre-market research + recommendations (8:30 AM ET = 12:30 UTC)
+# Phase 0: Data prefetch — all external APIs, zero LLM cost (7:30 AM ET = 11:30 UTC)
+30 11 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase0.py >> ~/tradebot/cron.log 2>&1
+
+# Phase 1: Claude analysis + recommendations, loads Phase 0 cache (8:30 AM ET = 12:30 UTC)
 30 12 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase1.py >> ~/tradebot/cron.log 2>&1
 
 # Phase 1.5: Circuit breaker gate (9:30 AM ET = 13:30 UTC)
@@ -235,7 +239,8 @@ Add these lines (all times are UTC — see DST table below):
 
 | Phase | Time (ET) | Script | Action |
 |-------|-----------|--------|--------|
-| 1 | 8:30 AM | `cron/tradebot_phase1.py` | Generates recommendations via Claude, sends Telegram notification |
+| 0 | 7:30 AM | `cron/tradebot_phase0.py` | Prefetches all external market data, caches for Phase 1. Zero LLM cost. |
+| 1 | 8:30 AM | `cron/tradebot_phase1.py` | Loads Phase 0 cache, runs Claude analysis + recommendations |
 | 1.5 | 9:30 AM | `cron/tradebot_phase1_5.py` | Circuit breaker — blocks buys that fail safety checks |
 | 2 | 9:35 AM | `cron/tradebot_phase2.py` | Confirms trades at opening prices via broker |
 | Intraday | 9:35 AM–3:55 PM | `cron/intraday_monitor.py` | Every 5 min — checks positions against triggers, calls Claude for exit decisions if any fire |
@@ -247,10 +252,10 @@ All scripts read `.env` from the project root automatically and send results via
 
 The cron jobs use UTC. US Eastern Time shifts twice a year:
 
-| Period | ET offset | Phase 1 (8:30 AM ET) | Phase 2 (9:45 AM ET) |
-|--------|-----------|----------------------|----------------------|
-| After DST (~Mar 8) | UTC-4 | `30 12 * * 1-5` | `45 13 * * 1-5` |
-| Before DST (~Nov 1) | UTC-5 | `30 13 * * 1-5` | `45 14 * * 1-5` |
+| Period | ET offset | Phase 0 (7:30 AM ET) | Phase 1 (8:30 AM ET) | Phase 2 (9:35 AM ET) |
+|--------|-----------|----------------------|----------------------|----------------------|
+| After DST (~Mar 8) | UTC-4 | `30 11 * * 1-5` | `30 12 * * 1-5` | `35 13 * * 1-5` |
+| Before DST (~Nov 1) | UTC-5 | `30 12 * * 1-5` | `30 13 * * 1-5` | `35 14 * * 1-5` |
 
 Update the crontab on the VM each time US clocks change.
 
