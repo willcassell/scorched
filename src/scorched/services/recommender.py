@@ -38,6 +38,26 @@ from .research import (
 
 logger = logging.getLogger(__name__)
 
+_CACHE_DIR = "/tmp"
+
+
+def _load_research_cache(session_date: date) -> dict | None:
+    """Load Phase 0 research cache for today. Returns None on miss or error."""
+    import os
+    cache_path = os.path.join(_CACHE_DIR, f"tradebot_research_cache_{session_date.isoformat()}.json")
+    if not os.path.exists(cache_path):
+        return None
+    try:
+        with open(cache_path) as f:
+            cache = json.load(f)
+        if cache.get("date") != session_date.isoformat():
+            logger.warning("Phase 0 cache date mismatch: %s != %s", cache.get("date"), session_date)
+            return None
+        return cache
+    except (json.JSONDecodeError, OSError, KeyError) as exc:
+        logger.warning("Phase 0 cache load failed: %s", exc)
+        return None
+
 
 async def _get_recent_sell(
     db: AsyncSession, symbol: str, as_of: date, days: int = 30
@@ -184,49 +204,70 @@ async def generate_recommendations(
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]
 
-    # Initialize Finnhub client (None if no API key)
-    finnhub_client = None
-    if settings.finnhub_api_key:
-        import finnhub
-        finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
+    # ── Try Phase 0 cache first, fall back to inline fetch ────────────────
+    cache = _load_research_cache(session_date)
 
-    # Run momentum screener first so screener_symbols is available for AV call and gather
-    screener_symbols = await fetch_momentum_screener(n=60, tracker=tracker)
-    logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
-    research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
-    logger.info("Total research universe: %d symbols", len(research_symbols))
+    if cache is not None:
+        logger.info("Phase 0 cache HIT — skipping data fetches (%d symbols, fetched at %s)",
+                     len(cache["research_symbols"]), cache["created_at"])
+        price_data = cache["price_data"]
+        news_data = cache["news_data"]
+        earnings_surprise = cache["earnings_surprise"]
+        insider_activity = cache["insider_activity"]
+        market_context = cache["market_context"]
+        fred_macro = cache["fred_macro"]
+        polygon_news = cache["polygon_news"]
+        av_technicals = cache["av_technicals"]
+        technicals = cache["technicals"]
+        analyst_consensus = cache["analyst_consensus"]
+        research_symbols = cache["research_symbols"]
+        screener_symbols = cache["screener_symbols"]
+    else:
+        logger.info("Phase 0 cache MISS — fetching data inline")
 
-    # Phase 1 parallel fetch — everything that doesn't depend on Claude's output
-    try:
-        (
-            price_data, news_data, earnings_surprise, insider_activity,
-            market_context, fred_macro, polygon_news, av_technicals
-        ) = await asyncio.wait_for(
-            asyncio.gather(
-                fetch_price_data(research_symbols, tracker=tracker),
-                fetch_news(research_symbols, tracker=tracker),
-                fetch_earnings_surprise(research_symbols, tracker=tracker),
-                fetch_edgar_insider(research_symbols, tracker=tracker),
-                fetch_market_context(session_date, research_symbols, tracker=tracker),
-                fetch_fred_macro(settings.fred_api_key, tracker=tracker),
-                fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker),
-                fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker),
-            ),
-            timeout=300,
+        # Initialize Finnhub client (None if no API key)
+        finnhub_client = None
+        if settings.finnhub_api_key:
+            import finnhub
+            finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
+
+        # Run momentum screener first so screener_symbols is available for AV call and gather
+        screener_symbols = await fetch_momentum_screener(n=20, tracker=tracker)
+        logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
+        research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
+        logger.info("Total research universe: %d symbols", len(research_symbols))
+
+        # Parallel data fetch
+        try:
+            (
+                price_data, news_data, earnings_surprise, insider_activity,
+                market_context, fred_macro, polygon_news, av_technicals
+            ) = await asyncio.wait_for(
+                asyncio.gather(
+                    fetch_price_data(research_symbols, tracker=tracker),
+                    fetch_news(research_symbols, tracker=tracker),
+                    fetch_earnings_surprise(research_symbols, tracker=tracker),
+                    fetch_edgar_insider(research_symbols, tracker=tracker),
+                    fetch_market_context(session_date, research_symbols, tracker=tracker),
+                    fetch_fred_macro(settings.fred_api_key, tracker=tracker),
+                    fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker),
+                    fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker),
+                ),
+                timeout=600,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Phase 1 parallel data fetch timed out after 600s")
+            raise
+
+        # Compute technical indicators from price history (pure math, no I/O)
+        technicals = compute_technicals(price_data)
+        logger.info("Computed technicals for %d symbols", len(technicals))
+
+        # Finnhub analyst consensus (sync SDK, run in executor)
+        analyst_consensus = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: fetch_analyst_consensus_sync(research_symbols, finnhub_client, tracker=tracker)
         )
-    except asyncio.TimeoutError:
-        logger.warning("Phase 1 parallel data fetch timed out after 300s — pipeline cannot proceed without data")
-        raise
-
-    # Compute technical indicators from price history (pure math, no I/O)
-    technicals = compute_technicals(price_data)
-    logger.info("Computed technicals for %d symbols", len(technicals))
-
-    # Finnhub analyst consensus (sync SDK, run in executor)
-    analyst_consensus = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: fetch_analyst_consensus_sync(research_symbols, finnhub_client, tracker=tracker)
-    )
-    logger.info("Fetched analyst consensus for %d symbols", len(analyst_consensus))
+        logger.info("Fetched analyst consensus for %d symbols", len(analyst_consensus))
 
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     portfolio_dict = {

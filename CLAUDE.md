@@ -37,11 +37,12 @@ FastAPI app (`src/scorched/main.py`) with two transports:
 - **REST** at `/api/v1/` — same logic via standard HTTP; cron jobs hit these endpoints directly
 
 The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator required:
-- `30 12 * * 1-5` UTC (8:30 AM ET) → Phase 1: POST `/api/v1/recommendations/generate`
-- `30 13 * * 1-5` UTC (9:30 AM ET) → Phase 1.5: Circuit breaker gate (`cron/tradebot_phase1_5.py`)
-- `35 13 * * 1-5` UTC (9:35 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec
-- `*/5 13-19 * * 1-5` UTC → Intraday: Position monitoring with trigger-based Claude exit evaluation (9:35 AM–3:55 PM ET, self-gates)
-- `02 20 * * 1-5` UTC (4:02 PM ET) → Phase 3: EOD summary + playbook update
+- `30 7 * * 1-5` ET (7:30 AM ET) → Phase 0: POST `/api/v1/research/prefetch` (data fetch, zero LLM cost)
+- `30 8 * * 1-5` ET (8:30 AM ET) → Phase 1: POST `/api/v1/recommendations/generate` (loads Phase 0 cache, Claude calls only)
+- `30 9 * * 1-5` ET (9:30 AM ET) → Phase 1.5: Circuit breaker gate (`cron/tradebot_phase1_5.py`)
+- `35 9 * * 1-5` ET (9:35 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec
+- `*/5 9-15 * * 1-5` ET → Intraday: Position monitoring with trigger-based Claude exit evaluation (9:35 AM–3:55 PM ET, self-gates)
+- `01 16 * * 1-5` ET (4:01 PM ET) → Phase 3: EOD summary + playbook update
 
 The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to mounted sub-apps. `mcp.session_manager.run()` is wired manually into FastAPI's own `lifespan` context manager. Don't break this.
 
@@ -53,7 +54,8 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 |------|------|
 | `src/scorched/main.py` | FastAPI app + MCP mount + lifespan wiring |
 | `src/scorched/mcp_tools.py` | 7 MCP tool definitions (FastMCP) |
-| `src/scorched/services/recommender.py` | Claude pipeline (4-call: analysis → decision → risk review → position mgmt), NYSE holiday check, recommendation cache |
+| `src/scorched/api/prefetch.py` | Phase 0: POST /api/v1/research/prefetch — fetches all external data, caches for Phase 1 |
+| `src/scorched/services/recommender.py` | Claude pipeline (4-call: analysis → decision → risk review → position mgmt), loads Phase 0 cache or falls back to inline fetch |
 | `src/scorched/services/research.py` | All data fetching: yfinance, FRED, Polygon, Alpha Vantage, EDGAR, Finnhub, momentum screener, options |
 | `src/scorched/services/technicals.py` | MACD, Bollinger Bands, MA crossover, support/resistance, volume profile calculations |
 | `src/scorched/services/finnhub_data.py` | Analyst consensus ratings and price targets from Finnhub |
@@ -69,6 +71,7 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/api_tracker.py` | API call tracking — sync recorder, health aggregation, cleanup |
 | `src/scorched/intraday.py` | Pure intraday trigger check functions |
 | `src/scorched/api/intraday.py` | POST /api/v1/intraday/evaluate — Claude exit evaluation + auto-sell |
+| `cron/tradebot_phase0.py` | Phase 0 cron: calls /api/v1/research/prefetch, sends timing via Telegram |
 | `cron/intraday_monitor.py` | Every 5 min position check during market hours |
 | `src/scorched/api/system.py` | System health endpoints: /system/health, /system/errors, /system/trend |
 | `src/scorched/models.py` | 8 SQLAlchemy ORM models (including ApiCallLog) |
