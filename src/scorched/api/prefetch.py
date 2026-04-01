@@ -84,21 +84,31 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
     logger.info("Phase 0: research universe = %d symbols", len(research_symbols))
 
-    # 2. Parallel data fetch
-    with _timed("parallel_fetch", timing):
-        (
-            price_data, news_data, earnings_surprise, insider_activity,
-            market_context, fred_macro, polygon_news, av_technicals
-        ) = await asyncio.gather(
-            fetch_price_data(research_symbols, tracker=tracker),
-            fetch_news(research_symbols, tracker=tracker),
-            fetch_earnings_surprise(research_symbols, tracker=tracker),
-            fetch_edgar_insider(research_symbols, tracker=tracker),
-            fetch_market_context(session_date, research_symbols, tracker=tracker),
-            fetch_fred_macro(settings.fred_api_key, tracker=tracker),
-            fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker),
-            fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker),
-        )
+    # 2. Parallel data fetch — each source timed individually
+    async def _timed_fetch(name, coro):
+        start = time.monotonic()
+        result = await coro
+        elapsed = time.monotonic() - start
+        timing[name] = round(elapsed, 1)
+        logger.info("Phase 0: %s completed in %.1fs", name, elapsed)
+        return result
+
+    parallel_start = time.monotonic()
+    (
+        price_data, news_data, earnings_surprise, insider_activity,
+        market_context, fred_macro, polygon_news, av_technicals
+    ) = await asyncio.gather(
+        _timed_fetch("price_data", fetch_price_data(research_symbols, tracker=tracker)),
+        _timed_fetch("news", fetch_news(research_symbols, tracker=tracker)),
+        _timed_fetch("earnings_surprise", fetch_earnings_surprise(research_symbols, tracker=tracker)),
+        _timed_fetch("edgar_insider", fetch_edgar_insider(research_symbols, tracker=tracker)),
+        _timed_fetch("market_context", fetch_market_context(session_date, research_symbols, tracker=tracker)),
+        _timed_fetch("fred_macro", fetch_fred_macro(settings.fred_api_key, tracker=tracker)),
+        _timed_fetch("polygon_news", fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker)),
+        _timed_fetch("av_technicals", fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker)),
+    )
+    timing["parallel_fetch_wall"] = round(time.monotonic() - parallel_start, 1)
+    logger.info("Phase 0: parallel_fetch wall time %.1fs", timing["parallel_fetch_wall"])
 
     # 3. Technicals (pure math, fast)
     with _timed("technicals", timing):
