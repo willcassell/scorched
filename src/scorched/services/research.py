@@ -71,6 +71,7 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
                 "eps_ttm": info.get("trailingEps"),
                 "short_ratio": info.get("shortRatio"),
                 "short_percent_float": info.get("shortPercentOfFloat"),
+                "company_name": info.get("shortName", ""),
                 "insider_buy_pct": None,  # populated separately
                 "history_close": [float(x) for x in hist["Close"].tolist()],
                 "history_volume": [float(x) for x in hist["Volume"].tolist()],

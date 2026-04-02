@@ -43,7 +43,7 @@ from .research import (
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = "/tmp"
+_CACHE_DIR = "/app/logs"
 
 
 def _load_research_cache(session_date: date) -> dict | None:

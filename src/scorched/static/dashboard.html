@@ -54,7 +54,7 @@
     display: flex;
     align-items: center;
     padding: 0 16px;
-    height: 36px;
+    height: 32px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     position: sticky;
@@ -71,7 +71,7 @@
     flex-shrink: 0;
   }
   .logo {
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--amber);
     letter-spacing: 0.18em;
@@ -106,7 +106,7 @@
   .nav-link {
     color: var(--text-dim);
     text-decoration: none;
-    font-size: 10px;
+    font-size: 9px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     padding: 6px 10px;
@@ -209,11 +209,10 @@
   .dashboard {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto auto auto;
     gap: 1px;
     background: var(--border);
-    min-height: calc(100vh - 39px);
-    align-items: start;
+    min-height: calc(100vh - 37px);
   }
 
   .panel {
@@ -266,7 +265,7 @@
   .hero-cell {
     flex: 1;
     background: var(--bg);
-    padding: 10px 14px;
+    padding: 8px 12px;
     min-width: 0;
   }
   .hero-cell.primary {
@@ -275,7 +274,7 @@
     border-right: 2px solid var(--amber-dim);
   }
   .hero-val {
-    font-size: 22px;
+    font-size: 19px;
     font-weight: 600;
     color: var(--text-hi);
     line-height: 1;
@@ -408,10 +407,16 @@
     margin-bottom: 4px;
   }
   .rec-symbol {
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-hi);
     letter-spacing: 0.05em;
+  }
+  .rec-company {
+    font-size: 10px;
+    font-weight: 300;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
   }
   .rec-badge {
     font-size: 10px;
@@ -486,7 +491,7 @@
     font-weight: 600;
   }
   .rc-name {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-dim);
     letter-spacing: 0.04em;
   }
@@ -496,7 +501,7 @@
     font-size: 12px;
   }
   .rc-ret {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -810,7 +815,6 @@
         <div class="hero-cell"><div class="skeleton sk-big" style="width:70%"></div></div>
         <div class="hero-cell"><div class="skeleton sk-big" style="width:70%"></div></div>
         <div class="hero-cell"><div class="skeleton sk-big" style="width:70%"></div></div>
-        <div class="hero-cell"><div class="skeleton sk-big" style="width:70%"></div></div>
       </div>
     </div>
   </div>
@@ -869,6 +873,45 @@
   'use strict';
 
   var API = '/api/v1';
+
+  // ---- Company name lookup for tooltips ----
+  var NAMES = {
+    AAPL:'Apple',MSFT:'Microsoft',NVDA:'NVIDIA',AMZN:'Amazon',GOOGL:'Alphabet',
+    META:'Meta Platforms',TSLA:'Tesla',AVGO:'Broadcom',ORCL:'Oracle',CRM:'Salesforce',
+    AMD:'AMD',NFLX:'Netflix',ADBE:'Adobe',NOW:'ServiceNow',PANW:'Palo Alto Networks',
+    CRWD:'CrowdStrike',DDOG:'Datadog',PLTR:'Palantir',JPM:'JPMorgan Chase',V:'Visa',
+    MA:'Mastercard',GS:'Goldman Sachs',BLK:'BlackRock',SPGI:'S&P Global',SCHW:'Charles Schwab',
+    ICE:'Intercontinental Exchange',UNH:'UnitedHealth',JNJ:'Johnson & Johnson',ABBV:'AbbVie',
+    LLY:'Eli Lilly',MRK:'Merck',PFE:'Pfizer',WMT:'Walmart',HD:'Home Depot',COST:'Costco',
+    PG:'Procter & Gamble',KO:'Coca-Cola',PEP:'PepsiCo',XOM:'Exxon Mobil',CVX:'Chevron',
+    COP:'ConocoPhillips',SLB:'Schlumberger',HAL:'Halliburton',OXY:'Occidental Petroleum',
+    BA:'Boeing',CAT:'Caterpillar',HON:'Honeywell',GE:'GE Aerospace',RTX:'RTX Corp',
+    DE:'Deere & Co',UBER:'Uber',DIS:'Disney',HOOD:'Robinhood',PYPL:'PayPal',
+    COIN:'Coinbase',NET:'Cloudflare',SNOW:'Snowflake',SHOP:'Shopify',
+    INTC:'Intel',QCOM:'Qualcomm',MU:'Micron',NXPI:'NXP Semi',TXN:'Texas Instruments',
+    ANET:'Arista Networks',TMO:'Thermo Fisher',ABT:'Abbott Labs',DHR:'Danaher',
+    BMY:'Bristol-Myers Squibb',AMGN:'Amgen',GILD:'Gilead Sciences',ISRG:'Intuitive Surgical',
+    VRTX:'Vertex Pharma',REGN:'Regeneron',MDT:'Medtronic',SYK:'Stryker',BSX:'Boston Scientific',
+    T:'AT&T',VZ:'Verizon',TMUS:'T-Mobile',LMT:'Lockheed Martin',NOC:'Northrop Grumman',
+    GD:'General Dynamics',UNP:'Union Pacific',UPS:'UPS',FDX:'FedEx',WM:'Waste Management',
+    LOW:'Lowe\'s',TGT:'Target',NKE:'Nike',SBUX:'Starbucks',MCD:'McDonald\'s',
+    MS:'Morgan Stanley',WFC:'Wells Fargo',BAC:'Bank of America',C:'Citigroup',
+    AXP:'American Express',CME:'CME Group',EOG:'EOG Resources',MPC:'Marathon Petroleum',
+    PSX:'Phillips 66',VLO:'Valero Energy',DVN:'Devon Energy',FANG:'Diamondback Energy',
+    NEE:'NextEra Energy',SO:'Southern Co',DUK:'Duke Energy',
+    SPY:'S&P 500 ETF',QQQ:'Nasdaq 100 ETF',RSP:'S&P Equal Wt ETF',
+    MTUM:'Momentum Factor ETF',SPMO:'S&P Momentum ETF',
+  };
+  function companyName(sym) { return NAMES[sym] || ''; }
+
+  // Fetch dynamic company names from Phase 0 cache and merge
+  apiFetch('/research/company-names').then(function(data) {
+    if (data && typeof data === 'object') {
+      Object.keys(data).forEach(function(sym) {
+        if (!NAMES[sym] && data[sym]) NAMES[sym] = data[sym];
+      });
+    }
+  }).catch(function() {});
 
   // ---- Safety: escape all API content before DOM insertion ----
   function esc(str) {
@@ -1024,41 +1067,39 @@
     c4.appendChild(k4);
     strip.appendChild(c4);
 
-    // Cash
+    // Allocation bar (Cash vs Invested)
     var c5 = document.createElement('div');
     c5.className = 'hero-cell';
-    var v5 = document.createElement('div');
-    v5.className = 'hero-val';
-    v5.textContent = fmt$(cash);
+    c5.style.minWidth = '140px';
     var k5 = document.createElement('div');
     k5.className = 'hero-key';
-    k5.textContent = 'CASH';
-    var cashPct = ((cash / totalVal) * 100).toFixed(0);
-    var s5 = document.createElement('div');
-    s5.className = 'hero-sub';
-    s5.textContent = cashPct + '% of portfolio';
-    c5.appendChild(v5);
+    k5.textContent = 'ALLOCATION';
     c5.appendChild(k5);
-    c5.appendChild(s5);
-    strip.appendChild(c5);
 
-    // Positions value
-    var c6 = document.createElement('div');
-    c6.className = 'hero-cell';
-    var v6 = document.createElement('div');
-    v6.className = 'hero-val';
-    v6.textContent = fmt$(posVal);
-    var k6 = document.createElement('div');
-    k6.className = 'hero-key';
-    k6.textContent = 'INVESTED';
-    var investedPct = ((posVal / totalVal) * 100).toFixed(0);
-    var s6 = document.createElement('div');
-    s6.className = 'hero-sub';
-    s6.textContent = investedPct + '% deployed';
-    c6.appendChild(v6);
-    c6.appendChild(k6);
-    c6.appendChild(s6);
-    strip.appendChild(c6);
+    var cashPct = totalVal > 0 ? ((cash / totalVal) * 100) : 0;
+    var investedPct = totalVal > 0 ? ((posVal / totalVal) * 100) : 0;
+
+    var barOuter = document.createElement('div');
+    barOuter.style.cssText = 'height:14px;background:var(--border);border-radius:2px;overflow:hidden;margin:6px 0 4px;display:flex';
+    var barInv = document.createElement('div');
+    barInv.style.cssText = 'height:100%;background:var(--amber);transition:width 0.6s';
+    barInv.style.width = investedPct.toFixed(0) + '%';
+    barOuter.appendChild(barInv);
+    c5.appendChild(barOuter);
+
+    var legend = document.createElement('div');
+    legend.style.cssText = 'display:flex;justify-content:space-between;font-size:10px;font-variant-numeric:tabular-nums';
+    var legInv = document.createElement('span');
+    legInv.style.color = 'var(--amber)';
+    legInv.textContent = fmt$(posVal) + ' invested (' + investedPct.toFixed(0) + '%)';
+    var legCash = document.createElement('span');
+    legCash.style.color = 'var(--text-dim)';
+    legCash.textContent = fmt$(cash) + ' cash (' + cashPct.toFixed(0) + '%)';
+    legend.appendChild(legInv);
+    legend.appendChild(legCash);
+    c5.appendChild(legend);
+
+    strip.appendChild(c5);
 
     el.textContent = '';
     el.appendChild(strip);
@@ -1266,6 +1307,14 @@
         var sym = document.createElement('span');
         sym.className = 'pos-symbol';
         sym.textContent = pos.symbol;
+        var pcn = companyName(pos.symbol);
+        if (pcn) {
+          sym.title = pcn;
+          var pcnSpan = document.createElement('span');
+          pcnSpan.style.cssText = 'font-size:11px;font-weight:300;color:var(--text-dim);margin-left:6px;letter-spacing:0.02em';
+          pcnSpan.textContent = pcn;
+          sym.appendChild(pcnSpan);
+        }
         var pnl = document.createElement('span');
         pnl.className = 'pos-pnl ' + gainCls(gain);
         pnl.textContent = fmtGain$(gain) + ' (' + fmtPct(pos.unrealized_gain_pct) + ')';
@@ -1503,6 +1552,15 @@
           var sym = document.createElement('span');
           sym.className = 'rec-symbol';
           sym.textContent = r.symbol;
+          var cn = companyName(r.symbol);
+          if (cn) {
+            sym.title = cn;
+            var cnSpan = document.createElement('span');
+            cnSpan.className = 'rec-company';
+            cnSpan.textContent = cn;
+            sym.appendChild(document.createTextNode(' '));
+            sym.appendChild(cnSpan);
+          }
           var badge = document.createElement('span');
           badge.className = 'rec-badge ' + r.action;
           badge.textContent = r.action.toUpperCase();

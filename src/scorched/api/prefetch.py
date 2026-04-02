@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/research", tags=["research"])
 
-CACHE_DIR = "/tmp"
+CACHE_DIR = "/app/logs"
 
 
 def cache_path_for_date(d: str) -> str:
@@ -212,3 +212,20 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "timing": timing,
         "cache_path": out_path,
     }
+
+
+@router.get("/company-names")
+async def get_company_names():
+    """Return symbol→company name map from the latest Phase 0 cache."""
+    from datetime import date as date_type
+    today = date_type.today().isoformat()
+    path = cache_path_for_date(today)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            cache = json.load(f)
+        price_data = cache.get("price_data", {})
+        return {sym: d.get("company_name", "") for sym, d in price_data.items() if d.get("company_name")}
+    except Exception:
+        return {}
