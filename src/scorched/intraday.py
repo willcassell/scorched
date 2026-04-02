@@ -10,6 +10,21 @@ from decimal import Decimal
 from .circuit_breaker import GateResult
 
 
+def check_trailing_stop_breach(
+    current_price: Decimal,
+    trailing_stop_price: Decimal | None,
+) -> GateResult:
+    """Fire if current price has breached the trailing stop."""
+    if trailing_stop_price is None:
+        return GateResult(passed=True)
+    if current_price < trailing_stop_price:
+        return GateResult(
+            passed=False,
+            reason=f"Trailing stop breached: price ${current_price} < stop ${trailing_stop_price}",
+        )
+    return GateResult(passed=True)
+
+
 def check_position_drop_from_entry(
     current_price: Decimal, entry_price: Decimal, threshold_pct: float
 ) -> GateResult:

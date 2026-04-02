@@ -36,6 +36,7 @@ from .research import (
     fetch_news,
     fetch_options_data,
     fetch_polygon_news,
+    fetch_premarket_prices,
     fetch_price_data,
     fetch_sector_returns,
 )
@@ -227,6 +228,7 @@ async def generate_recommendations(
         research_symbols = cache["research_symbols"]
         screener_symbols = cache["screener_symbols"]
         relative_strength = cache.get("relative_strength", {})
+        premarket_data = cache.get("premarket_data", {})
     else:
         logger.info("Phase 0 cache MISS — fetching data inline")
 
@@ -271,6 +273,7 @@ async def generate_recommendations(
         # Sector relative strength
         sector_returns = await fetch_sector_returns(tracker=tracker)
         relative_strength = compute_relative_strength(price_data, sector_returns)
+        premarket_data = await fetch_premarket_prices(research_symbols, tracker=tracker)
 
         # Finnhub analyst consensus (sync SDK, run in executor)
         analyst_consensus = await asyncio.get_running_loop().run_in_executor(
@@ -332,6 +335,7 @@ async def generate_recommendations(
         technicals=technicals,
         analyst_consensus=analyst_consensus,
         relative_strength=relative_strength,
+        premarket_data=premarket_data,
     )
 
     # Persist session row early so we have an ID for token_usage FK

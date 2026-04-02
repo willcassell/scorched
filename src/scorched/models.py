@@ -35,6 +35,8 @@ class Position(Base):
     shares: Mapped[Decimal] = mapped_column(Numeric(15, 6), nullable=False)
     avg_cost_basis: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
     first_purchase_date: Mapped[date] = mapped_column(Date, nullable=False)
+    trailing_stop_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
+    high_water_mark: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 

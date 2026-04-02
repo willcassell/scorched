@@ -94,6 +94,26 @@ def check_market_gate(
     return GateResult(passed=True)
 
 
+def check_gap_up_gate(
+    symbol: str,
+    current_price: Decimal,
+    prior_close: Decimal,
+    config: dict,
+) -> GateResult:
+    """Check whether a stock has gapped up excessively (potential chase risk)."""
+    if not config.get("enabled", True):
+        return GateResult(passed=True)
+    if prior_close > 0:
+        gap_up_pct = float((current_price - prior_close) / prior_close * 100)
+        threshold = config.get("stock_gap_up_pct", 5.0)
+        if gap_up_pct > threshold:
+            return GateResult(
+                passed=False,
+                reason=f"{symbol} gap_up {gap_up_pct:.1f}% from prior close (threshold: {threshold}%) — chase risk",
+            )
+    return GateResult(passed=True)
+
+
 async def fetch_gate_data(symbols: list[str]) -> dict:
     """Fetch live prices for circuit breaker checks via yfinance.
 

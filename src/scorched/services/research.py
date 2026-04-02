@@ -340,6 +340,62 @@ def _fetch_av_technicals_sync(symbols: list[str], api_key: str, tracker=None) ->
     return result
 
 
+def _fetch_premarket_prices_sync(symbols: list[str], tracker=None) -> dict[str, dict]:
+    """Fetch pre-market prices for symbols using yfinance prepost=True.
+
+    Returns {symbol: {"premarket_price": float, "premarket_change_pct": float,
+                       "prior_close": float, "has_premarket": bool}}
+    """
+    result = {}
+    if not symbols:
+        return result
+    empty = {"premarket_price": None, "premarket_change_pct": None, "has_premarket": False}
+    try:
+        with _api_ctx(tracker, "yfinance", "premarket"):
+            data = yf.download(
+                symbols if len(symbols) > 1 else symbols[0],
+                period="1d",
+                prepost=True,
+                interval="1m",
+                progress=False,
+                group_by="ticker" if len(symbols) > 1 else None,
+            )
+        if data.empty:
+            return {sym: dict(empty) for sym in symbols}
+
+        for sym in symbols:
+            try:
+                sym_data = data[sym] if len(symbols) > 1 and sym in data.columns.get_level_values(0) else data if len(symbols) == 1 else None
+                if sym_data is None or sym_data.empty:
+                    result[sym] = dict(empty)
+                    continue
+                closes = sym_data["Close"].dropna()
+                if closes.empty:
+                    result[sym] = dict(empty)
+                    continue
+                premarket_price = float(closes.iloc[-1])
+                try:
+                    ticker = yf.Ticker(sym)
+                    hist = ticker.history(period="2d", interval="1d")
+                    prior_close = float(hist["Close"].iloc[-1]) if len(hist) >= 1 else None
+                    change_pct = round((premarket_price - prior_close) / prior_close * 100, 2) if prior_close else None
+                except Exception:
+                    prior_close = None
+                    change_pct = None
+                result[sym] = {
+                    "premarket_price": round(premarket_price, 4),
+                    "premarket_change_pct": change_pct,
+                    "prior_close": prior_close,
+                    "has_premarket": True,
+                }
+            except Exception:
+                result[sym] = dict(empty)
+    except Exception:
+        logger.warning("Pre-market price download failed", exc_info=True)
+        return {sym: dict(empty) for sym in symbols}
+    return result
+
+
 def _fetch_options_data_sync(symbols: list[str], tracker=None) -> dict:
     """Return put/call ratio, IV rank proxy, and 30-day implied move for each symbol."""
     result = {}
@@ -753,6 +809,7 @@ def build_research_context(
     technicals: dict | None = None,
     analyst_consensus: dict | None = None,
     relative_strength: dict | None = None,
+    premarket_data: dict | None = None,
 ) -> str:
     # Pre-filter: score all symbols, keep top N + held positions
     all_symbols = list(price_data.keys())
@@ -831,6 +888,16 @@ def build_research_context(
             rs_str = f" | vs sector: {rs:+.1f}% ({rs_label})"
         lines.append(f"  Price: ${data['current_price']:.2f} | 1wk: {data['week_change_pct']:+.1f}% | 1mo: {data['month_change_pct']:+.1f}%{rs_str}")
         lines.append(f"  52w range: ${data['low_52w']:.2f} – ${data['high_52w']:.2f}")
+        if premarket_data and symbol in premarket_data:
+            pm = premarket_data[symbol]
+            if pm.get("has_premarket") and pm.get("premarket_price") is not None:
+                pm_change = pm.get("premarket_change_pct")
+                pm_str = f"  Pre-market: ${pm['premarket_price']:.2f}"
+                if pm_change is not None:
+                    pm_str += f" ({pm_change:+.1f}% from close)"
+                    if abs(pm_change) > 5:
+                        pm_str += " ⚠ GAP >5%"
+                lines.append(pm_str)
         if data.get("pe_ratio"):
             lines.append(f"  P/E: {data['pe_ratio']:.1f} | Fwd P/E: {data.get('forward_pe', 'n/a')}")
         if data.get("short_ratio") or data.get("short_percent_float"):
@@ -1092,6 +1159,11 @@ async def fetch_momentum_screener(n: int = 20, tracker=None) -> list[str]:
 async def fetch_sector_returns(tracker=None) -> dict[str, float]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: _fetch_sector_returns_sync(tracker=tracker))
+
+
+async def fetch_premarket_prices(symbols: list[str], tracker=None) -> dict:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _fetch_premarket_prices_sync(symbols, tracker=tracker))
 
 
 async def fetch_opening_prices(symbols: list[str], trade_date: date, tracker=None) -> dict[str, float | None]:

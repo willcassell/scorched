@@ -105,6 +105,8 @@ async def get_portfolio_state(db: AsyncSession) -> PortfolioResponse:
                 tax_category=tax_cat,
                 estimated_tax_on_gain=est_tax,
                 estimated_post_tax_gain=est_post_tax,
+                trailing_stop_price=pos.trailing_stop_price,
+                high_water_mark=pos.high_water_mark,
             )
         )
         total_positions_value += market_value
@@ -167,11 +169,14 @@ async def apply_buy(
     ).scalars().first()
 
     if pos is None:
+        initial_stop = (execution_price * Decimal("0.95")).quantize(Decimal("0.0001"))
         pos = Position(
             symbol=symbol,
             shares=shares,
             avg_cost_basis=execution_price,
             first_purchase_date=executed_at.date(),
+            high_water_mark=execution_price,
+            trailing_stop_price=initial_stop,
         )
         db.add(pos)
     else:

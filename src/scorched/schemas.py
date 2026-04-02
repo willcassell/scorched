@@ -92,6 +92,8 @@ class PositionWithPnL(BaseModel):
     tax_category: str  # 'short_term' | 'long_term'
     estimated_tax_on_gain: Decimal
     estimated_post_tax_gain: Decimal
+    trailing_stop_price: Decimal | None = None
+    high_water_mark: Decimal | None = None
 
 
 class PortfolioResponse(BaseModel):
@@ -177,6 +179,7 @@ class IntradayTriggerItem(BaseModel):
     days_held: int
     shares: Decimal
     original_reasoning: str = ""
+    atr: float | None = None
 
 
 class IntradayMarketContext(BaseModel):

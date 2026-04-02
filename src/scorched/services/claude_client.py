@@ -295,3 +295,20 @@ async def call_intraday_exit(user_content: str):
     )
 
     return response, response.content[0].text
+
+
+async def call_weekly_reflection(user_content: str):
+    """Weekly reflection — reviews past trades for learnings. Uses sonnet.
+
+    Returns (response, raw_text).
+    """
+    system_prompt = load_prompt("weekly_reflection")
+    response = await claude_call_with_retry(
+        _client(), "Weekly reflection",
+        model=MODEL,
+        max_tokens=2048,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    )
+
+    return response, response.content[0].text

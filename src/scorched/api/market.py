@@ -47,3 +47,12 @@ async def eod_review(
     from ..services.eod_review import run_eod_review
     review_date = date_cls.fromisoformat(date) if date else date_cls.today()
     return await run_eod_review(db, review_date)
+
+
+@router.post("/weekly-reflection", dependencies=[Depends(require_owner_pin)])
+async def weekly_reflection(db: AsyncSession = Depends(get_db)):
+    """Weekly trade reflection — reviews past week's trades for learnings.
+    Run Sunday evening to prepare for the next trading week.
+    """
+    from ..services.reflection import generate_weekly_reflection
+    return await generate_weekly_reflection(db)

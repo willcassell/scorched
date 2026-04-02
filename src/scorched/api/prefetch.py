@@ -27,6 +27,7 @@ from ..services.research import (
     fetch_momentum_screener,
     fetch_news,
     fetch_polygon_news,
+    fetch_premarket_prices,
     fetch_price_data,
     fetch_sector_returns,
 )
@@ -99,7 +100,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     parallel_start = time.monotonic()
     (
         price_data, news_data, earnings_surprise, insider_activity,
-        market_context, fred_macro, polygon_news, av_technicals, sector_returns
+        market_context, fred_macro, polygon_news, av_technicals, sector_returns,
+        premarket_data
     ) = await asyncio.gather(
         _timed_fetch("price_data", fetch_price_data(research_symbols, tracker=tracker)),
         _timed_fetch("news", fetch_news(research_symbols, tracker=tracker)),
@@ -110,6 +112,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         _timed_fetch("polygon_news", fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker)),
         _timed_fetch("av_technicals", fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker)),
         _timed_fetch("sector_returns", fetch_sector_returns(tracker=tracker)),
+        _timed_fetch("premarket", fetch_premarket_prices(research_symbols, tracker=tracker)),
     )
     timing["parallel_fetch_wall"] = round(time.monotonic() - parallel_start, 1)
     logger.info("Phase 0: parallel_fetch wall time %.1fs", timing["parallel_fetch_wall"])
@@ -175,6 +178,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "analyst_context": analyst_context,
         "sector_returns": sector_returns,
         "relative_strength": relative_strength,
+        "premarket_data": premarket_data,
     }
 
     # Atomic write
