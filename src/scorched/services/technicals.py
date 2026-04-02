@@ -160,6 +160,40 @@ def calc_ma_crossover(prices: list[float]) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Average True Range (ATR)
+# ---------------------------------------------------------------------------
+
+def calc_atr(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = 14,
+) -> Optional[dict]:
+    """14-day Average True Range for volatility-adjusted stop-loss guidance.
+
+    Returns None if fewer than ``period + 1`` data points.
+    """
+    if len(closes) < period + 1 or len(highs) < period + 1 or len(lows) < period + 1:
+        return None
+
+    true_ranges = []
+    for i in range(1, len(closes)):
+        h, l, pc = highs[i], lows[i], closes[i - 1]
+        true_ranges.append(max(h - l, abs(h - pc), abs(l - pc)))
+
+    # Use simple average for ATR
+    atr_vals = true_ranges[-(period):]
+    atr = float(np.mean(atr_vals))
+    current_price = closes[-1]
+    atr_pct = (atr / current_price * 100) if current_price > 0 else 0.0
+
+    return {
+        "atr": round(atr, 4),
+        "atr_pct": round(atr_pct, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Support / Resistance
 # ---------------------------------------------------------------------------
 
@@ -225,17 +259,20 @@ def compute_technicals(price_data: dict[str, dict]) -> dict[str, dict]:
     """Compute all technicals for multiple symbols.
 
     Args:
-        price_data: ``{symbol: {"history_close": [...], "history_volume": [...]}}``
+        price_data: ``{symbol: {"history_close": [...], "history_volume": [...],
+                        "history_high": [...], "history_low": [...]}}``
 
     Returns:
         ``{symbol: {"macd": {...}, "bollinger": {...}, "ma_crossover": {...},
-                     "support_resistance": {...}, "volume": {...}}}``
+                     "support_resistance": {...}, "volume": {...}, "atr": {...}}}``
     """
     results: dict[str, dict] = {}
 
     for symbol, data in price_data.items():
         closes = data.get("history_close", [])
         volumes = data.get("history_volume", [])
+        highs = data.get("history_high", [])
+        lows = data.get("history_low", [])
 
         results[symbol] = {
             "macd": calc_macd(closes),
@@ -243,6 +280,7 @@ def compute_technicals(price_data: dict[str, dict]) -> dict[str, dict]:
             "ma_crossover": calc_ma_crossover(closes),
             "support_resistance": calc_support_resistance(closes),
             "volume": calc_volume_profile(closes, volumes),
+            "atr": calc_atr(highs, lows, closes) if highs and lows else None,
         }
 
     return results

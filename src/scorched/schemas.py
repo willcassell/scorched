@@ -144,6 +144,7 @@ class BenchmarkResponse(BaseModel):
     portfolio_return_pct: float
     since_date: date      # Portfolio inception date (created_at)
     benchmarks: list[BenchmarkItem]
+    trade_metrics: dict = {}  # win_rate, profit_factor, avg_win, etc.
 
 
 # ── Sessions ───────────────────────────────────────────────────────────────────

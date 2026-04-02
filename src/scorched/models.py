@@ -19,6 +19,9 @@ class Portfolio(Base):
     spy_start_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
     qqq_start_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
     dji_start_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
+    rsp_start_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
+    mtum_start_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
+    spmo_start_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 

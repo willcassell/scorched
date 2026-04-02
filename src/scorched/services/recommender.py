@@ -24,6 +24,7 @@ from .research import (
     WATCHLIST,
     build_options_context,
     build_research_context,
+    compute_relative_strength,
     fetch_av_technicals,
     fetch_earnings_surprise,
     fetch_edgar_insider,
@@ -34,6 +35,7 @@ from .research import (
     fetch_options_data,
     fetch_polygon_news,
     fetch_price_data,
+    fetch_sector_returns,
 )
 
 logger = logging.getLogger(__name__)
@@ -222,6 +224,7 @@ async def generate_recommendations(
         analyst_consensus = cache["analyst_consensus"]
         research_symbols = cache["research_symbols"]
         screener_symbols = cache["screener_symbols"]
+        relative_strength = cache.get("relative_strength", {})
     else:
         logger.info("Phase 0 cache MISS — fetching data inline")
 
@@ -262,6 +265,10 @@ async def generate_recommendations(
         # Compute technical indicators from price history (pure math, no I/O)
         technicals = compute_technicals(price_data)
         logger.info("Computed technicals for %d symbols", len(technicals))
+
+        # Sector relative strength
+        sector_returns = await fetch_sector_returns(tracker=tracker)
+        relative_strength = compute_relative_strength(price_data, sector_returns)
 
         # Finnhub analyst consensus (sync SDK, run in executor)
         analyst_consensus = await asyncio.get_event_loop().run_in_executor(
@@ -310,6 +317,7 @@ async def generate_recommendations(
         av_technicals=av_technicals,
         technicals=technicals,
         analyst_consensus=analyst_consensus,
+        relative_strength=relative_strength,
     )
 
     # Persist session row early so we have an ID for token_usage FK
@@ -339,16 +347,20 @@ async def generate_recommendations(
         strategy, guidance, call1_user, tracker=tracker,
     )
 
-    # Record Call 1 token usage — API reports thinking tokens in usage object
+    # Record Call 1 token usage — with extended thinking, output_tokens includes
+    # both thinking and text tokens. Estimate split from actual text length.
     usage1 = call1_response.usage
+    text_tokens_est = len(analysis_text) // 4  # rough char-to-token ratio
+    total_output = usage1.output_tokens
+    thinking_tokens_est = max(0, total_output - text_tokens_est)
     await record_usage(
         db,
         session_id=session_row.id,
         call_type="analysis",
         model=MODEL,
         input_tokens=usage1.input_tokens,
-        output_tokens=usage1.output_tokens,
-        thinking_tokens=getattr(usage1, "thinking_tokens", 0),
+        output_tokens=text_tokens_est,
+        thinking_tokens=thinking_tokens_est,
     )
 
     # Store analysis text (thinking + analysis) on the session row

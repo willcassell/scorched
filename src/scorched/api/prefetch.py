@@ -13,10 +13,12 @@ from ..api_tracker import ApiCallTracker
 from ..config import settings
 from ..database import get_db
 from ..models import Position
+from .deps import require_owner_pin
 from ..services.finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from ..services.research import (
     WATCHLIST,
     build_research_context,
+    compute_relative_strength,
     fetch_av_technicals,
     fetch_earnings_surprise,
     fetch_edgar_insider,
@@ -26,6 +28,7 @@ from ..services.research import (
     fetch_news,
     fetch_polygon_news,
     fetch_price_data,
+    fetch_sector_returns,
 )
 from ..services.technicals import compute_technicals
 
@@ -55,7 +58,7 @@ def _timed(name: str, timing: dict):
     return _Timer()
 
 
-@router.post("/prefetch")
+@router.post("/prefetch", dependencies=[Depends(require_owner_pin)])
 async def prefetch_research(db: AsyncSession = Depends(get_db)):
     """Fetch all external research data and cache processed results.
 
@@ -96,7 +99,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     parallel_start = time.monotonic()
     (
         price_data, news_data, earnings_surprise, insider_activity,
-        market_context, fred_macro, polygon_news, av_technicals
+        market_context, fred_macro, polygon_news, av_technicals, sector_returns
     ) = await asyncio.gather(
         _timed_fetch("price_data", fetch_price_data(research_symbols, tracker=tracker)),
         _timed_fetch("news", fetch_news(research_symbols, tracker=tracker)),
@@ -106,14 +109,18 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         _timed_fetch("fred_macro", fetch_fred_macro(settings.fred_api_key, tracker=tracker)),
         _timed_fetch("polygon_news", fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker)),
         _timed_fetch("av_technicals", fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker)),
+        _timed_fetch("sector_returns", fetch_sector_returns(tracker=tracker)),
     )
     timing["parallel_fetch_wall"] = round(time.monotonic() - parallel_start, 1)
     logger.info("Phase 0: parallel_fetch wall time %.1fs", timing["parallel_fetch_wall"])
 
-    # 3. Technicals (pure math, fast)
+    # 3. Technicals + relative strength (pure math, fast)
     with _timed("technicals", timing):
         technicals = compute_technicals(price_data)
     logger.info("Phase 0: computed technicals for %d symbols", len(technicals))
+
+    relative_strength = compute_relative_strength(price_data, sector_returns)
+    logger.info("Phase 0: computed relative strength for %d symbols", len(relative_strength))
 
     # 4. Finnhub analyst consensus (sequential, rate-limited)
     finnhub_client = None
@@ -166,6 +173,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "technicals": technicals,
         "analyst_consensus": analyst_consensus,
         "analyst_context": analyst_context,
+        "sector_returns": sector_returns,
+        "relative_strength": relative_strength,
     }
 
     # Atomic write

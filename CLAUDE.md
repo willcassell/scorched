@@ -57,7 +57,7 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/api/prefetch.py` | Phase 0: POST /api/v1/research/prefetch — fetches all external data, caches for Phase 1 |
 | `src/scorched/services/recommender.py` | Claude pipeline (4-call: analysis → decision → risk review → position mgmt), loads Phase 0 cache or falls back to inline fetch |
 | `src/scorched/services/research.py` | All data fetching: yfinance, FRED, Polygon, Alpha Vantage, EDGAR, Finnhub, momentum screener, options |
-| `src/scorched/services/technicals.py` | MACD, Bollinger Bands, MA crossover, support/resistance, volume profile calculations |
+| `src/scorched/services/technicals.py` | MACD, Bollinger Bands, MA crossover, support/resistance, volume profile, ATR calculations |
 | `src/scorched/services/finnhub_data.py` | Analyst consensus ratings and price targets from Finnhub |
 | `src/scorched/services/risk_review.py` | Call 3: Adversarial risk committee review of recommendations |
 | `src/scorched/services/position_mgmt.py` | Call 4: EOD position management review and stop suggestions |
@@ -83,7 +83,7 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 
 ## Claude Pipeline (recommender.py)
 
-Four API calls per day, all using `claude-sonnet-4-6`:
+Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intraday exit use `claude-haiku-4-5-20251001`; playbook update uses `claude-sonnet-4-6` (was opus, switched for cost savings):
 
 **Call 1 — Analysis** (extended thinking, budget=16000 tokens):
 - System: `ANALYSIS_SYSTEM` — analyst persona, strategy injected
@@ -123,9 +123,10 @@ Four API calls per day, all using `claude-sonnet-4-6`:
 | Polygon.io | News headlines + article descriptions (paid tier provides full summaries) | `POLYGON_API_KEY` |
 | Alpha Vantage | RSI(14) for screener picks only (≤20 symbols, free tier = 25 calls/day) | `ALPHA_VANTAGE_API_KEY` |
 | Finnhub | Analyst consensus ratings, price targets, recommendation trends | `FINNHUB_API_KEY` |
-| SEC EDGAR | Form 4 insider buy/sell data (free, no key) | No |
-| Momentum screener | Top 30 S&P 500 members by 5-day momentum (price > 20d MA, volume > 1M) | No |
-| Technical analysis | MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile (computed from yfinance history) | No |
+| SEC EDGAR | Form 4 insider filing counts (free, no key; type unknown from API) | No |
+| Momentum screener | Top 20 S&P 500 by 5-day momentum (batch `yf.download()`, price > 20d MA, vol > 1M) | No |
+| Sector ETFs | 5-day returns for 11 sector ETFs (XLK, XLF, etc.) for relative strength calc | No |
+| Technical analysis | MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile, ATR (computed from yfinance history) | No |
 | Options (yfinance) | Put/call ratio, ATM IV, implied 30-day move — fetched only for candidates | No |
 
 ## Settings (config.py)
@@ -183,7 +184,12 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
 - **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
 - **Wash sale detection** — buys within 30 days of a same-symbol sell get a `⚠️ WASH SALE WARNING` prepended to `key_risks`.
-- **Model** is `claude-sonnet-4-6`. THINKING_BUDGET is 16000 tokens. Up to 7 Claude calls/day: analysis, decision, risk review, position mgmt, EOD review, playbook update, + intraday exit (only when triggered, typically 0).
+- **Models**: Calls 1-3 + playbook use `claude-sonnet-4-6`. EOD review + intraday exit use `claude-haiku-4-5-20251001`. THINKING_BUDGET is 16000 tokens. Up to 7 Claude calls/day: analysis, decision, risk review, position mgmt, EOD review, playbook update, + intraday exit (only when triggered, typically 0).
+- **Context pre-filter** — `build_research_context()` scores all symbols and only sends top 25 (plus held positions) to Claude, reducing context by ~50%. Scoring: momentum + news catalyst + technical alignment + volume + relative strength + insider activity.
+- **Relative strength** — each symbol's 5-day return is compared to its sector ETF return. Displayed as "vs sector: +X.X% (outperforming/underperforming)" in the research context.
+- **ATR** — 14-day Average True Range computed in technicals.py. Displayed as ATR: $X.XX (Y.Y%) for volatility-adjusted stop guidance.
+- **Endpoint auth** — all POST/PUT mutation endpoints require `X-Owner-Pin` header when `SETTINGS_PIN` is set. Cron scripts pass it automatically via `common.py:http_post()`.
+- **Benchmarks** — portfolio return compared against SPY, QQQ, RSP (equal weight), MTUM (momentum factor), SPMO (S&P momentum). DJI was removed. Trade performance metrics (win rate, profit factor, expectancy, max drawdown, avg holding period) computed from TradeHistory.
 
 ## Environment
 

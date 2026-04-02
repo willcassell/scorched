@@ -38,14 +38,14 @@ def build_risk_review_prompt(
         )
 
     if analysis_text:
-        truncated_analysis = analysis_text[:800]
-        if len(analysis_text) > 800:
+        truncated_analysis = analysis_text[:3000]
+        if len(analysis_text) > 3000:
             truncated_analysis += "..."
         lines.append(f"\n## Today's Analysis Summary\n{truncated_analysis}")
 
     if playbook_excerpt:
-        truncated_playbook = playbook_excerpt[:500]
-        if len(playbook_excerpt) > 500:
+        truncated_playbook = playbook_excerpt[:1500]
+        if len(playbook_excerpt) > 1500:
             truncated_playbook += "..."
         lines.append(f"\n## Recent Playbook Learnings\n{truncated_playbook}")
 

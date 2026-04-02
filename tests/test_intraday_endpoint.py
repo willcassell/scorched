@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from scorched.main import app
 from scorched.database import get_db
+from scorched.api.deps import require_owner_pin
 
 
 @pytest.fixture
@@ -17,6 +18,7 @@ def _override_db(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[require_owner_pin] = lambda: None
     yield
     app.dependency_overrides.clear()
 

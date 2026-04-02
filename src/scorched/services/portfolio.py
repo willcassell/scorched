@@ -313,10 +313,15 @@ async def apply_sell(
 _BENCHMARKS = [
     ("SPY", "S&P 500"),
     ("QQQ", "Nasdaq 100"),
-    ("^DJI", "Dow Jones"),
+    ("RSP", "S&P 500 Equal Wt"),
+    ("MTUM", "Momentum Factor"),
+    ("SPMO", "S&P 500 Momentum"),
 ]
 # Maps each benchmark symbol to the Portfolio column that stores its inception price.
-_BENCHMARK_COLUMNS = ["spy_start_price", "qqq_start_price", "dji_start_price"]
+_BENCHMARK_COLUMNS = [
+    "spy_start_price", "qqq_start_price", "rsp_start_price",
+    "mtum_start_price", "spmo_start_price",
+]
 
 
 async def get_benchmark_comparison(db: AsyncSession) -> BenchmarkResponse:
@@ -377,10 +382,94 @@ async def get_benchmark_comparison(db: AsyncSession) -> BenchmarkResponse:
             beats_portfolio=ret > portfolio_return_pct,
         ))
 
+    # ── Trade performance metrics ────────────────────────────────────────
+    sell_trades = (
+        await db.execute(select(TradeHistory).where(TradeHistory.action == "sell"))
+    ).scalars().all()
+
+    trade_metrics = {}
+    if sell_trades:
+        gains = [float(t.realized_gain) for t in sell_trades if t.realized_gain is not None]
+        wins = [g for g in gains if g > 0]
+        losses = [g for g in gains if g < 0]
+
+        total_closed = len(gains)
+        win_count = len(wins)
+        loss_count = len(losses)
+        win_rate = round(win_count / total_closed * 100, 1) if total_closed else 0
+
+        avg_win = round(sum(wins) / win_count, 2) if wins else 0
+        avg_loss = round(sum(losses) / loss_count, 2) if losses else 0
+        profit_factor = round(sum(wins) / abs(sum(losses)), 2) if losses and sum(losses) != 0 else None
+
+        # Expectancy = (win% * avg_win) + (loss% * avg_loss)
+        win_pct = win_count / total_closed if total_closed else 0
+        loss_pct = loss_count / total_closed if total_closed else 0
+        expectancy = round(win_pct * avg_win + loss_pct * avg_loss, 2) if total_closed else 0
+
+        # Average holding period (for sells that have a matching buy)
+        holding_days = []
+        buy_trades = (
+            await db.execute(select(TradeHistory).where(TradeHistory.action == "buy"))
+        ).scalars().all()
+        buy_dates = {}
+        for bt in buy_trades:
+            buy_dates.setdefault(bt.symbol, []).append(bt.executed_at)
+        for st in sell_trades:
+            sym_buys = buy_dates.get(st.symbol, [])
+            if sym_buys:
+                # Use the earliest buy before this sell
+                relevant = [b for b in sym_buys if b <= st.executed_at]
+                if relevant:
+                    held = (st.executed_at - relevant[0]).days
+                    holding_days.append(held)
+
+        avg_holding_days = round(sum(holding_days) / len(holding_days), 1) if holding_days else None
+
+        # Max drawdown — approximate from trade-by-trade cumulative P&L
+        sorted_sells = sorted(sell_trades, key=lambda t: t.executed_at)
+        cum_pnl = 0.0
+        peak = 0.0
+        max_dd = 0.0
+        for t in sorted_sells:
+            if t.realized_gain is not None:
+                cum_pnl += float(t.realized_gain)
+            if cum_pnl > peak:
+                peak = cum_pnl
+            dd = peak - cum_pnl
+            if dd > max_dd:
+                max_dd = dd
+        max_drawdown = round(max_dd, 2)
+
+        # Max consecutive losses
+        max_consec_losses = 0
+        current_streak = 0
+        for g in [float(t.realized_gain) for t in sorted_sells if t.realized_gain is not None]:
+            if g < 0:
+                current_streak += 1
+                max_consec_losses = max(max_consec_losses, current_streak)
+            else:
+                current_streak = 0
+
+        trade_metrics = {
+            "total_closed": total_closed,
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "win_rate": win_rate,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "profit_factor": profit_factor,
+            "expectancy": expectancy,
+            "avg_holding_days": avg_holding_days,
+            "max_drawdown": max_drawdown,
+            "max_consecutive_losses": max_consec_losses,
+        }
+
     return BenchmarkResponse(
         portfolio_return_pct=portfolio_return_pct,
         since_date=since_date,
         benchmarks=benchmarks,
+        trade_metrics=trade_metrics,
     )
 
 

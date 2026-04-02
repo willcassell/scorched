@@ -159,6 +159,9 @@ async def call_position_review(user_content: str):
     return response, response.content[0].text
 
 
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+
+
 async def call_eod_review(user_content: str):
     """EOD review: distill learnings and update the playbook.
 
@@ -167,7 +170,7 @@ async def call_eod_review(user_content: str):
     system_prompt = load_prompt("eod_review")
     response = await claude_call_with_retry(
         _client(), "EOD review",
-        model=MODEL,
+        model=HAIKU_MODEL,
         max_tokens=2048,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
@@ -185,7 +188,7 @@ async def call_playbook_update(user_content: str):
     system_prompt = load_prompt("playbook_update")
     response = await claude_call_with_retry(
         _client(), "Playbook update",
-        model="claude-opus-4-6",
+        model=MODEL,
         max_tokens=2048,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
@@ -203,7 +206,7 @@ async def call_intraday_exit(user_content: str):
     logger.info("Intraday exit evaluation call")
     response = await claude_call_with_retry(
         _client(), "Intraday exit",
-        model=MODEL,
+        model=HAIKU_MODEL,
         max_tokens=512,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],

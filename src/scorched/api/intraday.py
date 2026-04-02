@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .deps import require_owner_pin
+
 from ..broker import get_broker
 from ..cost import record_usage
 from ..database import get_db
@@ -108,7 +110,7 @@ def _build_exit_prompt(trigger, market_ctx) -> str:
     return "\n".join(lines)
 
 
-@router.post("/evaluate", response_model=IntradayEvaluateResponse)
+@router.post("/evaluate", response_model=IntradayEvaluateResponse, dependencies=[Depends(require_owner_pin)])
 async def evaluate_triggers(
     body: IntradayEvaluateRequest,
     db: AsyncSession = Depends(get_db),

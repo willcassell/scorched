@@ -75,6 +75,8 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
                 "insider_buy_pct": None,  # populated separately
                 "history_close": [float(x) for x in hist["Close"].tolist()],
                 "history_volume": [float(x) for x in hist["Volume"].tolist()],
+                "history_high": [float(x) for x in hist["High"].tolist()],
+                "history_low": [float(x) for x in hist["Low"].tolist()],
             }
         except Exception:
             logger.warning("Price data fetch failed for %s", symbol, exc_info=True)
@@ -226,10 +228,10 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30, tracker=N
                 except (ValueError, TypeError):
                     continue
 
-            # Form 4 filings indicate insider transactions — we report the count
-            # since the submissions API doesn't break down buy vs sell in metadata.
-            # Any recent Form 4 activity is a useful signal for Claude.
-            result[symbol] = {"recent_buys": form4_count, "recent_sells": 0}
+            # Form 4 filings indicate insider transactions — the submissions API
+            # doesn't break down buy vs sell in its metadata, so we report total
+            # filing count and let Claude know the type is unknown.
+            result[symbol] = {"form4_filings": form4_count, "recent_buys": 0, "recent_sells": 0}
         except Exception:
             logger.warning("EDGAR insider fetch failed for %s, falling back to yfinance", symbol, exc_info=True)
             # Fallback: yfinance
@@ -602,27 +604,48 @@ def _fetch_momentum_screener_sync(n: int = 20, tracker=None) -> list[str]:
       - Price > 20-day moving average
       - Average daily volume > 1M shares
       - Ranked by 5-day price momentum (top n)
-    Uses a hardcoded S&P 500 pool to avoid external HTTP calls for index composition.
+    Uses batch yf.download() for speed (~10s vs 3-7 min for per-symbol fetches).
     Falls back to [] on any error.
     """
+    screen_symbols = [s for s in _SP500_POOL if s not in WATCHLIST]
+    if not screen_symbols:
+        return []
+
+    try:
+        with _api_ctx(tracker, "yfinance", "screener_batch", "SP500"):
+            df = yf.download(
+                screen_symbols,
+                period="3mo",
+                interval="1d",
+                progress=False,
+                group_by="ticker",
+                threads=True,
+            )
+    except Exception:
+        logger.warning("Batch screener download failed", exc_info=True)
+        return []
+
     candidates = []
-    for symbol in _SP500_POOL:
-        if symbol in WATCHLIST:
-            continue
+    for symbol in screen_symbols:
         try:
-            ticker = yf.Ticker(symbol)
-            with _api_ctx(tracker, "yfinance", "screener", symbol):
-                hist = ticker.history(period="3mo", interval="1d")
-            if hist.empty or len(hist) < 25:
+            # yf.download with group_by="ticker" returns MultiIndex: (ticker, field)
+            if len(screen_symbols) == 1:
+                sym_close = df["Close"]
+                sym_vol = df["Volume"]
+            else:
+                sym_close = df[(symbol, "Close")].dropna()
+                sym_vol = df[(symbol, "Volume")].dropna()
+
+            if len(sym_close) < 25:
                 continue
-            current = float(hist["Close"].iloc[-1])
-            ma20 = float(hist["Close"].tail(20).mean())
-            avg_vol = float(hist["Volume"].tail(20).mean())
-            momentum_5d = (current - float(hist["Close"].iloc[-6])) / float(hist["Close"].iloc[-6]) * 100
+            current = float(sym_close.iloc[-1])
+            ma20 = float(sym_close.tail(20).mean())
+            avg_vol = float(sym_vol.tail(20).mean())
+            momentum_5d = (current - float(sym_close.iloc[-6])) / float(sym_close.iloc[-6]) * 100
             if current > ma20 and avg_vol > 1_000_000:
                 candidates.append((symbol, momentum_5d))
         except Exception:
-            logger.debug("Screener: skipping %s (data fetch failed)", symbol)
+            logger.debug("Screener: skipping %s (data extraction failed)", symbol)
             continue
 
     candidates.sort(key=lambda x: x[1], reverse=True)
@@ -666,6 +689,60 @@ _FRED_EXTRA_LABELS = {
 }
 
 
+def _score_symbol(symbol: str, price_data: dict, news_data: dict, polygon_news: dict | None,
+                   technicals: dict | None, insider_activity: dict | None,
+                   relative_strength: dict | None) -> float:
+    """Score a symbol for relevance. Higher = more interesting for LLM review."""
+    score = 0.0
+    data = price_data.get(symbol, {})
+
+    # Momentum: reward 3-8% weekly moves (sweet spot for strategy)
+    wk = abs(data.get("week_change_pct", 0))
+    if 3 <= wk <= 8:
+        score += 3.0
+    elif wk > 1:
+        score += 1.0
+
+    # News catalyst: symbols with news get a boost
+    poly = (polygon_news or {}).get(symbol, [])
+    yf_news = news_data.get(symbol, [])
+    if poly:
+        score += 2.0
+    elif yf_news:
+        score += 1.0
+
+    # Technical alignment: MACD bullish or golden cross
+    t = (technicals or {}).get(symbol, {})
+    macd = t.get("macd", {})
+    if macd and macd.get("signal") == "bullish":
+        score += 1.5
+    ma = t.get("ma_crossover", {})
+    if ma and ma.get("signal") in ("golden_cross", "above_both"):
+        score += 1.0
+
+    # Volume confirmation
+    vol = t.get("volume", {})
+    if vol and vol.get("signal") == "high_volume":
+        score += 1.0
+
+    # Relative strength vs sector
+    rs = (relative_strength or {}).get(symbol)
+    if rs is not None and rs > 2.0:
+        score += 1.5
+    elif rs is not None and rs > 0:
+        score += 0.5
+
+    # Insider activity
+    ia = (insider_activity or {}).get(symbol, {})
+    if ia.get("form4_filings", 0) > 0 or ia.get("recent_buys", 0) > 0:
+        score += 0.5
+
+    return score
+
+
+MAX_CONTEXT_SYMBOLS = 25  # top N non-held symbols to include in LLM context
+
+
 def build_research_context(
     portfolio_dict: dict,
     price_data: dict,
@@ -678,7 +755,25 @@ def build_research_context(
     av_technicals: dict | None = None,
     technicals: dict | None = None,
     analyst_consensus: dict | None = None,
+    relative_strength: dict | None = None,
 ) -> str:
+    # Pre-filter: score all symbols, keep top N + held positions
+    all_symbols = list(price_data.keys())
+    held_set = set(current_symbols)
+    non_held = [s for s in all_symbols if s not in held_set]
+
+    scores = {s: _score_symbol(s, price_data, news_data, polygon_news,
+                                technicals, insider_activity, relative_strength)
+              for s in non_held}
+    top_non_held = sorted(scores, key=scores.get, reverse=True)[:MAX_CONTEXT_SYMBOLS]
+    filtered_symbols = set(current_symbols) | set(top_non_held)
+
+    # Filter price_data to only include relevant symbols
+    filtered_price_data = {s: d for s, d in price_data.items() if s in filtered_symbols}
+
+    logger.info("Pre-filter: %d total → %d symbols (%d held + %d top-scored)",
+                len(all_symbols), len(filtered_symbols), len(held_set), len(top_non_held))
+
     lines = []
 
     # FRED macro section
@@ -726,13 +821,18 @@ def build_research_context(
             )
     lines.append("")
 
-    # Per-stock data
-    lines.append("=== WATCHLIST DATA ===")
-    for symbol, data in sorted(price_data.items()):
+    # Per-stock data (pre-filtered to top candidates + held positions)
+    lines.append(f"=== WATCHLIST DATA ({len(filtered_price_data)} symbols, filtered from {len(price_data)}) ===")
+    for symbol, data in sorted(filtered_price_data.items()):
         is_held = symbol in current_symbols
         held_marker = " [HELD]" if is_held else ""
         lines.append(f"\n{symbol}{held_marker}:")
-        lines.append(f"  Price: ${data['current_price']:.2f} | 1wk: {data['week_change_pct']:+.1f}% | 1mo: {data['month_change_pct']:+.1f}%")
+        rs_str = ""
+        if relative_strength and symbol in relative_strength and relative_strength[symbol] is not None:
+            rs = relative_strength[symbol]
+            rs_label = "outperforming" if rs > 0 else "underperforming"
+            rs_str = f" | vs sector: {rs:+.1f}% ({rs_label})"
+        lines.append(f"  Price: ${data['current_price']:.2f} | 1wk: {data['week_change_pct']:+.1f}% | 1mo: {data['month_change_pct']:+.1f}%{rs_str}")
         lines.append(f"  52w range: ${data['low_52w']:.2f} – ${data['high_52w']:.2f}")
         if data.get("pe_ratio"):
             lines.append(f"  P/E: {data['pe_ratio']:.1f} | Fwd P/E: {data.get('forward_pe', 'n/a')}")
@@ -750,7 +850,10 @@ def build_research_context(
         # Insider activity
         if insider_activity and symbol in insider_activity:
             ia = insider_activity[symbol]
-            if ia["recent_buys"] > 0 or ia["recent_sells"] > 0:
+            form4s = ia.get("form4_filings", 0)
+            if form4s > 0:
+                lines.append(f"  Insider: {form4s} Form 4 filing(s) in last 30d (transaction type unknown from EDGAR)")
+            elif ia["recent_buys"] > 0 or ia["recent_sells"] > 0:
                 lines.append(f"  Insider: {ia['recent_buys']:,} shares bought, {ia['recent_sells']:,} shares sold (recent)")
 
         # RSI from Alpha Vantage (screener picks only)
@@ -777,6 +880,9 @@ def build_research_context(
             if "volume" in t:
                 v = t["volume"]
                 ta_parts.append(f"Vol: {v['signal'].upper()} (rel={v['relative_volume']:.1f}x)")
+            if t.get("atr"):
+                a = t["atr"]
+                ta_parts.append(f"ATR: ${a['atr']:.2f} ({a['atr_pct']:.1f}%)")
             if ta_parts:
                 lines.append(f"  Technicals: {' | '.join(ta_parts)}")
 
@@ -831,6 +937,102 @@ def build_options_context(options_data: dict) -> str:
         lines.append(f"  Implied 30d move: ±{data['implied_30d_move_pct'] or 'n/a'}%")
         lines.append(f"  (expiry used: {data['expiration_used']})")
     return "\n".join(lines)
+
+
+# ── Sector relative strength ────────────────────────────────────────────────
+
+# Map symbols to sector ETFs for relative strength calculation
+_SECTOR_ETF_MAP = {
+    # Tech
+    **{s: "XLK" for s in ["AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "AMD", "ADBE",
+                           "NOW", "PANW", "CRWD", "DDOG", "PLTR", "INTC", "QCOM", "MU",
+                           "NXPI", "KLAC", "LRCX", "MCHP", "SNPS", "CDNS", "FTNT", "TXN",
+                           "ANET", "FICO", "IT", "KEYS"]},
+    # Communication Services
+    **{s: "XLC" for s in ["GOOGL", "META", "NFLX", "DIS", "TMUS", "T", "VZ", "EA",
+                           "TTWO", "WBD", "PARA", "FOX", "FOXA", "MTCH", "LYV", "NWSA"]},
+    # Consumer Discretionary
+    **{s: "XLY" for s in ["AMZN", "TSLA", "HD", "COST", "WMT", "TJX", "NKE", "SBUX",
+                           "LOW", "TGT", "ROST", "LULU", "DHI", "LEN", "GM", "F",
+                           "UBER", "HOOD", "SHOP", "PYPL", "EBAY", "BKNG", "MAR", "HLT"]},
+    # Financials
+    **{s: "XLF" for s in ["JPM", "V", "MA", "GS", "BLK", "SPGI", "SCHW", "ICE",
+                           "MS", "WFC", "BAC", "C", "AXP", "BRK-B", "PNC", "USB",
+                           "CME", "MCO", "MMC", "AIG", "MET", "PRU", "TFC", "KKR"]},
+    # Healthcare
+    **{s: "XLV" for s in ["UNH", "JNJ", "ABBV", "LLY", "MRK", "PFE", "TMO", "ABT",
+                           "DHR", "BMY", "AMGN", "GILD", "ISRG", "VRTX", "REGN", "MDT",
+                           "SYK", "BSX", "EW", "HCA", "CI", "HUM", "MCK", "CAH"]},
+    # Energy
+    **{s: "XLE" for s in ["XOM", "CVX", "COP", "SLB", "HAL", "OXY", "EOG", "MPC",
+                           "PSX", "VLO", "DVN", "FANG", "HES", "OKE", "WMB", "KMI"]},
+    # Industrials
+    **{s: "XLI" for s in ["BA", "CAT", "HON", "GE", "RTX", "DE", "UNP", "UPS",
+                           "LMT", "NOC", "GD", "MMM", "EMR", "ETN", "ITW", "PH",
+                           "FDX", "CSX", "NSC", "WM", "RSG", "URI", "IR", "TT"]},
+    # Real Estate
+    **{s: "XLRE" for s in ["PLD", "AMT", "CCI", "EQIX", "SPG", "O", "DLR", "PSA",
+                            "WELL", "EQR", "AVB", "MAA", "UDR", "VTR", "IRM"]},
+    # Utilities
+    **{s: "XLU" for s in ["NEE", "SO", "DUK", "D", "AEP", "EXC", "SRE", "PCG",
+                           "ED", "WEC", "ES", "XEL", "PEG", "EIX", "DTE", "ETR"]},
+    # Materials
+    **{s: "XLB" for s in ["LIN", "APD", "SHW", "ECL", "FCX", "NEM", "NUE", "VMC",
+                           "MLM", "DOW", "DD", "PPG", "IP", "FMC", "CF", "MOS"]},
+    # Consumer Staples
+    **{s: "XLP" for s in ["PG", "KO", "PEP", "PM", "MO", "CL", "MDLZ", "KHC",
+                           "GIS", "SYY", "HSY", "K", "KDP", "STZ", "MKC", "CLX"]},
+    # Catch-all: COIN, NET, SNOW mapped to broad market
+    **{s: "SPY" for s in ["COIN", "NET", "SNOW"]},
+}
+
+_SECTOR_ETFS = sorted(set(_SECTOR_ETF_MAP.values()))
+
+
+def _fetch_sector_returns_sync(tracker=None) -> dict[str, float]:
+    """Fetch 5-day returns for all sector ETFs. Returns {etf: pct_return}."""
+    result = {}
+    try:
+        with _api_ctx(tracker, "yfinance", "sector_etfs", "batch"):
+            df = yf.download(
+                _SECTOR_ETFS,
+                period="10d",
+                interval="1d",
+                progress=False,
+                group_by="ticker",
+                threads=True,
+            )
+        for etf in _SECTOR_ETFS:
+            try:
+                if len(_SECTOR_ETFS) == 1:
+                    closes = df["Close"].dropna()
+                else:
+                    closes = df[(etf, "Close")].dropna()
+                if len(closes) >= 5:
+                    current = float(closes.iloc[-1])
+                    five_ago = float(closes.iloc[-5])
+                    result[etf] = round((current - five_ago) / five_ago * 100, 2)
+            except Exception:
+                continue
+    except Exception:
+        logger.warning("Sector ETF batch download failed", exc_info=True)
+    return result
+
+
+def compute_relative_strength(price_data: dict, sector_returns: dict) -> dict[str, float | None]:
+    """Compute relative strength: stock 5d return minus sector ETF 5d return.
+
+    Positive = outperforming sector. Negative = underperforming.
+    """
+    result = {}
+    for symbol, data in price_data.items():
+        stock_return = data.get("week_change_pct", 0)
+        etf = _SECTOR_ETF_MAP.get(symbol)
+        if etf and etf in sector_returns:
+            result[symbol] = round(stock_return - sector_returns[etf], 2)
+        else:
+            result[symbol] = None
+    return result
 
 
 # ── Async wrappers ──────────────────────────────────────────────────────────
@@ -888,6 +1090,11 @@ async def fetch_av_technicals(symbols: list[str], api_key: str, tracker=None) ->
 async def fetch_momentum_screener(n: int = 20, tracker=None) -> list[str]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, lambda: _fetch_momentum_screener_sync(n, tracker=tracker))
+
+
+async def fetch_sector_returns(tracker=None) -> dict[str, float]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: _fetch_sector_returns_sync(tracker=tracker))
 
 
 async def fetch_opening_prices(symbols: list[str], trade_date: date, tracker=None) -> dict[str, float | None]:

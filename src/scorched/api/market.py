@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..services.research import fetch_market_eod, fetch_opening_prices
+from .deps import require_owner_pin
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -33,7 +34,7 @@ async def eod_summary(
     return {"date": target_date.isoformat(), **result}
 
 
-@router.post("/eod-review")
+@router.post("/eod-review", dependencies=[Depends(require_owner_pin)])
 async def eod_review(
     date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD). Defaults to today."),
     db: AsyncSession = Depends(get_db),
