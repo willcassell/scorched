@@ -148,6 +148,10 @@ DEFAULT_JSON = {
     "sectors": ["no_preference"],
     "rec_explanation": "standard",
     "notes": "",
+    "drawdown_gate": {
+        "enabled": True,
+        "max_drawdown_pct": 8.0,
+    },
 }
 
 

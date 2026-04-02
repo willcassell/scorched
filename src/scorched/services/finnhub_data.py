@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import time
+
+from ..http_retry import retry_call
 from contextlib import nullcontext
 from typing import Any
 
@@ -67,7 +69,10 @@ def fetch_analyst_consensus_sync(
             # Note: price_target endpoint requires paid Finnhub plan (403 on free tier)
             try:
                 with _api_ctx(tracker, "finnhub", "recommendation_trends", symbol):
-                    trends = client.recommendation_trends(symbol)
+                    trends = retry_call(
+                        client.recommendation_trends, symbol,
+                        label=f"Finnhub {symbol}",
+                    )
                 if trends:
                     latest = trends[0]
                     data["strong_buy"] = _get_val(latest, "strong_buy", "strongBuy")

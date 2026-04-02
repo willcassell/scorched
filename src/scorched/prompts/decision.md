@@ -16,6 +16,34 @@ This is what the human investor wants. Follow it precisely — it overrides your
 - Follow both the strategy above AND the playbook below
 - If a trade would violate the declared strategy (wrong time horizon, wrong sector, wrong exit discipline), do not make it
 
+## Examples
+
+### Example 1: A trading day with one buy recommendation
+```
+{{
+  "research_summary": "Broad market consolidating after last week's rally. CRWD stands out with a 12% earnings beat reported after yesterday's close, strong guidance raise, and a technical breakout above $380 resistance on 3x average volume. No compelling sells today — existing positions are within strategy parameters.",
+  "recommendations": [
+    {{
+      "symbol": "CRWD",
+      "action": "buy",
+      "suggested_price": 385.20,
+      "quantity": 25,
+      "reasoning": "Post-earnings breakout above $380 resistance on 3x volume. 12% EPS beat with raised FY guidance. MACD bullish crossover confirmed. Fits momentum entry criteria with concrete catalyst.",
+      "confidence": "high",
+      "key_risks": "Cybersecurity sector crowded trade; broad market showing distribution days; earnings gap could partially fill in first 2 sessions"
+    }}
+  ]
+}}
+```
+
+### Example 2: No trades today
+```
+{{
+  "research_summary": "Market treading water ahead of tomorrow's CPI print. Screener surfaced ANET and LLY but both lack a fresh catalyst — momentum is stale and volume is declining. Existing positions are within hold parameters. Staying in cash until macro uncertainty clears.",
+  "recommendations": []
+}}
+```
+
 ## Your Trading Playbook (Learned from Past Trades)
 {playbook}
 

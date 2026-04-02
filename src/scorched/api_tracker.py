@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete
@@ -93,7 +93,7 @@ def track_call(
                 "response_time_ms": elapsed_ms,
                 "error_message": error_message,
                 "symbol": symbol,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
 
@@ -152,6 +152,6 @@ async def cleanup_old_records(db: AsyncSession, days: int = 30) -> None:
     """Delete ApiCallLog records older than N days."""
     from scorched.models import ApiCallLog
 
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     await db.execute(delete(ApiCallLog).where(ApiCallLog.created_at < cutoff))
     await db.commit()

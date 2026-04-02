@@ -8,8 +8,10 @@ import json
 import logging
 import re
 from contextlib import nullcontext
+from typing import Optional
 
 import anthropic
+from pydantic import BaseModel, field_validator, ValidationError
 
 from ..api_tracker import track_call
 from ..config import settings
@@ -17,6 +19,77 @@ from ..prompts import load_prompt
 from ..retry import claude_call_with_retry
 
 logger = logging.getLogger(__name__)
+
+
+# ── Pydantic validation models for Claude outputs ──────────────────────────
+
+class AnalysisOutput(BaseModel):
+    analysis: str
+    candidates: list[str]
+
+    @field_validator("candidates", mode="before")
+    @classmethod
+    def normalise_candidates(cls, v: list) -> list[str]:
+        return [s.upper() for s in v][:5]
+
+
+class RecommendationEntry(BaseModel):
+    symbol: str
+    action: str
+    suggested_price: float
+    quantity: int
+    reasoning: str
+    confidence: str
+    key_risks: str
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def uppercase_symbol(cls, v: str) -> str:
+        return v.upper()
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def lowercase_action(cls, v: str) -> str:
+        return v.lower()
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def lowercase_confidence(cls, v: str) -> str:
+        return v.lower()
+
+
+class DecisionOutput(BaseModel):
+    research_summary: str
+    recommendations: list[RecommendationEntry]
+
+
+class RiskDecisionEntry(BaseModel):
+    symbol: str
+    verdict: str
+    reason: str
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def uppercase_symbol(cls, v: str) -> str:
+        return v.upper()
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def lowercase_verdict(cls, v: str) -> str:
+        return v.lower()
+
+
+class RiskReviewOutput(BaseModel):
+    decisions: list[RiskDecisionEntry]
+
+
+def validate_llm_output(raw_dict: dict, model_class: type[BaseModel]) -> Optional[BaseModel]:
+    """Validate a parsed dict against a Pydantic model. Returns None on failure."""
+    try:
+        return model_class.model_validate(raw_dict)
+    except ValidationError as e:
+        logger.warning("LLM output validation failed for %s: %s", model_class.__name__, e)
+        return None
 
 # ── Shared constants ─────────────────────────────────────────────────────────
 MODEL = "claude-sonnet-4-6"
@@ -81,8 +154,13 @@ async def call_analysis(strategy: str, guidance: str, user_content: str, tracker
     thinking_text = extract_thinking(response.content)
     parsed = parse_json_response(analysis_raw)
 
-    analysis_text = parsed.get("analysis", analysis_raw)
-    candidates = [s.upper() for s in parsed.get("candidates", [])][:5]
+    validated = validate_llm_output(parsed, AnalysisOutput) if parsed else None
+    if validated:
+        analysis_text = validated.analysis
+        candidates = validated.candidates
+    else:
+        analysis_text = parsed.get("analysis", analysis_raw)
+        candidates = [s.upper() for s in parsed.get("candidates", [])][:5]
 
     return response, analysis_text, thinking_text, candidates
 
@@ -119,6 +197,10 @@ async def call_decision(
     parsed = parse_json_response(decision_raw)
     if not parsed:
         parsed = {"research_summary": decision_raw, "recommendations": []}
+    else:
+        validated = validate_llm_output(parsed, DecisionOutput)
+        if validated:
+            parsed = validated.model_dump()
 
     return response, decision_raw, parsed
 

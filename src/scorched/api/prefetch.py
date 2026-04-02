@@ -66,7 +66,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     Phase 1 (generate_recommendations) at 8:30 AM ET.
     """
     import asyncio
-    from datetime import date as date_type, datetime
+    from datetime import date as date_type, datetime, timezone
 
     session_date = date_type.today()
     date_str = session_date.isoformat()
@@ -129,7 +129,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
 
     with _timed("finnhub", timing):
-        analyst_consensus = await asyncio.get_event_loop().run_in_executor(
+        analyst_consensus = await asyncio.get_running_loop().run_in_executor(
             None, lambda: fetch_analyst_consensus_sync(research_symbols, finnhub_client, tracker=tracker)
         )
     logger.info("Phase 0: fetched analyst consensus for %d symbols", len(analyst_consensus))
@@ -157,7 +157,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
 
     cache = {
         "date": date_str,
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "timing": timing,
         "research_symbols": research_symbols,
         "screener_symbols": screener_symbols,

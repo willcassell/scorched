@@ -15,6 +15,7 @@ def build_risk_review_prompt(
     portfolio: dict,
     analysis_text: str,
     playbook_excerpt: str,
+    correlation_warnings: list[str] | None = None,
 ) -> str:
     """Build the user prompt for the risk committee review call."""
     lines = ["## Proposed Trades for Review\n"]
@@ -26,6 +27,16 @@ def build_risk_review_prompt(
             f"  Reasoning: {rec.get('reasoning', 'N/A')}\n"
             f"  Key risks: {rec.get('key_risks', 'N/A')}"
         )
+
+    if correlation_warnings:
+        lines.append("\n## CORRELATION WARNINGS")
+        lines.append(
+            "The following buy candidates show high 20-day return correlation "
+            "with existing held positions. Holding highly correlated positions "
+            "concentrates risk — they behave as a single bet with amplified exposure."
+        )
+        for warning in correlation_warnings:
+            lines.append(f"- {warning}")
 
     lines.append("\n## Current Portfolio")
     lines.append(f"Cash: ${portfolio.get('cash_balance', 0):,.2f}")
@@ -69,4 +80,9 @@ def parse_risk_review_response(raw: str) -> list[dict]:
             logger.warning("Failed to parse risk review response as JSON")
             return []
 
+    # Validate with Pydantic if available
+    from .claude_client import validate_llm_output, RiskReviewOutput
+    validated = validate_llm_output(parsed, RiskReviewOutput)
+    if validated:
+        return [d.model_dump() for d in validated.decisions]
     return parsed.get("decisions", [])

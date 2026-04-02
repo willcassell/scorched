@@ -17,9 +17,11 @@ from .claude_client import MODEL, call_analysis, call_decision, call_risk_review
 from .playbook import get_playbook, update_playbook
 from .risk_review import build_risk_review_prompt, parse_risk_review_response
 from .portfolio import get_portfolio_summary
-from .strategy import load_analyst_guidance, load_strategy
+from .strategy import load_analyst_guidance, load_strategy, load_strategy_json
 from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
+from ..drawdown_gate import update_peak_and_check
+from ..correlation import find_high_correlations
 from .research import (
     WATCHLIST,
     build_options_context,
@@ -271,7 +273,7 @@ async def generate_recommendations(
         relative_strength = compute_relative_strength(price_data, sector_returns)
 
         # Finnhub analyst consensus (sync SDK, run in executor)
-        analyst_consensus = await asyncio.get_event_loop().run_in_executor(
+        analyst_consensus = await asyncio.get_running_loop().run_in_executor(
             None, lambda: fetch_analyst_consensus_sync(research_symbols, finnhub_client, tracker=tracker)
         )
         logger.info("Fetched analyst consensus for %d symbols", len(analyst_consensus))
@@ -304,6 +306,18 @@ async def generate_recommendations(
             for p in current_positions
         ],
     }
+
+    # ── Drawdown gate check ────────────────────────────────────────────────
+    strategy_json = load_strategy_json()
+    drawdown_config = strategy_json.get("drawdown_gate", {"enabled": True, "max_drawdown_pct": 8.0})
+    drawdown_result = await update_peak_and_check(db, price_data, drawdown_config)
+    drawdown_blocked = drawdown_result.blocked
+    if drawdown_blocked:
+        logger.warning(
+            "Drawdown gate ACTIVE — buys will be filtered after Claude calls. "
+            "Drawdown: %.1f%% (threshold: %.1f%%)",
+            drawdown_result.current_drawdown_pct, drawdown_result.threshold_pct,
+        )
 
     research_context = build_research_context(
         portfolio_dict,
@@ -417,11 +431,39 @@ async def generate_recommendations(
     research_summary = parsed.get("research_summary", "")
     raw_recs = parsed.get("recommendations", [])[:3]
 
+    # ── Drawdown gate: filter buys if portfolio drawdown exceeds threshold ──
+    if drawdown_blocked:
+        buy_count = sum(1 for r in raw_recs if r.get("action", "").lower() == "buy")
+        if buy_count > 0:
+            logger.warning(
+                "Drawdown gate filtering %d buy recommendation(s) — portfolio down %.1f%% from peak",
+                buy_count, drawdown_result.current_drawdown_pct,
+            )
+            raw_recs = [r for r in raw_recs if r.get("action", "").lower() != "buy"]
+
+    # ── Correlation warnings for buy candidates ─────────────────────────────
+    correlation_warnings: list[str] = []
+    for rec in raw_recs:
+        if rec.get("action", "").lower() != "buy":
+            continue
+        symbol = rec.get("symbol", "").upper()
+        high_corrs = find_high_correlations(symbol, current_symbols, price_data)
+        if high_corrs:
+            corr_strs = ", ".join(
+                f"{c['symbol']} (r={c['correlation']:.2f})" for c in high_corrs
+            )
+            warning = f"{symbol} is highly correlated with held position(s): {corr_strs}"
+            correlation_warnings.append(warning)
+            logger.info("Correlation warning: %s", warning)
+
     # ── Call 3: Risk committee review (adversarial) ──────────────────────────
     if raw_recs:
         logger.info("Call 3: risk committee review of %d recommendations", len(raw_recs))
-        playbook_excerpt = playbook.content[:500] if playbook else ""
-        risk_prompt = build_risk_review_prompt(raw_recs, portfolio_dict, analysis_text, playbook_excerpt)
+        playbook_excerpt = playbook.content if playbook else ""
+        risk_prompt = build_risk_review_prompt(
+            raw_recs, portfolio_dict, analysis_text, playbook_excerpt,
+            correlation_warnings=correlation_warnings,
+        )
 
         call3_response, risk_raw = await call_risk_review(risk_prompt, tracker=tracker)
 
@@ -496,6 +538,19 @@ async def generate_recommendations(
                 )
                 logger.info("Wash sale flag on %s (sold %s, gain=%s)", symbol, sell_date, gain)
                 key_risks = (wash_warning + "  " + key_risks).strip() if key_risks else wash_warning
+
+        # Correlation warning: flag if this BUY is highly correlated with held positions
+        if action == "buy":
+            high_corrs = find_high_correlations(symbol, current_symbols, price_data)
+            if high_corrs:
+                corr_strs = ", ".join(
+                    f"{c['symbol']} (r={c['correlation']:.2f})" for c in high_corrs
+                )
+                corr_warning = (
+                    f"⚠️ HIGH CORRELATION: {symbol} has high 20-day return correlation with "
+                    f"held position(s): {corr_strs}. These positions may behave as a single concentrated bet."
+                )
+                key_risks = (corr_warning + "  " + key_risks).strip() if key_risks else corr_warning
 
         row = TradeRecommendation(
             session_id=session_row.id,

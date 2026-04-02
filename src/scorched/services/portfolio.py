@@ -33,7 +33,7 @@ async def _get_current_price(symbol: str) -> Decimal:
             return Decimal("0")
         return Decimal(str(hist["Close"].iloc[-1]))
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch)
 
 
@@ -58,7 +58,7 @@ async def _get_current_prices(symbols: list[str]) -> dict[str, Decimal]:
                 pass  # Will fall back to avg_cost_basis in caller
         return result
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch)
 
 

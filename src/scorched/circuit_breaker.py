@@ -6,11 +6,8 @@ calls the pure checkers.
 """
 import asyncio
 import logging
-import socket
 from dataclasses import dataclass
 from decimal import Decimal
-
-socket.setdefaulttimeout(30)
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +122,7 @@ async def fetch_gate_data(symbols: list[str]) -> dict:
                 logger.warning("Circuit breaker: failed to fetch %s: %s", sym, e)
         return data
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch)
 
 

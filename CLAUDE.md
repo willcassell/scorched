@@ -66,7 +66,11 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/services/strategy.py` | load_strategy() — reads strategy.json (edited via dashboard) |
 | `src/scorched/tax.py` | ST/LT classification based on first_purchase_date |
 | `src/scorched/broker/` | BrokerAdapter ABC, PaperBroker, AlpacaBroker, `get_broker()` factory |
+| `src/scorched/drawdown_gate.py` | Portfolio drawdown enforcement — blocks buys when down >8% from peak |
+| `src/scorched/correlation.py` | 20-day return correlation between candidates and held positions |
+| `src/scorched/http_retry.py` | Retry wrapper for external HTTP APIs (3 attempts, 1s/3s/5s backoff) |
 | `src/scorched/circuit_breaker.py` | Pre-execution gate checks (stock gap, SPY drop, VIX spike) |
+| `src/scorched/broker/pending_fills.py` | Crash recovery: JSON-based pending fill records for Alpaca trades |
 | `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
 | `src/scorched/api_tracker.py` | API call tracking — sync recorder, health aggregation, cleanup |
 | `src/scorched/intraday.py` | Pure intraday trigger check functions |
@@ -86,19 +90,19 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intraday exit use `claude-haiku-4-5-20251001`; playbook update uses `claude-sonnet-4-6` (was opus, switched for cost savings):
 
 **Call 1 — Analysis** (extended thinking, budget=16000 tokens):
-- System: `ANALYSIS_SYSTEM` — analyst persona, strategy injected
-- Input: market context + full research context (price data, technicals, analyst consensus, news, macro, earnings, insider activity)
-- Output: `{"analysis": "...", "candidates": ["TICK1", ...]}`
+- System: `ANALYSIS_SYSTEM` — analyst persona, strategy injected, 6-step structured framework (macro → sector → screening → ranking → position review → output)
+- Input: market context + pre-filtered research context (top 25 symbols + held positions, with relative strength and ATR)
+- Output: `{"analysis": "...", "candidates": ["TICK1", ...]}` — validated via Pydantic `AnalysisOutput`
 
 **Call 2 — Decision** (standard, no extended thinking):
-- System: `DECISION_SYSTEM` — trader persona, strategy + playbook injected
+- System: `DECISION_SYSTEM` — trader persona, strategy + playbook injected, few-shot examples
 - Input: analysis text + options data for candidates + current portfolio
-- Output: `{"research_summary": "...", "recommendations": [...]}`
+- Output: `{"research_summary": "...", "recommendations": [...]}` — validated via Pydantic `DecisionOutput`
 
 **Call 3 — Risk Committee** (standard, no extended thinking):
 - System: `RISK_REVIEW_SYSTEM` — skeptical risk reviewer, default-reject stance
-- Input: proposed recommendations + portfolio + analysis summary + recent playbook
-- Output: `{"decisions": [{"symbol": ..., "verdict": "approve"|"reject", ...}]}`
+- Input: proposed recommendations + portfolio + full analysis (3000 chars) + playbook (1500 chars) + correlation warnings
+- Output: `{"decisions": [{"symbol": ..., "verdict": "approve"|"reject", ...}]}` — validated via Pydantic `RiskReviewOutput`
 - Rejected buys are removed before saving. Sells always pass through.
 
 **Call 4 — Position Management** (EOD, standard):
@@ -190,6 +194,13 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **ATR** — 14-day Average True Range computed in technicals.py. Displayed as ATR: $X.XX (Y.Y%) for volatility-adjusted stop guidance.
 - **Endpoint auth** — all POST/PUT mutation endpoints require `X-Owner-Pin` header when `SETTINGS_PIN` is set. Cron scripts pass it automatically via `common.py:http_post()`.
 - **Benchmarks** — portfolio return compared against SPY, QQQ, RSP (equal weight), MTUM (momentum factor), SPMO (S&P momentum). DJI was removed. Trade performance metrics (win rate, profit factor, expectancy, max drawdown, avg holding period) computed from TradeHistory.
+- **Drawdown gate** — blocks all BUY recommendations when portfolio drops >8% from peak equity (configurable in `strategy.json` under `drawdown_gate`). Sells always pass. Peak is tracked in `Portfolio.peak_portfolio_value` column.
+- **Correlation check** — before accepting a BUY, computes 20-day return correlation with all held positions. r > 0.8 triggers a warning prepended to `key_risks` and a CORRELATION WARNINGS section in the risk review prompt.
+- **Crash recovery** — Alpaca fills write a pending-fill JSON record before DB recording. On startup, `main.py` reconciles any unrecorded fills. Records live at `/app/logs/pending_fills.json` (Docker volume).
+- **AlpacaBroker delegates to apply_buy/apply_sell** — no longer has duplicate portfolio logic. Same pattern as PaperBroker.
+- **Pydantic validation** — all Claude JSON outputs validated via `AnalysisOutput`, `DecisionOutput`, `RiskReviewOutput` models. Graceful fallback on validation failure.
+- **HTTP retry** — external data APIs (FRED, Polygon, Alpha Vantage, EDGAR, Finnhub) wrapped with `retry_get`/`retry_call` (3 attempts, 1s/3s/5s backoff on transient errors only).
+- **Timezone-aware datetimes** — all `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`. For DB queries against `TIMESTAMP WITHOUT TIME ZONE` columns, use `.replace(tzinfo=None)` to avoid asyncpg comparison errors.
 
 ## Environment
 

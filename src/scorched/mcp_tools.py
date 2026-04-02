@@ -1,6 +1,6 @@
 """MCP tool definitions. openclaw connects to /mcp and calls these tools."""
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from mcp.server.fastmcp import FastMCP
@@ -109,7 +109,7 @@ async def confirm_trade(recommendation_id: int, execution_price: float, shares: 
                 symbol=rec.symbol,
                 shares=exec_shares,
                 execution_price=exec_price,
-                executed_at=datetime.utcnow(),
+                executed_at=datetime.now(timezone.utc),
             )
         else:
             result = await portfolio_svc.apply_sell(
@@ -118,7 +118,7 @@ async def confirm_trade(recommendation_id: int, execution_price: float, shares: 
                 symbol=rec.symbol,
                 shares=exec_shares,
                 execution_price=exec_price,
-                executed_at=datetime.utcnow(),
+                executed_at=datetime.now(timezone.utc),
             )
 
     return _to_json(result)
