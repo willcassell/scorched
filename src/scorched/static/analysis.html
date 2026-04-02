@@ -34,12 +34,9 @@
     line-height: 1.5;
     min-height: 100vh;
     overflow-x: hidden;
+    zoom: 1.4;
   }
-  body.fs-s { zoom: 0.85; }
-  body.fs-m { zoom: 1; }
-  body.fs-l { zoom: 1.2; }
-  body.fs-xl { zoom: 1.4; }
-  body.fs-xxl { zoom: 1.65; }
+  /* Default zoom matches dashboard XL */
   body::before {
     content: '';
     position: fixed;
@@ -68,13 +65,6 @@
   .page-title { font-size: 15px; font-weight: 600; color: var(--amber); letter-spacing: 0.15em; text-transform: uppercase; }
   .page-title span { color: var(--text-dim); font-weight: 300; }
   .topbar-right { display: flex; align-items: center; gap: 16px; }
-  .zoom-select {
-    background: var(--surface); border: 1px solid var(--border); color: var(--text);
-    font-family: var(--mono); font-size: 11px; padding: 3px 6px;
-    cursor: pointer; letter-spacing: 0.06em;
-    appearance: auto;
-  }
-  .zoom-select:focus { border-color: var(--amber); outline: none; }
   .session-nav {
     display: flex; align-items: center; gap: 8px;
   }
@@ -87,7 +77,17 @@
   .session-nav button:disabled { opacity: 0.3; cursor: default; }
   .session-date { font-size: 13px; color: var(--text-hi); font-weight: 500; letter-spacing: 0.05em; min-width: 100px; text-align: center; }
 
-  .container { max-width: 960px; margin: 0 auto; padding: 20px; }
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 20px;
+    align-items: start;
+  }
+  .col-analysis { min-width: 0; }
+  .col-dictionary { min-width: 0; }
 
   .section {
     border: 1px solid var(--border);
@@ -157,8 +157,129 @@
   @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
   .loaded { animation: fadeIn 0.25s ease forwards; }
 
+  /* ── Data Dictionary ───────────────────────────────────────────────── */
+  .dict-header {
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--amber);
+    font-weight: 600;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dict-intro {
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    margin-bottom: 16px;
+    font-weight: 300;
+  }
+  .dict-source {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .dict-source-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .dict-source-header:hover { background: rgba(232,160,48,0.03); }
+  .dict-source-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-hi);
+    letter-spacing: 0.08em;
+  }
+  .dict-source-badge {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    padding: 1px 6px;
+    border-radius: 2px;
+    font-weight: 600;
+  }
+  .dict-source-badge.free { color: var(--green); border: 1px solid var(--green-dim); background: rgba(46,200,122,0.06); }
+  .dict-source-badge.key { color: var(--amber); border: 1px solid var(--amber-dim); background: rgba(232,160,48,0.06); }
+  .dict-source-badge.computed { color: var(--text-dim); border: 1px solid var(--border2); background: rgba(184,204,224,0.04); }
+  .dict-source-body {
+    padding: 0 12px 10px;
+    display: none;
+  }
+  .dict-source-body.open { display: block; }
+  .dict-field {
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .dict-field:last-child { border-bottom: none; }
+  .dict-field-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: 0.04em;
+  }
+  .dict-field-desc {
+    font-family: var(--sans);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    font-weight: 300;
+    margin-top: 1px;
+  }
+  .dict-llm-note {
+    font-family: var(--sans);
+    font-size: 11px;
+    color: var(--amber);
+    line-height: 1.5;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border);
+    font-weight: 400;
+  }
+  .dict-pipeline {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 12px;
+    margin-top: 12px;
+  }
+  .dict-pipeline-title {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+  .dict-pipeline-step {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .dict-pipeline-step:last-child { border-bottom: none; }
+  .dict-step-num {
+    color: var(--amber);
+    font-weight: 600;
+    min-width: 18px;
+  }
+  .dict-step-label { color: var(--text-hi); font-weight: 500; }
+  .dict-step-desc { color: var(--text-dim); font-family: var(--sans); font-weight: 300; }
+
+  @media (max-width: 900px) {
+    .container {
+      grid-template-columns: 1fr;
+    }
+    .col-dictionary { order: -1; }
+  }
   @media (max-width: 640px) {
-    .container { padding: 12px; }
+    .container { padding: 12px; grid-template-columns: 1fr; }
     .topbar {
       flex-direction: column;
       align-items: flex-start;
@@ -167,11 +288,11 @@
     }
     .topbar-right { width: 100%; flex-wrap: wrap; justify-content: space-between; }
     .section-body { padding: 12px; font-size: 13px; }
+    .col-dictionary { order: -1; }
   }
 </style>
 </head>
 <body>
-
 <header class="topbar">
   <div class="topbar-left">
     <a href="/" class="back-link">&larr; DASHBOARD</a>
@@ -183,40 +304,251 @@
       <span class="session-date" id="session-date">---</span>
       <button id="next-btn" onclick="navSession(1)" title="Next session">NEXT &rarr;</button>
     </div>
-    <select class="zoom-select" id="zoomSelect" onchange="setFontSize(this.value)">
-      <option value="s">Small</option>
-      <option value="m">Medium</option>
-      <option value="l">Large</option>
-      <option value="xl">X-Large</option>
-      <option value="xxl">XX-Large</option>
-    </select>
   </div>
 </header>
 
 <div class="container">
-  <div id="content">
-    <div class="skeleton sk-line" style="width:100%"></div>
-    <div class="skeleton sk-line" style="width:90%"></div>
-    <div class="skeleton sk-line" style="width:95%"></div>
-    <div class="skeleton sk-line" style="width:80%"></div>
-    <div class="skeleton sk-line" style="width:85%"></div>
+  <!-- LEFT COLUMN: Analysis content -->
+  <div class="col-analysis">
+    <div id="content">
+      <div class="skeleton sk-line" style="width:100%"></div>
+      <div class="skeleton sk-line" style="width:90%"></div>
+      <div class="skeleton sk-line" style="width:95%"></div>
+      <div class="skeleton sk-line" style="width:80%"></div>
+      <div class="skeleton sk-line" style="width:85%"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN: Data Dictionary -->
+  <div class="col-dictionary">
+    <div class="dict-header">Data Dictionary</div>
+    <div class="dict-intro">
+      Every morning, Phase 0 fetches data from 9 sources. Phase 1 pre-filters to the top ~25 symbols, then sends a structured research context to Claude for analysis.
+    </div>
+
+    <div class="dict-source" id="ds-yfinance">
+      <div class="dict-source-header" onclick="toggleDict('ds-yfinance')">
+        <span class="dict-source-name">yfinance</span>
+        <span class="dict-source-badge free">FREE</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Price History (1 year)</div>
+          <div class="dict-field-desc">Daily OHLCV. Used for: current price, 1-week/1-month returns, 52-week range, all technical indicators.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Fundamentals</div>
+          <div class="dict-field-desc">P/E ratio, forward P/E, EPS, market cap, short ratio, short % of float.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Earnings History</div>
+          <div class="dict-field-desc">Last 4 quarters: EPS estimate vs actual, surprise %, beat/miss/inline verdict.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">News Headlines</div>
+          <div class="dict-field-desc">Up to 3 recent headlines per symbol. Fallback when Polygon data is unavailable.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Options Chains</div>
+          <div class="dict-field-desc">Put/call ratio, ATM implied volatility, 30-day implied move. Fetched only for Call 1 candidates.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Primary data backbone. Claude sees price action, momentum, fundamentals, and earnings track record per symbol.</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-technicals">
+      <div class="dict-source-header" onclick="toggleDict('ds-technicals')">
+        <span class="dict-source-name">Technical Analysis</span>
+        <span class="dict-source-badge computed">COMPUTED</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">MACD</div>
+          <div class="dict-field-desc">12/26/9 EMA crossover. Signal: BULLISH (histogram positive + rising), BEARISH, or NEUTRAL.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Bollinger Bands</div>
+          <div class="dict-field-desc">20-day SMA ± 2 std dev. %B position: OVERBOUGHT (>1.0), OVERSOLD (<0.0), NEUTRAL.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">MA Crossover</div>
+          <div class="dict-field-desc">50-day vs 200-day SMA. Detects golden cross, death cross, or relative position (above both, below both, between).</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">ATR (14-day)</div>
+          <div class="dict-field-desc">Average True Range in dollars and % of price. Guides volatility-adjusted stop-loss placement.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Volume Profile</div>
+          <div class="dict-field-desc">20-day avg volume, relative volume (latest/avg). HIGH (>1.5x), LOW (<0.5x), NORMAL.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Support / Resistance</div>
+          <div class="dict-field-desc">Simple 20-day high/low range as resistance/support levels.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Pre-labeled signals (BULLISH/BEARISH) so Claude can quickly triage. ATR informs stop-loss recommendations.</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-sector">
+      <div class="dict-source-header" onclick="toggleDict('ds-sector')">
+        <span class="dict-source-name">Sector Relative Strength</span>
+        <span class="dict-source-badge computed">COMPUTED</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Relative Strength</div>
+          <div class="dict-field-desc">Stock's 5-day return minus its sector ETF's 5-day return. Positive = outperforming sector. Covers 11 sector ETFs (XLK, XLF, XLV, XLE, XLI, XLC, XLY, XLP, XLB, XLU, XLRE).</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Distinguishes true momentum from sector beta. A stock up 3% in a sector up 5% is actually weak.</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-fred">
+      <div class="dict-source-header" onclick="toggleDict('ds-fred')">
+        <span class="dict-source-name">FRED (Federal Reserve)</span>
+        <span class="dict-source-badge key">API KEY</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Fed Funds Rate</div>
+          <div class="dict-field-desc">Current rate + change. Signals monetary policy direction.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Yield Curve (10Y-2Y)</div>
+          <div class="dict-field-desc">Spread between 10-year and 2-year Treasury yields. Inversion is a recession signal.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">CPI YoY</div>
+          <div class="dict-field-desc">Consumer Price Index year-over-year change. Inflation gauge.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Unemployment Rate</div>
+          <div class="dict-field-desc">Current + previous reading. Labor market health.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">HY Credit Spread</div>
+          <div class="dict-field-desc">High-yield corporate bond spread over treasuries. Widening = risk aversion.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Consumer Sentiment, PCE, Industrial Production, Retail Sales</div>
+          <div class="dict-field-desc">Additional macro indicators with current value, previous value, and change.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Macro overlay. Claude classifies the environment as bullish/neutral/bearish before evaluating individual stocks. 3+ bearish macro indicators = "no new buys."</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-polygon">
+      <div class="dict-source-header" onclick="toggleDict('ds-polygon')">
+        <span class="dict-source-name">Polygon.io</span>
+        <span class="dict-source-badge key">API KEY</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">News Articles</div>
+          <div class="dict-field-desc">Up to 5 articles per symbol: headline + description/summary. Richer than yfinance news — includes article summaries.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Claude evaluates catalyst quality. Named catalysts (earnings, upgrades, FDA, activist) are required for a buy recommendation per strategy rules.</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-finnhub">
+      <div class="dict-source-header" onclick="toggleDict('ds-finnhub')">
+        <span class="dict-source-name">Finnhub</span>
+        <span class="dict-source-badge key">API KEY</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Analyst Consensus</div>
+          <div class="dict-field-desc">Strong Buy / Buy / Hold / Sell / Strong Sell counts. Bullish % computed. Used to gauge Wall Street sentiment.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Confirmation/contradiction signal. Claude cross-references analyst consensus with its own technical and catalyst analysis.</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-edgar">
+      <div class="dict-source-header" onclick="toggleDict('ds-edgar')">
+        <span class="dict-source-name">SEC EDGAR</span>
+        <span class="dict-source-badge free">FREE</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Form 4 Filings</div>
+          <div class="dict-field-desc">Count of insider transaction filings in the last 30 days. The EDGAR submissions API doesn't distinguish buy vs sell — reported as "filing count, type unknown."</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Insider activity flag. High Form 4 activity prompts Claude to investigate further. Falls back to yfinance insider data if EDGAR fails.</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-av">
+      <div class="dict-source-header" onclick="toggleDict('ds-av')">
+        <span class="dict-source-name">Alpha Vantage</span>
+        <span class="dict-source-badge key">API KEY</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">RSI (14-day)</div>
+          <div class="dict-field-desc">Relative Strength Index for momentum screener picks only (max ~20 symbols). OVERBOUGHT (>70), OVERSOLD (<30), NEUTRAL. Free tier: 25 calls/day.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Supplementary momentum confirmation for screener candidates. Not fetched for watchlist symbols to stay within rate limits.</div>
+      </div>
+    </div>
+
+    <div class="dict-source" id="ds-screener">
+      <div class="dict-source-header" onclick="toggleDict('ds-screener')">
+        <span class="dict-source-name">Momentum Screener</span>
+        <span class="dict-source-badge computed">COMPUTED</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Top 20 S&P 500 Movers</div>
+          <div class="dict-field-desc">Scans ~430 S&P 500 stocks (excluding watchlist) via batch download. Filters: price > 20d MA, avg volume > 1M. Ranked by 5-day momentum. Adds fresh ideas beyond the fixed watchlist.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Expands the candidate universe. These symbols are added to the research context so Claude can evaluate emerging momentum plays.</div>
+      </div>
+    </div>
+
+    <!-- Pipeline overview -->
+    <div class="dict-pipeline">
+      <div class="dict-pipeline-title">Daily Pipeline</div>
+      <div class="dict-pipeline-step">
+        <span class="dict-step-num">0</span>
+        <span class="dict-step-desc"><span class="dict-step-label">7:30 AM</span> — Phase 0 fetches all data sources in parallel, computes technicals + relative strength, caches to disk. Zero LLM cost.</span>
+      </div>
+      <div class="dict-pipeline-step">
+        <span class="dict-step-num">1</span>
+        <span class="dict-step-desc"><span class="dict-step-label">8:30 AM</span> — Pre-filter scores ~78 symbols → top 25 + held. Claude Call 1 (analysis, extended thinking) + Call 2 (decision) + Call 3 (risk review).</span>
+      </div>
+      <div class="dict-pipeline-step">
+        <span class="dict-step-num">1.5</span>
+        <span class="dict-step-desc"><span class="dict-step-label">9:30 AM</span> — Circuit breaker gates buys on gap-downs, VIX spikes, price drift. Sells always pass.</span>
+      </div>
+      <div class="dict-pipeline-step">
+        <span class="dict-step-num">2</span>
+        <span class="dict-step-desc"><span class="dict-step-label">9:35 AM</span> — Cleared recommendations execute via Alpaca broker. Fills mirrored to local DB.</span>
+      </div>
+      <div class="dict-pipeline-step">
+        <span class="dict-step-num">—</span>
+        <span class="dict-step-desc"><span class="dict-step-label">9:35–3:55</span> — Intraday monitor checks positions every 5 min. Trigger-based Claude exit evaluation (haiku).</span>
+      </div>
+      <div class="dict-pipeline-step">
+        <span class="dict-step-num">3</span>
+        <span class="dict-step-desc"><span class="dict-step-label">4:01 PM</span> — EOD review (haiku) + playbook update (sonnet). Extracts learnings for tomorrow.</span>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
 const API = '/api/v1';
 
-// ── Font Size ───────────────────────────────────────────────────────────────
-function setFontSize(size) {
-  document.body.classList.remove('fs-s', 'fs-m', 'fs-l', 'fs-xl', 'fs-xxl');
-  document.body.classList.add('fs-' + size);
-  const sel = document.getElementById('zoomSelect');
-  if (sel) sel.value = size;
-  localStorage.setItem('tradebot-font-size', size);
+// ── Data Dictionary toggle ─────────────────────────────────────────────────
+function toggleDict(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var body = el.querySelector('.dict-source-body');
+  if (body) body.classList.toggle('open');
 }
-(function() {
-  setFontSize(localStorage.getItem('tradebot-font-size') || 'm');
-})();
 
 // ── Session navigation ──────────────────────────────────────────────────────
 let sessions = [];
