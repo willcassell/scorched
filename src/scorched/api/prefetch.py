@@ -69,7 +69,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     import asyncio
     from datetime import date as date_type, datetime, timezone
 
-    session_date = date_type.today()
+    from ..tz import market_today
+    session_date = market_today()
     date_str = session_date.isoformat()
     timing = {}
     total_start = time.monotonic()
@@ -218,7 +219,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
 async def get_company_names():
     """Return symbol→company name map from the latest Phase 0 cache."""
     from datetime import date as date_type
-    today = date_type.today().isoformat()
+    from ..tz import market_today
+    today = market_today().isoformat()
     path = cache_path_for_date(today)
     if not os.path.exists(path):
         return {}

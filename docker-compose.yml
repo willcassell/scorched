@@ -23,6 +23,7 @@ services:
     environment:
       # Override DATABASE_URL to use the internal service name, not localhost
       DATABASE_URL: postgresql+asyncpg://scorched:scorched@postgres:5432/scorched
+      TZ: America/New_York
     volumes:
       - ./logs:/app/logs
       - ./strategy.json:/app/strategy.json

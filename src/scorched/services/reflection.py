@@ -3,6 +3,8 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 
+from ..tz import market_today
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +29,7 @@ async def generate_weekly_reflection(db: AsyncSession) -> dict:
     Pulls: all trades from the past 7 days, the recommendations that led to them,
     current portfolio state, and compares predicted outcomes vs actual.
     """
-    today = date.today()
+    today = market_today()
     week_ago = today - timedelta(days=7)
     cutoff_dt = datetime.combine(week_ago, datetime.min.time())
 

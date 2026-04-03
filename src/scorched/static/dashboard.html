@@ -1509,9 +1509,13 @@
   }
 
   // ---- Today's Recs ----
+  var _marketDate = null;
   function renderRecs() {
     var el = document.getElementById('recs-content');
-    var today = new Date().toISOString().slice(0,10);
+    var datePromise = _marketDate
+      ? Promise.resolve(_marketDate)
+      : apiFetch('/system/market-date').then(function(r) { _marketDate = r.date; return r.date; });
+    return datePromise.then(function(today) {
     return apiFetch('/recommendations?session_date=' + today + '&limit=1').then(function(sessions) {
       el.className = 'loaded';
       el.textContent = '';
@@ -1624,6 +1628,7 @@
       err.style.color = 'var(--red)';
       err.textContent = 'FETCH ERROR: ' + e.message;
       el.appendChild(err);
+    });
     });
   }
 

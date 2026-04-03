@@ -3,6 +3,8 @@ import asyncio
 import json
 import logging
 from datetime import date, datetime
+
+from ..tz import market_today
 from decimal import Decimal
 
 from ..api_tracker import ApiCallTracker
@@ -163,7 +165,7 @@ async def generate_recommendations(
     force: bool = False,
 ) -> RecommendationsResponse:
     if session_date is None:
-        session_date = date.today()
+        session_date = market_today()
 
     if not _is_market_open(session_date):
         logger.info("Market closed on %s — skipping recommendation generation", session_date)

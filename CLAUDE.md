@@ -75,11 +75,12 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/broker/pending_fills.py` | Crash recovery: JSON-based pending fill records for Alpaca trades |
 | `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
 | `src/scorched/api_tracker.py` | API call tracking — sync recorder, health aggregation, cleanup |
+| `src/scorched/tz.py` | Timezone utility: `market_today()`, `market_now()`, `MARKET_TZ` — all trading-day logic uses this |
 | `src/scorched/intraday.py` | Pure intraday trigger check functions |
 | `src/scorched/api/intraday.py` | POST /api/v1/intraday/evaluate — Claude exit evaluation + auto-sell |
 | `cron/tradebot_phase0.py` | Phase 0 cron: calls /api/v1/research/prefetch, sends timing via Telegram |
 | `cron/intraday_monitor.py` | Every 5 min position check during market hours |
-| `src/scorched/api/system.py` | System health endpoints: /system/health, /system/errors, /system/trend |
+| `src/scorched/api/system.py` | System health endpoints: /system/health, /system/errors, /system/trend, /system/market-date |
 | `src/scorched/models.py` | 8 SQLAlchemy ORM models (including ApiCallLog) |
 | `src/scorched/schemas.py` | Pydantic request/response schemas |
 | `src/scorched/config.py` | pydantic-settings Settings (env vars, tax rates, cash reserve %) |
@@ -151,6 +152,7 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | `BROKER_MODE` | "paper" | "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live |
 | `ALPACA_API_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
 | `ALPACA_SECRET_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
+| `MARKET_TIMEZONE` | "America/New_York" | IANA timezone for trading day boundaries. Always NYSE time — do NOT change for user display preferences |
 
 ## Broker Integration (Alpaca)
 
@@ -185,7 +187,7 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **`force: true` on recommendations** — NULLs out `token_usage.session_id` (nullable FK) before deleting the session, avoiding FK violation. Don't skip this step.
 - **Recommendation caching** — `get_recommendations` returns the existing session if one exists for today, unless `force=True`. This is intentional.
 - **NYSE holidays** — detected in `_is_market_open()` using `pandas_market_calendars`. Returns early before any DB or Claude work.
-- **Phase 0 cache** — `generate_recommendations()` checks for `/tmp/tradebot_research_cache_{date}.json` written by Phase 0. If found, skips all data fetches and uses cached data. If missing, falls back to inline fetch.
+- **Phase 0 cache** — `generate_recommendations()` checks for `/app/logs/tradebot_research_cache_{date}.json` written by Phase 0. If found, skips all data fetches and uses cached data. If missing, falls back to inline fetch. Date in filename uses `market_today()` (NYSE time).
 - **VM cron times are ET** — DST (US clocks spring forward ~March 8): no crontab change needed since cron uses ET directly. Each cron script has a `check_expected_hour()` call that sends a Telegram warning if it runs at the wrong ET hour.
 - **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
 - **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
@@ -203,6 +205,7 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Pydantic validation** — all Claude JSON outputs validated via `AnalysisOutput`, `DecisionOutput`, `RiskReviewOutput` models. Graceful fallback on validation failure.
 - **HTTP retry** — external data APIs (FRED, Polygon, Alpha Vantage, EDGAR, Finnhub) wrapped with `retry_get`/`retry_call` (3 attempts, 1s/3s/5s backoff on transient errors only).
 - **Timezone-aware datetimes** — all `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`. For DB queries against `TIMESTAMP WITHOUT TIME ZONE` columns, use `.replace(tzinfo=None)` to avoid asyncpg comparison errors.
+- **Trading day timezone** — NEVER use `date.today()` or `datetime.today()` in the backend. Always use `market_today()` or `market_now()` from `src/scorched/tz.py`. These return dates/times in NYSE timezone (`America/New_York`), ensuring the trading day is consistent regardless of server timezone. The Docker container also sets `TZ=America/New_York` as a safety net. The dashboard fetches the market date from `/api/v1/system/market-date` instead of using browser-local JS dates.
 - **Trailing stops** — ATR-based trailing stops in `trailing_stops.py`. High-water mark ratchets up, stop follows at `hwm - 2*ATR` (or -5% floor). Initialized on buy in `apply_buy()`. Tracked in Position model (`trailing_stop_price`, `high_water_mark`). Checked in intraday monitor.
 - **Pre-market data** — `_fetch_premarket_prices_sync()` fetches pre-market prices via `yf.download(prepost=True)`. Displayed per symbol in research context. Gap-up >5% flagged as chase risk. `check_gap_up_gate()` added to circuit breaker.
 - **Weekly reflection** — `POST /api/v1/market/weekly-reflection` reviews past week's trades vs outcomes. Claude (sonnet) extracts learnings, patterns, and strategy adjustments. Appends to playbook. Cron: Sunday 6 PM ET.
@@ -222,6 +225,13 @@ Optional (for Alpaca broker integration):
 BROKER_MODE=alpaca_paper
 ALPACA_API_KEY=PK...
 ALPACA_SECRET_KEY=...
+```
+
+Optional (timezone — rarely needed):
+```
+MARKET_TIMEZONE=America/New_York   # Default. Controls trading day boundaries (NYSE time).
+                                    # Do NOT change for user display preferences — this is market time.
+                                    # Only change if trading on a non-US exchange (e.g., Asia/Tokyo for TSE).
 ```
 
 `DATABASE_URL` is injected by Docker Compose. Only needed for local non-Docker runs:

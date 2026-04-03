@@ -68,7 +68,8 @@ async def get_portfolio_state(db: AsyncSession) -> PortfolioResponse:
         raise ValueError("Portfolio not initialized")
 
     positions_rows = (await db.execute(select(Position))).scalars().all()
-    today = date.today()
+    from ..tz import market_today
+    today = market_today()
     positions_out = []
     total_positions_value = Decimal("0")
     total_unrealized_gain = Decimal("0")

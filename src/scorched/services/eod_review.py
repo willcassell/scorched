@@ -128,7 +128,8 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
     and updates the playbook. Returns a summary dict.
     """
     if review_date is None:
-        review_date = date.today()
+        from ..tz import market_today
+        review_date = market_today()
 
     # Get today's session (may not exist if market was closed or no trades)
     session = (

@@ -8,6 +8,7 @@ from decimal import Decimal
 import yfinance as yf
 
 from ..http_retry import retry_call, retry_get
+from ..tz import market_today
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,8 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30, tracker=N
     import time
     from datetime import datetime, timedelta
 
-    cutoff = datetime.today() - timedelta(days=days_back)
+    from ..tz import market_now
+    cutoff = market_now() - timedelta(days=days_back)
     headers = {"User-Agent": "ScorchedTradebot/1.0 research@tradebot.local",
                "Accept": "application/json"}
     result = {}
@@ -413,7 +415,7 @@ def _fetch_options_data_sync(symbols: list[str], tracker=None) -> dict:
             target_exp = expirations[0]
             for exp in expirations:
                 exp_date = date.fromisoformat(exp)
-                if (exp_date - date.today()).days >= 7:
+                if (exp_date - market_today()).days >= 7:
                     target_exp = exp
                     break
             chain = ticker.option_chain(target_exp)

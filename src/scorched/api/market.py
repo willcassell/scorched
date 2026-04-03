@@ -3,6 +3,8 @@ from datetime import date as date_cls
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+
+from ..tz import market_today
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -19,7 +21,7 @@ async def opening_prices(
 ):
     """Fetch actual opening auction prices for a list of symbols on a given date."""
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    trade_date = date_cls.fromisoformat(date) if date else date_cls.today()
+    trade_date = date_cls.fromisoformat(date) if date else market_today()
     prices = await fetch_opening_prices(symbol_list, trade_date)
     return {"date": trade_date.isoformat(), "opening_prices": prices}
 
@@ -29,7 +31,7 @@ async def eod_summary(
     date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD). Defaults to today."),
 ):
     """Fetch end-of-day performance for major indices and all S&P 500 sector ETFs."""
-    target_date = date_cls.fromisoformat(date) if date else date_cls.today()
+    target_date = date_cls.fromisoformat(date) if date else market_today()
     result = await fetch_market_eod(target_date)
     return {"date": target_date.isoformat(), **result}
 
@@ -45,7 +47,7 @@ async def eod_review(
     Run this after market close (~4:05 PM ET).
     """
     from ..services.eod_review import run_eod_review
-    review_date = date_cls.fromisoformat(date) if date else date_cls.today()
+    review_date = date_cls.fromisoformat(date) if date else market_today()
     return await run_eod_review(db, review_date)
 
 

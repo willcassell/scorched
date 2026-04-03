@@ -11,6 +11,7 @@ from ..api_tracker import compute_service_health, SERVICES
 from ..config import settings
 from ..database import get_db
 from ..models import ApiCallLog
+from ..tz import market_today
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/system", tags=["system"])
 @router.get("/health")
 async def system_health(db: AsyncSession = Depends(get_db)):
     """Return per-service health based on today's api_call_log records."""
-    today = datetime.now(timezone.utc).date()
+    today = market_today()
     result = await db.execute(
         select(ApiCallLog).where(
             cast(ApiCallLog.created_at, Date) == today
@@ -88,7 +89,7 @@ async def system_errors(db: AsyncSession = Depends(get_db)):
 @router.get("/trend")
 async def system_trend(db: AsyncSession = Depends(get_db)):
     """Return daily success % per service for the last 7 days."""
-    cutoff = datetime.now(timezone.utc).date() - timedelta(days=6)
+    cutoff = market_today() - timedelta(days=6)
 
     day_col = cast(ApiCallLog.created_at, Date).label("day")
     success_col = func.sum(
@@ -120,3 +121,9 @@ async def system_trend(db: AsyncSession = Depends(get_db)):
         services_out[svc] = [pct_map[svc].get(d) for d in days]
 
     return {"days": days, "services": services_out}
+
+
+@router.get("/market-date")
+async def get_market_date():
+    """Return today's trading date in the market timezone."""
+    return {"date": market_today().isoformat()}

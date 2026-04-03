@@ -68,7 +68,8 @@ async def get_opening_prices(symbols: list[str], date: str | None = None) -> str
         date: ISO date string (YYYY-MM-DD). Defaults to today.
     """
     from datetime import date as date_cls
-    trade_date = date_cls.fromisoformat(date) if date else date_cls.today()
+    from .tz import market_today
+    trade_date = date_cls.fromisoformat(date) if date else market_today()
     prices = await fetch_opening_prices(symbols, trade_date)
     return json.dumps({"date": trade_date.isoformat(), "opening_prices": prices})
 
@@ -175,7 +176,8 @@ async def get_market_summary(date: str | None = None) -> str:
         date: ISO date string (YYYY-MM-DD). Defaults to today.
     """
     from datetime import date as date_cls
-    target_date = date_cls.fromisoformat(date) if date else date_cls.today()
+    from .tz import market_today
+    target_date = date_cls.fromisoformat(date) if date else market_today()
     result = await fetch_market_eod(target_date)
     return json.dumps({"date": target_date.isoformat(), **result})
 

@@ -23,6 +23,7 @@ COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
+ENV TZ=America/New_York
 
 EXPOSE 8000
 

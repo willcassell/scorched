@@ -44,10 +44,15 @@ def main():
     msg += f"Portfolio: ${total:,.2f} ({fmt_pct(ret_pct)})\n"
     msg += f"Cash: ${cash:,.2f} | Positions: ${positions_val:,.2f}\n\n"
 
-    # Today's confirmed trades — query TradeHistory directly (executed_at stored in UTC;
-    # market-hours trades never cross midnight UTC so the date prefix always matches ET date).
+    # Today's confirmed trades — compare executed_at (UTC) against ET date.
+    import datetime as _dt
+    import pytz as _pytz
+    _et = _pytz.timezone("America/New_York")
+    def _is_today_et(executed_at_str):
+        dt = _dt.datetime.fromisoformat(executed_at_str.replace("Z", "+00:00"))
+        return dt.astimezone(_et).strftime("%Y-%m-%d") == today_str
     position_prices = {p["symbol"]: float(p["current_price"]) for p in portfolio.get("positions", [])}
-    today_trades = [t for t in history if t["executed_at"][:10] == today_str]
+    today_trades = [t for t in history if _is_today_et(t["executed_at"])]
     if today_trades:
         msg += "Today's Trades:\n"
         for t in today_trades:

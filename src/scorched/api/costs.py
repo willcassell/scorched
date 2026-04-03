@@ -1,4 +1,6 @@
-from datetime import date, timedelta
+from datetime import timedelta
+
+from ..tz import market_today
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -12,7 +14,7 @@ router = APIRouter(prefix="/costs", tags=["costs"])
 
 @router.get("")
 async def get_cost_summary(db: AsyncSession = Depends(get_db)):
-    today = date.today()
+    today = market_today()
     day_7 = today - timedelta(days=7)
     day_30 = today - timedelta(days=30)
 
