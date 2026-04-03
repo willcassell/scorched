@@ -21,7 +21,7 @@ alembic revision --autogenerate -m "description"
 rsync -av -e "ssh -i /path/to/ssh-key.key" \
   --exclude='.venv' --exclude='.git' --exclude='__pycache__' \
   --exclude='*.pyc' --exclude='.env' \
-  /path/to/tradebot/ ubuntu@YOUR_VM_IP:~/tradebot/
+  /path/to/scorched/ ubuntu@YOUR_VM_IP:~/scorched/
 
 # SSH to VM
 ssh -i /path/to/ssh-key.key ubuntu@YOUR_VM_IP

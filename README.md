@@ -178,7 +178,7 @@ The bot runs a **Streamable HTTP MCP server** at `http://host:8000/mcp`. Any MCP
 ## Project Structure
 
 ```
-tradebot/
+scorched/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── entrypoint.sh           # Runs alembic upgrade then starts uvicorn
@@ -251,8 +251,8 @@ tradebot/
 ### 1. Clone and configure
 
 ```bash
-git clone <repo>
-cd tradebot
+git clone https://github.com/willcassell/scorched.git
+cd scorched
 cp .env.example .env
 # Edit .env — at minimum set ANTHROPIC_API_KEY
 ```

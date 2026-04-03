@@ -1,4 +1,4 @@
-# Tradebot Deployment Guide
+# Scorched Deployment Guide
 
 ## 1. Files to Copy to Your VM
 
@@ -16,8 +16,8 @@ rsync -av \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='.env' \
-  /path/to/tradebot/ \
-  ubuntu@YOUR_VM_IP:~/tradebot/
+  /path/to/scorched/ \
+  ubuntu@YOUR_VM_IP:~/scorched/
 ```
 
 For subsequent deploys (after code changes), the same command is safe to re-run — rsync only transfers files that have changed.
@@ -31,7 +31,7 @@ ssh -i /path/to/your-ssh-key.key ubuntu@YOUR_VM_IP
 **Key files that must be present on the VM:**
 
 ```
-tradebot/
+scorched/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── entrypoint.sh
@@ -67,7 +67,7 @@ tradebot/
 ### First-time setup on the VM
 
 ```bash
-cd ~/tradebot
+cd ~/scorched
 
 # Create your .env file (see Section 3 below)
 cp .env.example .env
@@ -103,7 +103,7 @@ curl http://localhost:8000/health
 ### Subsequent deploys (after code changes)
 
 ```bash
-cd ~/tradebot
+cd ~/scorched
 
 # Pull updated files (rsync from Mac, see Section 1)
 
@@ -137,7 +137,7 @@ docker compose exec postgres psql -U scorched scorched
 
 ## 3. Settings and API Keys
 
-Create `~/tradebot/.env` on your VM with these values:
+Create `~/scorched/.env` on your VM with these values:
 
 ```bash
 # ── REQUIRED ──────────────────────────────────────────────────────────────────
@@ -315,22 +315,22 @@ Add these lines (all times are UTC — see DST table below):
 # ── Tradebot daily cycle (times in UTC, after DST) ──────────────────────────
 
 # Phase 0: Data prefetch — all external APIs, zero LLM cost (7:30 AM ET = 11:30 UTC)
-30 11 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase0.py >> ~/tradebot/cron.log 2>&1
+30 11 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase0.py >> ~/scorched/cron.log 2>&1
 
 # Phase 1: Claude analysis + recommendations, loads Phase 0 cache (8:30 AM ET = 12:30 UTC)
-30 12 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase1.py >> ~/tradebot/cron.log 2>&1
+30 12 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1.py >> ~/scorched/cron.log 2>&1
 
 # Phase 1.5: Circuit breaker gate (9:30 AM ET = 13:30 UTC)
-30 13 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase1_5.py >> ~/tradebot/cron.log 2>&1
+30 13 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1_5.py >> ~/scorched/cron.log 2>&1
 
 # Phase 2: Confirm trades at opening prices (9:35 AM ET = 13:35 UTC)
-35 13 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase2.py >> ~/tradebot/cron.log 2>&1
+35 13 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase2.py >> ~/scorched/cron.log 2>&1
 
 # Intraday: Position monitoring with trigger-based exit evaluation (9:35 AM–3:55 PM ET, self-gates)
-*/5 13-19 * * 1-5 cd ~/tradebot && python3 cron/intraday_monitor.py >> ~/tradebot/cron.log 2>&1
+*/5 13-19 * * 1-5 cd ~/scorched && python3 cron/intraday_monitor.py >> ~/scorched/cron.log 2>&1
 
 # Phase 3: EOD summary + playbook update (4:01 PM ET = 20:01 UTC)
-01 20 * * 1-5 cd ~/tradebot && python3 cron/tradebot_phase3.py >> ~/tradebot/cron.log 2>&1
+01 20 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase3.py >> ~/scorched/cron.log 2>&1
 ```
 
 ### What Each Phase Does
