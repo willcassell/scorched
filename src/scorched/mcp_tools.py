@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from mcp.server.fastmcp import FastMCP
 
+from .broker import get_broker
 from .database import AsyncSessionLocal
 from .schemas import ConfirmTradeRequest, RejectTradeRequest
 from .services import portfolio as portfolio_svc
@@ -92,7 +93,8 @@ async def get_opening_prices(symbols: list[str], date: str | None = None) -> str
 
 
 @mcp.tool(
-    description="Confirm that a recommended trade was executed. Updates portfolio cash and positions. "
+    description="Confirm that a recommended trade was executed. Routes through the configured broker "
+    "(paper or Alpaca) for order submission and fill tracking. Updates portfolio cash and positions. "
     "Call this once per trade after execution. "
     "Requires the owner PIN if SETTINGS_PIN is configured.",
 )
@@ -125,24 +127,28 @@ async def confirm_trade(recommendation_id: int, execution_price: float, shares: 
         if rec.status != "pending":
             return json.dumps({"error": f"Recommendation {recommendation_id} is already {rec.status}"})
 
-        if rec.action == "buy":
-            result = await portfolio_svc.apply_buy(
-                db,
-                recommendation_id=recommendation_id,
-                symbol=rec.symbol,
-                shares=exec_shares,
-                execution_price=exec_price,
-                executed_at=datetime.now(timezone.utc),
-            )
-        else:
-            result = await portfolio_svc.apply_sell(
-                db,
-                recommendation_id=recommendation_id,
-                symbol=rec.symbol,
-                shares=exec_shares,
-                execution_price=exec_price,
-                executed_at=datetime.now(timezone.utc),
-            )
+        broker = get_broker(db)
+
+        try:
+            if rec.action == "buy":
+                result = await broker.submit_buy(
+                    symbol=rec.symbol,
+                    qty=exec_shares,
+                    limit_price=exec_price,
+                    recommendation_id=recommendation_id,
+                )
+            else:
+                result = await broker.submit_sell(
+                    symbol=rec.symbol,
+                    qty=exec_shares,
+                    limit_price=exec_price,
+                    recommendation_id=recommendation_id,
+                )
+        except Exception as exc:
+            return json.dumps({"error": f"Broker order failed for {rec.action} {rec.symbol}: {exc}"})
+
+        if result["status"] != "filled":
+            return json.dumps({"error": f"Order not filled: status={result['status']} for {rec.symbol}"})
 
     return _to_json(result)
 
