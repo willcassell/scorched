@@ -4,6 +4,10 @@ An AI-powered stock trading bot you can actually talk to. Every weekday, Scorche
 
 Starts as paper trading with simulated money. When you're ready, connect an Alpaca brokerage account to trade for real.
 
+> **Who this is for:** Developers, hobbyist traders, and AI tinkerers who want to experiment with an autonomous trading system they fully control. This is a personal trading framework for learning and experimentation — not financial advice, not a production trading platform, and not a substitute for professional investment management. Past performance of any trading system does not guarantee future results. Use at your own risk.
+
+> **Safe defaults:** Scorched starts in paper-trading mode with simulated money. Before doing anything else: set `SETTINGS_PIN` in your `.env`, do not expose port 8000 to the public internet, and use a VPN or IP allowlist if running on a cloud VM. See [DEPLOY.md](DEPLOY.md) for full security guidance.
+
 ## New here? Start with [START_HERE.md](START_HERE.md)
 
 ---

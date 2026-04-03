@@ -3,9 +3,10 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tradebot"
-version = "0.1.0"
-description = "Simulated stock trading MCP server"
+name = "scorched"
+version = "1.0.0"
+description = "AI-powered stock trading assistant — Claude analyzes markets, manages a portfolio, and learns from its trades"
+license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [
     "mcp[cli]>=1.9.0",
