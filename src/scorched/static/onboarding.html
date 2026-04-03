@@ -1339,6 +1339,16 @@ var KEY_DEFS = [
     costNote: 'Free tier: 25 calls/day (the system uses ~20/day).',
   },
   {
+    id: 'twelvedata',
+    name: 'Twelvedata (RSI+)',
+    envKey: 'TWELVEDATA_API_KEY',
+    infoText: 'Enhanced RSI data. Provides RSI for your full watchlist (800 calls/day vs Alpha Vantage\'s 25/day limit). Covers all tracked symbols, not just screener picks.',
+    instructionSteps: [
+      ['Go to ', 'twelvedata.com', 'https://twelvedata.com/account/api-keys'],
+      ['Create a free account and get your API key'],
+    ],
+  },
+  {
     id: 'finnhub',
     name: 'Finnhub (Analyst Consensus)',
     envKey: 'FINNHUB_API_KEY',
@@ -1378,20 +1388,20 @@ function getDataStrategy() {
     return {
       required: ['anthropic'],
       recommended: [],
-      optional: ['fred', 'polygon', 'alpha_vantage', 'finnhub'],
+      optional: ['fred', 'polygon', 'alpha_vantage', 'twelvedata', 'finnhub'],
       message: "You can run with just the Anthropic key. The system works without the others -- they just improve analysis quality. Add them whenever you're ready.",
     };
   }
   if (mode === 'alpaca_paper') {
     return {
       required: ['anthropic', 'alpaca'],
-      recommended: ['fred', 'polygon', 'alpha_vantage', 'finnhub'],
+      recommended: ['fred', 'polygon', 'alpha_vantage', 'twelvedata', 'finnhub'],
       optional: [],
       message: "Get all the free data API keys for the best analysis quality. They only take a few minutes each to set up. Start with Alpaca paper trading for at least 2 weeks before considering live.",
     };
   }
   return {
-    required: ['anthropic', 'alpaca', 'fred', 'polygon', 'alpha_vantage', 'finnhub'],
+    required: ['anthropic', 'alpaca', 'fred', 'polygon', 'alpha_vantage', 'twelvedata', 'finnhub'],
     recommended: [],
     optional: [],
     message: "All data sources are required for live trading. You need every edge available when real money is on the line. Make sure you've tested in paper mode for at least 30 days first.",
@@ -1940,6 +1950,7 @@ function buildEnvObject() {
     FRED_API_KEY: state.keyValues.fred || '',
     POLYGON_API_KEY: state.keyValues.polygon || '',
     ALPHA_VANTAGE_API_KEY: state.keyValues.alpha_vantage || '',
+    TWELVEDATA_API_KEY: state.keyValues.twelvedata || '',
     FINNHUB_API_KEY: state.keyValues.finnhub || '',
     BROKER_MODE: state.tradingMode === 'paper' ? 'paper' : state.tradingMode || 'paper',
     ALPACA_API_KEY: state.keyValues.alpaca || '',

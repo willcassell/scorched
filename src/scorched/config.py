@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     min_cash_reserve_pct: Decimal = Decimal("0.10")  # keep ≥10% cash at all times
 
     alpha_vantage_api_key: str = ""
+    twelvedata_api_key: str = ""
     polygon_api_key: str = ""
     fred_api_key: str = ""
 

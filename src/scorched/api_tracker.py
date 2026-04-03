@@ -15,6 +15,7 @@ SERVICES = [
     "polygon",
     "finnhub",
     "alpha_vantage",
+    "twelvedata",
     "edgar",
     "claude",
     "alpaca",

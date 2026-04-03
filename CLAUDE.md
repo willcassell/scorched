@@ -58,7 +58,8 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/services/recommender.py` | Claude pipeline (4-call: analysis → decision → risk review → position mgmt), loads Phase 0 cache or falls back to inline fetch |
 | `src/scorched/services/research.py` | All data fetching: yfinance, FRED, Polygon, Alpha Vantage, EDGAR, Finnhub, momentum screener, options |
 | `src/scorched/services/technicals.py` | MACD, Bollinger Bands, MA crossover, support/resistance, volume profile, ATR calculations |
-| `src/scorched/services/finnhub_data.py` | Analyst consensus ratings and price targets from Finnhub |
+| `src/scorched/services/economic_calendar.py` | FRED-based upcoming economic release tracking (CPI, Jobs, FOMC, GDP, etc.) |
+| `src/scorched/services/finnhub_data.py` | Analyst consensus ratings, price targets, and congressional trading data from Finnhub |
 | `src/scorched/services/risk_review.py` | Call 3: Adversarial risk committee review of recommendations |
 | `src/scorched/services/position_mgmt.py` | Call 4: EOD position management review and stop suggestions |
 | `src/scorched/services/portfolio.py` | apply_buy(), apply_sell(), get_portfolio_state() |
@@ -80,6 +81,7 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/api/intraday.py` | POST /api/v1/intraday/evaluate — Claude exit evaluation + auto-sell |
 | `cron/tradebot_phase0.py` | Phase 0 cron: calls /api/v1/research/prefetch, sends timing via Telegram |
 | `cron/intraday_monitor.py` | Every 5 min position check during market hours |
+| `scripts/setup_cron.py` | Automated cron setup — auto-detects DST, installs/removes/checks cron jobs |
 | `src/scorched/api/system.py` | System health endpoints: /system/health, /system/errors, /system/trend, /system/market-date |
 | `src/scorched/models.py` | 8 SQLAlchemy ORM models (including ApiCallLog) |
 | `src/scorched/schemas.py` | Pydantic request/response schemas |
@@ -94,7 +96,7 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 
 **Call 1 — Analysis** (extended thinking, budget=16000 tokens):
 - System: `ANALYSIS_SYSTEM` — analyst persona, strategy injected, 6-step structured framework (macro → sector → screening → ranking → position review → output)
-- Input: market context + pre-filtered research context (top 25 symbols + held positions, with relative strength and ATR)
+- Input: market context + pre-filtered research context (top 25 symbols + held positions, with relative strength, ATR, economic calendar, and congressional trading data)
 - Output: `{"analysis": "...", "candidates": ["TICK1", ...]}` — validated via Pydantic `AnalysisOutput`
 
 **Call 2 — Decision** (standard, no extended thinking):
@@ -129,7 +131,10 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | FRED | Fed funds rate, 10Y/2Y yields, CPI, unemployment, retail sales, HY credit spread, PCE, industrial production | `FRED_API_KEY` |
 | Polygon.io | News headlines + article descriptions (paid tier provides full summaries) | `POLYGON_API_KEY` |
 | Alpha Vantage | RSI(14) for screener picks only (≤20 symbols, free tier = 25 calls/day) | `ALPHA_VANTAGE_API_KEY` |
+| Twelvedata | RSI(14) for full watchlist (800 calls/day free tier) | `TWELVEDATA_API_KEY` |
 | Finnhub | Analyst consensus ratings, price targets, recommendation trends | `FINNHUB_API_KEY` |
+| Finnhub (congressional) | Congressional stock trades (STOCK Act), last 90 days | `FINNHUB_API_KEY` (same key) |
+| FRED (economic calendar) | Upcoming major releases: CPI, Jobs, FOMC, GDP, PPI, PCE | `FRED_API_KEY` (same key) |
 | SEC EDGAR | Form 4 insider filing counts (free, no key; type unknown from API) | No |
 | Momentum screener | Top 20 S&P 500 by 5-day momentum (batch `yf.download()`, price > 20d MA, vol > 1M) | No |
 | Sector ETFs | 5-day returns for 11 sector ETFs (XLK, XLF, etc.) for relative strength calc | No |
@@ -148,6 +153,7 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | `ALPHA_VANTAGE_API_KEY` | "" | Empty = RSI data skipped |
 | `POLYGON_API_KEY` | "" | Empty = Polygon news skipped |
 | `FINNHUB_API_KEY` | "" | Empty = analyst consensus skipped |
+| `TWELVEDATA_API_KEY` | "" | Empty = Twelvedata RSI skipped (falls back to Alpha Vantage) |
 | `settings_pin` | "" | If set, PUT /api/v1/strategy requires this PIN |
 | `BROKER_MODE` | "paper" | "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live |
 | `ALPACA_API_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
@@ -211,6 +217,10 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Weekly reflection** — `POST /api/v1/market/weekly-reflection` reviews past week's trades vs outcomes. Claude (sonnet) extracts learnings, patterns, and strategy adjustments. Appends to playbook. Cron: Sunday 6 PM ET.
 - **Phase 0 cache location** — cache now writes to `/app/logs/` (Docker volume) instead of `/tmp` (ephemeral). Survives container restarts.
 - **Strategy coherence** — `analyst_guidance.md` hard rule #3 updated to match `strategy.json` sector limits (40% max, not "never two in same sector"). ATR and relative strength interpretation guides added.
+- **Twelvedata vs Alpha Vantage** — Twelvedata (800 calls/day) fetches RSI for ALL research symbols. Alpha Vantage (25 calls/day) only covers screener picks. Both are fetched in Phase 0; Twelvedata provides broader coverage.
+- **Cron setup script** — `python3 scripts/setup_cron.py` auto-detects DST and installs correct UTC cron times. Re-run after each DST change instead of manually editing crontab. Supports `--check`, `--remove`, `--dry-run`.
+- **Economic calendar** — uses FRED releases API (same key). Tracks CPI, Jobs, FOMC, GDP, PPI, PCE, retail sales, housing starts, consumer confidence, industrial production. Warns Claude about same-day releases.
+- **Congressional trading** — Finnhub free tier includes STOCK Act data. 90-day lookback. Not all symbols have data; empty results are normal.
 
 ## Environment
 
@@ -232,6 +242,11 @@ Optional (timezone — rarely needed):
 MARKET_TIMEZONE=America/New_York   # Default. Controls trading day boundaries (NYSE time).
                                     # Do NOT change for user display preferences — this is market time.
                                     # Only change if trading on a non-US exchange (e.g., Asia/Tokyo for TSE).
+```
+
+Optional (data sources):
+```
+TWELVEDATA_API_KEY=           # Free tier: 800 calls/day. RSI for full watchlist.
 ```
 
 `DATABASE_URL` is injected by Docker Compose. Only needed for local non-Docker runs:

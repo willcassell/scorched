@@ -138,7 +138,7 @@ http://localhost:8000/onboarding
 
 The setup wizard will walk you through:
 - Entering your Anthropic API key (required)
-- Adding optional data source keys (free — makes the research better)
+- Adding optional data source keys (free — makes the research better, including Twelvedata for broader RSI coverage)
 - Choosing your trading strategy (how aggressive, what sectors, hold period, etc.)
 
 ### Step 4: See Your Dashboard
@@ -235,7 +235,7 @@ Save and close. The bot will now run automatically every trading day.
 
 | Time (ET) | What the Bot Does |
 |-----------|-------------------|
-| **7:30 AM** | **Phase 0:** Prefetches all market data — prices, news, analyst ratings, insider activity, economic indicators, momentum screener. Caches for Phase 1. Zero LLM cost. |
+| **7:30 AM** | **Phase 0:** Prefetches all market data — prices, news, analyst ratings, insider activity, economic indicators, economic calendar, congressional trading, momentum screener. Caches for Phase 1. Zero LLM cost. |
 | **8:30 AM** | **Phase 1:** Loads cached data. Asks Claude to analyze ~80 stocks and pick up to 3 trades. Takes ~3 min (was 20+ min before Phase 0). |
 | **9:30 AM** | **Phase 1.5:** Safety check — blocks any buys where the stock gapped down overnight or the market looks dangerous. |
 | **9:35 AM** | **Phase 2:** Executes approved trades at the actual opening price. |
@@ -269,7 +269,7 @@ docker compose up -d --build
 ## FAQ
 
 **How much does it cost to run?**
-About $5-8/month for the Claude API (up to 7 AI calls per day, though the intraday monitor only calls Claude when triggered — most days it adds zero cost). Everything else is free (free data sources, free Docker, free Oracle Cloud VM if you use one).
+About $5-8/month for the Claude API (up to 7 AI calls per day, though the intraday monitor only calls Claude when triggered — most days it adds zero cost). Everything else is free — all data sources (FRED, Alpha Vantage, Twelvedata, Polygon, Finnhub) have free tiers, Docker is free, and Oracle Cloud VM is free if you use one.
 
 **Is this real money?**
 Not by default. It starts as paper trading with simulated $100,000. You can optionally connect an Alpaca brokerage account later if you want to go live.
@@ -305,3 +305,16 @@ Yes, twice a year. The cron jobs use UTC times, and US Eastern Time shifts by 1 
 - **Fall (around November 1):** Add 1 hour back. Example: `30 12` becomes `30 13`.
 
 To edit: run `crontab -e` on your server and update the hour values. The [timeanddate.com DST calculator](https://www.timeanddate.com/time/dst/) can confirm the exact dates each year.
+
+**Or use the automated setup script** (handles DST for you):
+```bash
+python3 scripts/setup_cron.py
+```
+This auto-detects your timezone (EDT vs EST), calculates the correct UTC times, and installs everything. When US clocks change for daylight saving, just re-run the same command. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.
+
+**How do I set up the cron jobs automatically?**
+Instead of manually editing your crontab, run:
+```bash
+python3 scripts/setup_cron.py
+```
+This auto-detects your timezone (EDT vs EST), calculates the correct UTC times, and installs everything. When US clocks change for daylight saving, just re-run the same command. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.

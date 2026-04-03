@@ -173,6 +173,10 @@ FRED_API_KEY=
 # https://www.alphavantage.co/support/#api-key
 ALPHA_VANTAGE_API_KEY=
 
+# Twelvedata — free tier 800 calls/day; RSI for full watchlist (much better than Alpha Vantage's 25/day)
+# https://twelvedata.com/account/api-keys
+TWELVEDATA_API_KEY=
+
 # Polygon.io — free tier; used for better news headlines
 # https://polygon.io/dashboard/signup
 POLYGON_API_KEY=
@@ -204,6 +208,16 @@ sudo ufw allow from YOUR_IP to any port 8000
 ## 4. Cron Setup (Automated Daily Cycle)
 
 The daily trading cycle is driven entirely by cron jobs on the VM. No AI orchestrator or external service is needed.
+
+### Automated setup (recommended)
+
+```bash
+python3 scripts/setup_cron.py
+```
+
+This auto-detects EDT/EST, calculates correct UTC cron times, and installs everything. Re-run after each DST change. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.
+
+### Manual setup (alternative)
 
 ### Edit the crontab
 
@@ -258,6 +272,8 @@ The cron jobs use UTC. US Eastern Time shifts twice a year:
 | Before DST (~Nov 1) | UTC-5 | `30 12 * * 1-5` | `30 13 * * 1-5` | `35 14 * * 1-5` |
 
 Update the crontab on the VM each time US clocks change.
+
+**Or just re-run the setup script:** `python3 scripts/setup_cron.py` — it auto-detects DST and updates the cron times for you.
 
 ### Manual triggers
 

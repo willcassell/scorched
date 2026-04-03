@@ -21,6 +21,7 @@ _ALLOWED_ENV_KEYS = {
     "FRED_API_KEY",
     "POLYGON_API_KEY",
     "ALPHA_VANTAGE_API_KEY",
+    "TWELVEDATA_API_KEY",
     "FINNHUB_API_KEY",
     "BROKER_MODE",
     "ALPACA_API_KEY",
@@ -114,6 +115,20 @@ async def _validate_alpha_vantage(key: str) -> tuple[bool, str]:
         return False, f"Error: {resp.status_code}"
 
 
+async def _validate_twelvedata(key: str) -> tuple[bool, str]:
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            "https://api.twelvedata.com/rsi",
+            params={"symbol": "AAPL", "interval": "1day", "time_period": 14, "apikey": key},
+        )
+        data = resp.json()
+        if data.get("code") == 401 or "unauthorized" in str(data).lower():
+            return False, "Invalid API key"
+        if data.get("values"):
+            return True, "Connected — RSI data available"
+        return False, data.get("message", "Unknown error")
+
+
 async def _validate_finnhub(key: str) -> tuple[bool, str]:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
@@ -153,6 +168,7 @@ _VALIDATORS = {
     "fred": lambda r: _validate_fred(r.key),
     "polygon": lambda r: _validate_polygon(r.key),
     "alpha_vantage": lambda r: _validate_alpha_vantage(r.key),
+    "twelvedata": lambda r: _validate_twelvedata(r.key),
     "finnhub": lambda r: _validate_finnhub(r.key),
     "alpaca": lambda r: _validate_alpaca(r.key, r.secret or ""),
 }
@@ -212,6 +228,7 @@ def _write_env(data: dict[str, str]) -> None:
         f"FRED_API_KEY={data.get('FRED_API_KEY', '')}",
         f"POLYGON_API_KEY={data.get('POLYGON_API_KEY', '')}",
         f"ALPHA_VANTAGE_API_KEY={data.get('ALPHA_VANTAGE_API_KEY', '')}",
+        f"TWELVEDATA_API_KEY={data.get('TWELVEDATA_API_KEY', '')}",
         f"FINNHUB_API_KEY={data.get('FINNHUB_API_KEY', '')}",
         "",
         "# Broker",
@@ -228,7 +245,7 @@ def _write_env(data: dict[str, str]) -> None:
     known = {
         "ANTHROPIC_API_KEY", "DATABASE_URL", "STARTING_CAPITAL",
         "FRED_API_KEY", "POLYGON_API_KEY", "ALPHA_VANTAGE_API_KEY",
-        "FINNHUB_API_KEY", "BROKER_MODE", "ALPACA_API_KEY",
+        "TWELVEDATA_API_KEY", "FINNHUB_API_KEY", "BROKER_MODE", "ALPACA_API_KEY",
         "ALPACA_SECRET_KEY", "HOST", "PORT", "SETTINGS_PIN",
     }
     extras = {k: v for k, v in data.items() if k not in known}
@@ -303,6 +320,7 @@ async def onboarding_status():
             "fred": bool(settings.fred_api_key),
             "polygon": bool(settings.polygon_api_key),
             "alpha_vantage": bool(settings.alpha_vantage_api_key),
+            "twelvedata": bool(settings.twelvedata_api_key),
             "finnhub": bool(settings.finnhub_api_key),
             "alpaca": bool(settings.alpaca_api_key and settings.alpaca_secret_key),
         },

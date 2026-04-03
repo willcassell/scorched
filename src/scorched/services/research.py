@@ -343,6 +343,53 @@ def _fetch_av_technicals_sync(symbols: list[str], api_key: str, tracker=None) ->
     return result
 
 
+def _fetch_twelvedata_rsi_sync(symbols: list[str], api_key: str, tracker=None) -> dict:
+    """
+    Fetch RSI(14) from Twelvedata for each symbol.
+    Returns {symbol: {"rsi": float, "signal": "overbought"|"oversold"|"neutral"}}
+    Free tier: 800 calls/day, 8 calls/min — 0.5s sleep gives margin.
+    """
+    import time
+    if not api_key or not symbols:
+        return {}
+    result = {}
+    base = "https://api.twelvedata.com/rsi"
+    for symbol in symbols:
+        try:
+            with _api_ctx(tracker, "twelvedata", "rsi", symbol):
+                resp = retry_get(
+                    base,
+                    label=f"Twelvedata {symbol}",
+                    params={
+                        "symbol": symbol,
+                        "interval": "1day",
+                        "time_period": 14,
+                        "apikey": api_key,
+                    },
+                    timeout=15,
+                )
+                data = resp.json()
+            # Rate limit response
+            if data.get("code") == 429:
+                logger.warning("Twelvedata rate limited — stopping RSI fetch")
+                break
+            # Error response
+            if "code" in data and data["code"] != 200:
+                logger.warning("Twelvedata error for %s: %s", symbol, data.get("message", ""))
+                continue
+            values = data.get("values")
+            if not values:
+                continue
+            rsi = round(float(values[0]["rsi"]), 1)
+            signal = "overbought" if rsi >= 70 else ("oversold" if rsi <= 30 else "neutral")
+            result[symbol] = {"rsi": rsi, "signal": signal}
+        except Exception:
+            logger.warning("Twelvedata RSI fetch failed for %s", symbol, exc_info=True)
+        # Rate limit: free tier is 8/min; 0.5s spacing gives margin
+        time.sleep(0.5)
+    return result
+
+
 def _fetch_premarket_prices_sync(symbols: list[str], tracker=None) -> dict[str, dict]:
     """Fetch pre-market prices for symbols using yfinance prepost=True.
 
@@ -1152,6 +1199,11 @@ async def fetch_polygon_news(symbols: list[str], api_key: str, tracker=None) -> 
 async def fetch_av_technicals(symbols: list[str], api_key: str, tracker=None) -> dict:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: _fetch_av_technicals_sync(symbols, api_key, tracker=tracker))
+
+
+async def fetch_twelvedata_rsi(symbols: list[str], api_key: str, tracker=None) -> dict:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _fetch_twelvedata_rsi_sync(symbols, api_key, tracker=tracker))
 
 
 async def fetch_momentum_screener(n: int = 20, tracker=None) -> list[str]:
