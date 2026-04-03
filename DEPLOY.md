@@ -191,17 +191,101 @@ SETTINGS_PIN=
 automatically to point to the internal Postgres container. If you ever run the server
 outside Docker, you'd need: `DATABASE_URL=postgresql+asyncpg://scorched:scorched@localhost:5432/scorched`
 
-### Firewall / port access
+### Network Security
 
-If your VM has a firewall, open port 8000:
+**Do not expose port 8000 directly to the public internet.** The dashboard, REST API, and MCP server all run on the same port. While mutation endpoints require a PIN, the safest approach is to restrict network access entirely.
+
+**Option A: Cloud firewall (simplest)**
+
+Restrict port 8000 to only your IP address:
 
 ```bash
-# Ubuntu/Debian with ufw
-sudo ufw allow 8000/tcp
+# Ubuntu/Debian
+sudo ufw allow from YOUR_HOME_IP to any port 8000
+sudo ufw deny 8000
 
-# Or restrict to specific IPs only (recommended)
-sudo ufw allow from YOUR_IP to any port 8000
+# Verify
+sudo ufw status
 ```
+
+Update `YOUR_HOME_IP` when your IP changes. To find your current IP: `curl ifconfig.me`
+
+**Option B: Tailscale VPN (recommended for mobile access)**
+
+Tailscale creates a private network between your devices. Install on both your local machine and the VM:
+
+```bash
+# On the VM
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Note the Tailscale IP (100.x.x.x)
+tailscale ip -4
+```
+
+Then access the bot via the Tailscale IP instead of the public IP. No port needs to be opened in the firewall.
+
+Update Claude Desktop MCP config to use the Tailscale IP:
+```json
+{
+  "mcpServers": {
+    "tradebot": {
+      "url": "http://100.x.x.x:8000/mcp"
+    }
+  }
+}
+```
+
+**Option C: Reverse proxy with auth (nginx)**
+
+If you need public access (e.g., for webhooks), put nginx in front with basic auth:
+
+```bash
+sudo apt install nginx apache2-utils
+
+# Create password file
+sudo htpasswd -c /etc/nginx/.htpasswd your_username
+
+# Configure nginx
+sudo tee /etc/nginx/sites-available/tradebot << 'NGINX'
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
+
+    # SSL certs (use certbot for free Let's Encrypt certs)
+    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+
+    location / {
+        auth_basic "Tradebot";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+NGINX
+
+sudo ln -s /etc/nginx/sites-available/tradebot /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### PIN Protection
+
+Set `SETTINGS_PIN` in your `.env` file to require a PIN for all mutation operations:
+
+```bash
+SETTINGS_PIN=your-secret-pin-here
+```
+
+This protects:
+- REST API: All POST/PUT endpoints require `X-Owner-Pin` header
+- MCP tools: `confirm_trade`, `reject_recommendation`, `get_recommendations` require `pin` parameter
+- Dashboard: Strategy settings changes require the PIN
+
+Read-only operations (portfolio view, market summary, playbook read) do not require a PIN.
+
+Cron scripts pass the PIN automatically via the `common.py:http_post()` helper.
 
 ---
 

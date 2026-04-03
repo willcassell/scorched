@@ -10,6 +10,7 @@ from .schemas import ConfirmTradeRequest, RejectTradeRequest
 from .services import portfolio as portfolio_svc
 from .services import recommender as recommender_svc
 from .services.playbook import get_playbook
+from .config import settings
 from .services.research import fetch_opening_prices, fetch_market_eod
 
 mcp = FastMCP("tradebot", instructions=(
@@ -17,6 +18,17 @@ mcp = FastMCP("tradebot", instructions=(
     "generate trade picks, confirm_trade after each executed trade, and get_portfolio for a "
     "current snapshot."
 ))
+
+
+def _check_pin(pin: str | None) -> str | None:
+    """Validate owner PIN for MCP mutation tools.
+    Returns an error JSON string if PIN is required but missing/wrong, else None.
+    """
+    if not settings.settings_pin:
+        return None  # No PIN configured — allow all
+    if pin != settings.settings_pin:
+        return json.dumps({"error": "Incorrect or missing PIN. Set the 'pin' parameter to your SETTINGS_PIN."})
+    return None
 
 
 def _decimal_default(obj):
@@ -37,13 +49,18 @@ def _to_json(obj) -> str:
     description="Research stocks and generate up to 3 buy/sell trade recommendations. "
     "Call this each morning before market open. Tradebot autonomously fetches market context "
     "(index levels, sector moves, upcoming earnings, macro news) — no context needed from you. "
-    "Returns cached results if already called today.",
+    "Returns cached results if already called today. "
+    "Requires the owner PIN if SETTINGS_PIN is configured.",
 )
-async def get_recommendations(date: str | None = None) -> str:
+async def get_recommendations(date: str | None = None, pin: str | None = None) -> str:
     """
     Args:
         date: ISO date string (YYYY-MM-DD). Defaults to today.
+        pin: Owner PIN. Required if SETTINGS_PIN is configured.
     """
+    err = _check_pin(pin)
+    if err:
+        return err
     session_date = None
     if date:
         from datetime import date as date_cls
@@ -76,15 +93,20 @@ async def get_opening_prices(symbols: list[str], date: str | None = None) -> str
 
 @mcp.tool(
     description="Confirm that a recommended trade was executed. Updates portfolio cash and positions. "
-    "Call this once per trade after execution.",
+    "Call this once per trade after execution. "
+    "Requires the owner PIN if SETTINGS_PIN is configured.",
 )
-async def confirm_trade(recommendation_id: int, execution_price: float, shares: float) -> str:
+async def confirm_trade(recommendation_id: int, execution_price: float, shares: float, pin: str | None = None) -> str:
     """
     Args:
         recommendation_id: The id from a get_recommendations response.
         execution_price: Actual fill price per share.
         shares: Number of shares traded (may differ slightly from suggested quantity).
+        pin: Owner PIN. Required if SETTINGS_PIN is configured.
     """
+    err = _check_pin(pin)
+    if err:
+        return err
     from sqlalchemy import select
     from .models import TradeRecommendation
 
@@ -137,14 +159,19 @@ async def get_portfolio() -> str:
 
 @mcp.tool(
     description="Mark a pending recommendation as rejected (you decided not to trade it). "
-    "This keeps the audit trail clean.",
+    "This keeps the audit trail clean. "
+    "Requires the owner PIN if SETTINGS_PIN is configured.",
 )
-async def reject_recommendation(recommendation_id: int, reason: str | None = None) -> str:
+async def reject_recommendation(recommendation_id: int, reason: str | None = None, pin: str | None = None) -> str:
     """
     Args:
         recommendation_id: The id from a get_recommendations response.
         reason: Optional reason for rejection.
+        pin: Owner PIN. Required if SETTINGS_PIN is configured.
     """
+    err = _check_pin(pin)
+    if err:
+        return err
     from sqlalchemy import select
     from .models import TradeRecommendation
 

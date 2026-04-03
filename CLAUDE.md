@@ -221,6 +221,7 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Cron setup script** — `python3 scripts/setup_cron.py` auto-detects DST and installs correct UTC cron times. Re-run after each DST change instead of manually editing crontab. Supports `--check`, `--remove`, `--dry-run`.
 - **Economic calendar** — uses FRED releases API (same key). Tracks CPI, Jobs, FOMC, GDP, PPI, PCE, retail sales, housing starts, consumer confidence, industrial production. Warns Claude about same-day releases.
 - **Congressional trading** — Finnhub free tier includes STOCK Act data. 90-day lookback. Not all symbols have data; empty results are normal.
+- **MCP auth** — MCP mutation tools (`confirm_trade`, `reject_recommendation`, `get_recommendations`) require the `pin` parameter when `SETTINGS_PIN` is set. Read-only tools don't require a PIN. This matches REST endpoint behavior.
 
 ## Environment
 

@@ -51,7 +51,7 @@ Cron (VM)
     ▼
 Scorched (FastAPI + PostgreSQL)
     │
-    ├── Phase 0: Fetches market data (yfinance, FRED, Polygon, Alpha Vantage, EDGAR)
+    ├── Phase 0: Fetches market data (yfinance, FRED, Polygon, Twelvedata, Finnhub, EDGAR)
     ├── Phase 0: Runs momentum screener (top 20 S&P 500 movers)
     ├── Phase 1: Calls Claude (claude-sonnet-4-6) — multi-call pipeline
     │     Call 1: Analysis w/ extended thinking → identify candidates
@@ -76,9 +76,10 @@ Scorched (FastAPI + PostgreSQL)
 | Database | PostgreSQL 16 via SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
 | Market data | yfinance (prices, fundamentals, options, earnings, news, insider) |
-| Macro data | FRED API (Fed rate, CPI, yield curve, PCE, credit spreads) |
+| Macro data | FRED API (Fed rate, CPI, yield curve, PCE, credit spreads, economic calendar) |
 | News | Polygon.io (preferred) + yfinance fallback |
-| Technicals | Alpha Vantage RSI(14) for screener picks |
+| Technicals | Twelvedata RSI(14) for full watchlist + Alpha Vantage fallback |
+| Analyst consensus | Finnhub (recommendation trends, congressional trading) |
 | Insider filings | SEC EDGAR Form 4 (free, no key) |
 | Holiday detection | `pandas-market-calendars` (NYSE calendar) |
 | Automation | cron on the VM |
@@ -153,17 +154,18 @@ The bot runs a **Streamable HTTP MCP server** at `http://host:8000/mcp`. Any MCP
 
 ## Database Schema
 
-7 tables in PostgreSQL:
+8 tables in PostgreSQL:
 
 | Table | Purpose |
 |-------|---------|
-| `portfolio` | Single-row: cash balance and starting capital |
+| `portfolio` | Single-row: cash balance, starting capital, peak value (drawdown tracking), benchmark start prices |
 | `positions` | One row per held ticker; avg cost basis updated on each buy |
 | `recommendation_sessions` | One row per trading day; caches raw research + Claude response + analysis thinking |
 | `trade_recommendations` | Up to 3 rows per session; status: `pending` → `confirmed`/`rejected` |
 | `trade_history` | Append-only audit log of executed trades |
 | `playbook` | Single-row living strategy document (updated by Claude before each session) |
 | `token_usage` | Per-call Claude API token tracking (input, output, thinking tokens) |
+| `api_call_log` | External API call tracking — service, endpoint, status, response time, errors |
 
 **Tax model:** simplified ST/LT classification based on `first_purchase_date` (no per-lot tracking). ST rate: 37%, LT rate: 20%.
 
@@ -178,22 +180,35 @@ tradebot/
 ├── entrypoint.sh           # Runs alembic upgrade then starts uvicorn
 ├── pyproject.toml
 ├── strategy.md             # Human-readable strategy reference
+├── analyst_guidance.md     # Signal interpretation tables + hard rules for Claude prompts
+├── advisor.md              # CPA/financial advisor reference document
 ├── DEPLOY.md               # Full deployment + cron guide
 ├── alembic/
 │   ├── env.py
 │   └── versions/           # Migration files
+├── cron/                   # Cron job scripts (phase 0, intraday monitor, etc.)
+├── scripts/                # Utility scripts (setup_cron.py, etc.)
 └── src/
     └── scorched/
         ├── main.py         # FastAPI app; mounts MCP at /mcp
         ├── config.py       # pydantic-settings Settings
         ├── database.py     # Async SQLAlchemy engine + session
-        ├── models.py       # 7 ORM models
+        ├── models.py       # 8 ORM models
         ├── schemas.py      # Pydantic request/response schemas
         ├── mcp_tools.py    # 7 MCP tool definitions (FastMCP)
         ├── tax.py          # classify_gain(), estimate_tax()
         ├── cost.py         # Claude token cost calculator
+        ├── tz.py           # market_today(), market_now(), MARKET_TZ
+        ├── api_tracker.py  # External API call tracking + health aggregation
+        ├── correlation.py  # 20-day return correlation check
+        ├── circuit_breaker.py  # Pre-execution gate (gap-down, SPY, VIX)
+        ├── drawdown_gate.py    # Portfolio drawdown enforcement
+        ├── trailing_stops.py   # ATR-based trailing stop logic
+        ├── intraday.py     # Pure intraday trigger check functions
+        ├── http_retry.py   # Retry wrapper for external HTTP APIs
         ├── static/
         │   └── dashboard.html
+        ├── broker/         # BrokerAdapter ABC, PaperBroker, AlpacaBroker
         ├── api/            # FastAPI routers
         │   ├── costs.py
         │   ├── market.py
@@ -201,13 +216,24 @@ tradebot/
         │   ├── portfolio.py
         │   ├── recommendations.py
         │   ├── strategy.py
-        │   └── trades.py
+        │   ├── trades.py
+        │   ├── system.py       # /system/health, /system/errors, /system/trend
+        │   ├── intraday.py     # Intraday trigger eval + auto-sell
+        │   ├── prefetch.py     # Phase 0 data prefetch
+        │   ├── onboarding.py
+        │   └── broker_status.py  # Position reconciliation
         └── services/
-            ├── portfolio.py    # apply_buy(), apply_sell(), get_portfolio_state()
-            ├── recommender.py  # Claude two-call pipeline + NYSE holiday check
-            ├── research.py     # All data fetching (yfinance, FRED, Polygon, AV, EDGAR)
-            ├── playbook.py     # Playbook read/update
-            └── strategy.py     # load_strategy() from strategy.json
+            ├── portfolio.py      # apply_buy(), apply_sell(), get_portfolio_state()
+            ├── recommender.py    # Claude 4-call pipeline + NYSE holiday check
+            ├── research.py       # All data fetching (yfinance, FRED, Polygon, Twelvedata, Finnhub, EDGAR)
+            ├── technicals.py     # MACD, Bollinger, MA crossover, support/resistance, ATR
+            ├── finnhub_data.py   # Analyst consensus, price targets, congressional trading
+            ├── economic_calendar.py  # FRED-based upcoming release tracking
+            ├── risk_review.py    # Call 3: adversarial risk committee review
+            ├── position_mgmt.py  # Call 4: EOD position management review
+            ├── reflection.py     # Weekly trade reflection + learnings
+            ├── playbook.py       # Playbook read/update
+            └── strategy.py       # load_strategy() from strategy.json
 ```
 
 ---
@@ -278,9 +304,20 @@ HOST=0.0.0.0
 FRED_API_KEY=                    # Free: https://fredaccount.stlouisfed.org
 ALPHA_VANTAGE_API_KEY=           # Free tier: 25 calls/day
 POLYGON_API_KEY=                 # Free tier for news
+FINNHUB_API_KEY=                 # Free: analyst consensus + congressional trading
+TWELVEDATA_API_KEY=              # Free tier: 800 calls/day, RSI for full watchlist
 
 # Optional: require a PIN to update strategy via dashboard
 SETTINGS_PIN=
+
+# Optional broker (default: paper trading, no broker needed)
+BROKER_MODE=paper                # "paper", "alpaca_paper", or "alpaca_live"
+ALPACA_API_KEY=
+ALPACA_SECRET_KEY=
+
+# Optional notifications
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 ```
 
 > **Note:** `DATABASE_URL` is not needed in `.env` when using Docker Compose — it's set automatically via the `environment` block in `docker-compose.yml`.
@@ -344,3 +381,18 @@ curl -s -X POST http://localhost:8000/api/v1/recommendations/generate \
 # Wipe database (destructive!)
 docker compose down -v
 ```
+
+---
+
+## Security
+
+**If running on a public VM, do not expose port 8000 directly to the internet.**
+
+The recommended setup is one of:
+- **Tailscale or WireGuard VPN** — only your devices can reach the bot
+- **Reverse proxy with auth** — nginx or Caddy with basic auth or client certificates
+- **Cloud firewall** — restrict port 8000 to your IP only (`sudo ufw allow from YOUR_IP to any port 8000`)
+
+MCP mutation tools (`confirm_trade`, `reject_recommendation`, `get_recommendations`) require the owner PIN when `SETTINGS_PIN` is configured. Read-only tools (`get_portfolio`, `get_market_summary`, `read_playbook`, `get_opening_prices`) do not require a PIN.
+
+REST mutation endpoints also require the PIN via the `X-Owner-Pin` header.
