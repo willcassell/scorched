@@ -105,8 +105,19 @@ def fetch_position_data(symbols: list[str]) -> dict:
     return data
 
 
+def is_market_day(today) -> bool:
+    """Return True if the NYSE is open today (excludes weekends and holidays)."""
+    import pandas_market_calendars as mcal
+    nyse = mcal.get_calendar("NYSE")
+    schedule = nyse.valid_days(start_date=today, end_date=today)
+    return len(schedule) > 0
+
+
 def main():
     now_est, today_str = now_et()
+
+    if not is_market_day(now_est.date()):
+        return
 
     if not is_market_hours(now_est):
         return

@@ -1,18 +1,13 @@
 {
-  "intraday_monitor": {
-    "enabled": true,
-    "position_drop_from_entry_pct": 5.0,
-    "position_drop_from_open_pct": 3.0,
-    "spy_intraday_drop_pct": 2.0,
-    "volume_surge_multiplier": 3.0,
-    "cooldown_minutes": 30
-  },
   "objective": "growth",
   "rec_style": "adaptive",
   "no_trade_threshold": "adaptive",
   "rec_explanation": "standard",
-  "hold_period": "3-10d",
-  "entry_style": [],
+  "hold_period": "2-6wk",
+  "entry_style": [
+    "breakout",
+    "mean_reversion"
+  ],
   "sell_discipline": "scale_out",
   "loss_management": "time_price_hybrid",
   "partial_sell": "adaptive",
@@ -29,5 +24,9 @@
   "sectors": [
     "no_preference"
   ],
-  "notes": ""
+  "notes": "",
+  "execution": {
+    "buy_limit_buffer_pct": 0.5,
+    "sell_limit_buffer_pct": 0.5
+  }
 }

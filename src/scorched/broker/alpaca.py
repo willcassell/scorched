@@ -98,7 +98,7 @@ class AlpacaBroker(BrokerAdapter):
                 symbol=symbol,
                 shares=filled_qty,
                 execution_price=filled_price,
-                executed_at=datetime.now(timezone.utc),
+                executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             trade_id = result.trade_id
             new_cash = result.new_cash_balance
@@ -191,7 +191,7 @@ class AlpacaBroker(BrokerAdapter):
                 symbol=symbol,
                 shares=filled_qty,
                 execution_price=filled_price,
-                executed_at=datetime.now(timezone.utc),
+                executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             trade_id = result.trade_id
             new_cash = result.new_cash_balance

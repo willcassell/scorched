@@ -66,6 +66,17 @@ def main():
     symbols = stored["symbols"]
     pending = recs
 
+    # Load execution config from strategy.json
+    try:
+        strat_path = Path(__file__).resolve().parent.parent / "strategy.json"
+        with open(strat_path) as sf:
+            strategy = json.load(sf)
+    except Exception:
+        strategy = {}
+    exec_cfg = strategy.get("execution", {})
+    buy_buffer_pct = exec_cfg.get("buy_limit_buffer_pct", 0.5) / 100  # default 0.5%
+    sell_buffer_pct = exec_cfg.get("sell_limit_buffer_pct", 0.5) / 100
+
     if not pending:
         send_telegram(f"TRADEBOT // {today_str} - Phase 2: no trades to confirm.")
         _cleanup_recs_file(recs_file)
@@ -112,7 +123,12 @@ def main():
             qty = float(r["quantity"])
             suggested = float(r["suggested_price"])
             open_price = opening_prices.get(symbol)
-            fill_price = open_price if open_price is not None else suggested
+            base_price = open_price if open_price is not None else suggested
+            # Apply slippage buffer: buy slightly above, sell slightly below
+            if action == "BUY":
+                fill_price = round(base_price * (1 + buy_buffer_pct), 2)
+            else:
+                fill_price = round(base_price * (1 - sell_buffer_pct), 2)
 
             try:
                 result = http_post("/api/v1/trades/confirm", {

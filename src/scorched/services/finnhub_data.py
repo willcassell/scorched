@@ -119,7 +119,7 @@ def fetch_congressional_trading_sync(
         try:
             with _api_ctx(tracker, "finnhub", "congress_trading", symbol):
                 data = retry_call(
-                    client.stock_congress_trading, symbol,
+                    client.congressional_trading, symbol,
                     label=f"Finnhub congress {symbol}",
                 )
             if data:

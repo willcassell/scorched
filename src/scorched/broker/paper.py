@@ -33,7 +33,7 @@ class PaperBroker(BrokerAdapter):
             symbol=symbol,
             shares=qty,
             execution_price=limit_price,
-            executed_at=datetime.now(timezone.utc),
+            executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         return {
             "status": "filled",
@@ -58,7 +58,7 @@ class PaperBroker(BrokerAdapter):
             symbol=symbol,
             shares=qty,
             execution_price=limit_price,
-            executed_at=datetime.now(timezone.utc),
+            executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         return {
             "status": "filled",
