@@ -28,7 +28,7 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
 
     if rec is None:
         raise HTTPException(status_code=404, detail=f"Recommendation {body.recommendation_id} not found")
-    if rec.status != "pending":
+    if rec.status not in ("pending", "submitted"):
         raise HTTPException(status_code=409, detail=f"Recommendation is already {rec.status}")
 
     broker = get_broker(db)
@@ -73,6 +73,23 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
             ),
         )
 
+    if result["status"] == "submitted":
+        # Alpaca fire-and-forget: order submitted, reconcile later
+        rec.status = "submitted"
+        await db.commit()
+        return ConfirmTradeResponse(
+            trade_id=0,
+            symbol=rec.symbol,
+            action=rec.action,
+            shares=result["filled_qty"],
+            execution_price=result["filled_avg_price"],
+            total_value=Decimal("0"),
+            new_cash_balance=Decimal("0"),
+            position=None,
+            realized_gain=None,
+            tax_category=None,
+        )
+
     if result["status"] != "filled":
         raise HTTPException(
             status_code=422,
@@ -105,6 +122,38 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
         realized_gain=result.get("realized_gain"),
         tax_category=result.get("tax_category"),
     )
+
+
+@router.post("/reconcile", dependencies=[Depends(require_owner_pin)])
+async def reconcile_orders(db: AsyncSession = Depends(get_db)):
+    """Check pending Alpaca orders for fills and record them in the local DB.
+
+    Call ~15 min after Phase 2 to catch orders that filled after submission.
+    Safe to call multiple times — already-reconciled orders are skipped.
+    """
+    from ..broker.alpaca import reconcile_pending_orders
+    from ..services.telegram import send_telegram
+
+    results = await reconcile_pending_orders(db)
+
+    # Build Telegram summary
+    if results:
+        filled = [r for r in results if r["status"] == "filled"]
+        unfilled = [r for r in results if r["status"] != "filled"]
+        msg_parts = []
+        if filled:
+            msg_parts.append("Fills recorded:\n" + "\n".join(
+                f"  {r['action'].upper()} {r['symbol']} — {r['filled_qty']}sh @ ${r['filled_price']}"
+                for r in filled
+            ))
+        if unfilled:
+            msg_parts.append("Not filled:\n" + "\n".join(
+                f"  {r['action'].upper()} {r['symbol']} — {r['status']}"
+                for r in unfilled
+            ))
+        await send_telegram("TRADEBOT // Order Reconciliation\n" + "\n".join(msg_parts))
+
+    return {"reconciled": len(results), "results": results}
 
 
 @router.post("/{recommendation_id}/reject", response_model=RejectTradeResponse, dependencies=[Depends(require_owner_pin)])

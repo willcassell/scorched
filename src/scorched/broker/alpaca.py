@@ -23,8 +23,10 @@ class AlpacaBroker(BrokerAdapter):
     Uses limit orders by default (limit_price from caller). Falls back to
     market orders only if limit_price is None.
 
-    The local DB is updated after the order fills so that the dashboard,
-    portfolio endpoint, and tax logic all stay consistent.
+    Orders are fire-and-forget: submit_buy/sell submit the order and record
+    it as a pending fill immediately.  A separate reconciliation step
+    (reconcile_pending_orders) checks Alpaca for fills and updates the local
+    DB.  This avoids blocking Phase 2 with polling timeouts.
     """
 
     def __init__(self, db: AsyncSession, client: TradingClient):
@@ -73,45 +75,27 @@ class AlpacaBroker(BrokerAdapter):
         )
 
         order = await self._submit_order_with_retry(order_data)
+        order_id = str(order.id)
+        logger.info("Submitted BUY %s x%s limit=$%s — order_id=%s", symbol, qty, limit_price, order_id)
 
-        filled_order = await self._wait_for_fill(str(order.id), timeout=60)
-
-        status = filled_order.status.value if hasattr(filled_order.status, 'value') else str(filled_order.status)
-        filled_qty = Decimal(str(filled_order.filled_qty)) if filled_order.filled_qty else Decimal("0")
-        filled_price = Decimal(str(filled_order.filled_avg_price)) if filled_order.filled_avg_price else limit_price
-
-        trade_id = None
-        new_cash = None
-        if status == "filled" and filled_qty > 0:
-            # Write pending fill for crash recovery before DB recording
-            write_pending_fill(
-                order_id=str(order.id),
-                symbol=symbol,
-                action="buy",
-                qty=filled_qty,
-                fill_price=filled_price,
-                recommendation_id=recommendation_id,
-            )
-            result = await apply_buy(
-                self.db,
-                recommendation_id=recommendation_id,
-                symbol=symbol,
-                shares=filled_qty,
-                execution_price=filled_price,
-                executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            )
-            trade_id = result.trade_id
-            new_cash = result.new_cash_balance
-            remove_pending_fill(str(order.id))
+        # Record as pending — reconcile_pending_orders will check for fills later
+        write_pending_fill(
+            order_id=order_id,
+            symbol=symbol,
+            action="buy",
+            qty=qty,
+            fill_price=limit_price,  # placeholder until actual fill
+            recommendation_id=recommendation_id,
+        )
 
         return {
-            "status": status,
-            "filled_qty": filled_qty,
-            "filled_avg_price": filled_price,
+            "status": "submitted",
+            "filled_qty": Decimal("0"),
+            "filled_avg_price": limit_price,
             "symbol": symbol,
-            "order_id": str(order.id),
-            "trade_id": trade_id,
-            "new_cash_balance": new_cash,
+            "order_id": order_id,
+            "trade_id": None,
+            "new_cash_balance": None,
         }
 
     def _get_position_sync(self, symbol: str):
@@ -164,51 +148,29 @@ class AlpacaBroker(BrokerAdapter):
         )
 
         order = await self._submit_order_with_retry(order_data)
+        order_id = str(order.id)
+        logger.info("Submitted SELL %s x%s limit=$%s — order_id=%s", symbol, qty, limit_price, order_id)
 
-        filled_order = await self._wait_for_fill(str(order.id), timeout=60)
-
-        status = filled_order.status.value if hasattr(filled_order.status, 'value') else str(filled_order.status)
-        filled_qty = Decimal(str(filled_order.filled_qty)) if filled_order.filled_qty else Decimal("0")
-        filled_price = Decimal(str(filled_order.filled_avg_price)) if filled_order.filled_avg_price else limit_price
-
-        realized_gain = None
-        tax_category = None
-        trade_id = None
-        new_cash = None
-        if status == "filled" and filled_qty > 0:
-            # Write pending fill for crash recovery before DB recording
-            write_pending_fill(
-                order_id=str(order.id),
-                symbol=symbol,
-                action="sell",
-                qty=filled_qty,
-                fill_price=filled_price,
-                recommendation_id=recommendation_id,
-            )
-            result = await apply_sell(
-                self.db,
-                recommendation_id=recommendation_id,
-                symbol=symbol,
-                shares=filled_qty,
-                execution_price=filled_price,
-                executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            )
-            trade_id = result.trade_id
-            new_cash = result.new_cash_balance
-            realized_gain = result.realized_gain
-            tax_category = result.tax_category
-            remove_pending_fill(str(order.id))
+        # Record as pending — reconcile_pending_orders will check for fills later
+        write_pending_fill(
+            order_id=order_id,
+            symbol=symbol,
+            action="sell",
+            qty=qty,
+            fill_price=limit_price,  # placeholder until actual fill
+            recommendation_id=recommendation_id,
+        )
 
         return {
-            "status": status,
-            "filled_qty": filled_qty,
-            "filled_avg_price": filled_price,
+            "status": "submitted",
+            "filled_qty": Decimal("0"),
+            "filled_avg_price": limit_price,
             "symbol": symbol,
-            "order_id": str(order.id),
-            "trade_id": trade_id,
-            "new_cash_balance": new_cash,
-            "realized_gain": realized_gain,
-            "tax_category": tax_category,
+            "order_id": order_id,
+            "trade_id": None,
+            "new_cash_balance": None,
+            "realized_gain": None,
+            "tax_category": None,
         }
 
     async def get_positions(self) -> list[dict]:
@@ -246,18 +208,121 @@ class AlpacaBroker(BrokerAdapter):
             "filled_avg_price": order.filled_avg_price,
         }
 
-    async def _wait_for_fill(self, order_id: str, timeout: int = 60):
-        """Poll order status until terminal state or timeout."""
-        terminal = {"filled", "canceled", "expired", "rejected"}
-        loop = asyncio.get_running_loop()
-        elapsed = 0
-        interval = 2
-        while elapsed < timeout:
-            order = await loop.run_in_executor(None, self._get_order_sync, order_id)
+
+async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
+    """Check all pending orders on Alpaca and record fills in local DB.
+
+    Returns a list of reconciliation results for each pending order.
+    Called by the reconcile cron job ~15 min after Phase 2.
+    """
+    from .pending_fills import get_pending_fills, remove_pending_fill
+    from ..config import settings
+
+    if settings.broker_mode not in ("alpaca_paper", "alpaca_live"):
+        return []
+
+    is_paper = settings.broker_mode == "alpaca_paper"
+    client = TradingClient(
+        api_key=settings.alpaca_api_key,
+        secret_key=settings.alpaca_secret_key,
+        paper=is_paper,
+    )
+
+    pending = get_pending_fills()
+    if not pending:
+        logger.info("No pending orders to reconcile")
+        return []
+
+    logger.info("Reconciling %d pending orders", len(pending))
+    loop = asyncio.get_running_loop()
+    results = []
+
+    for fill in pending:
+        order_id = fill["order_id"]
+        symbol = fill["symbol"]
+        action = fill["action"]
+        recommendation_id = fill.get("recommendation_id")
+
+        try:
+            order = await loop.run_in_executor(
+                None, lambda oid=order_id: client.get_order_by_id(order_id=oid)
+            )
             status = order.status.value if hasattr(order.status, 'value') else str(order.status)
-            if status in terminal:
-                return order
-            await asyncio.sleep(interval)
-            elapsed += interval
-        logger.warning("Order %s did not reach terminal state in %ds", order_id, timeout)
-        return order
+
+            if status == "filled":
+                filled_qty = Decimal(str(order.filled_qty))
+                filled_price = Decimal(str(order.filled_avg_price))
+
+                if action == "buy":
+                    result = await apply_buy(
+                        db,
+                        recommendation_id=recommendation_id,
+                        symbol=symbol,
+                        shares=filled_qty,
+                        execution_price=filled_price,
+                        executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    )
+                    remove_pending_fill(order_id)
+                    results.append({
+                        "symbol": symbol,
+                        "action": action,
+                        "status": "filled",
+                        "filled_qty": str(filled_qty),
+                        "filled_price": str(filled_price),
+                        "trade_id": result.trade_id,
+                    })
+                    logger.info("Reconciled BUY %s: %s shares @ $%s", symbol, filled_qty, filled_price)
+
+                elif action == "sell":
+                    result = await apply_sell(
+                        db,
+                        recommendation_id=recommendation_id,
+                        symbol=symbol,
+                        shares=filled_qty,
+                        execution_price=filled_price,
+                        executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    )
+                    remove_pending_fill(order_id)
+                    results.append({
+                        "symbol": symbol,
+                        "action": action,
+                        "status": "filled",
+                        "filled_qty": str(filled_qty),
+                        "filled_price": str(filled_price),
+                        "trade_id": result.trade_id,
+                        "realized_gain": str(result.realized_gain) if result.realized_gain else None,
+                    })
+                    logger.info("Reconciled SELL %s: %s shares @ $%s", symbol, filled_qty, filled_price)
+
+            elif status in ("canceled", "expired", "rejected"):
+                # Terminal non-fill — clean up pending record, mark rec as pending again
+                remove_pending_fill(order_id)
+                results.append({
+                    "symbol": symbol,
+                    "action": action,
+                    "status": status,
+                    "filled_qty": "0",
+                    "filled_price": None,
+                })
+                logger.info("Order %s for %s %s reached terminal: %s", order_id, action, symbol, status)
+
+            else:
+                # Still open (new, accepted, partially_filled, etc.)
+                results.append({
+                    "symbol": symbol,
+                    "action": action,
+                    "status": f"still_open ({status})",
+                    "filled_qty": str(order.filled_qty or 0),
+                    "filled_price": None,
+                })
+                logger.info("Order %s for %s %s still open: %s", order_id, action, symbol, status)
+
+        except Exception as exc:
+            logger.error("Failed to reconcile order %s for %s: %s", order_id, symbol, exc, exc_info=True)
+            results.append({
+                "symbol": symbol,
+                "action": action,
+                "status": f"error: {exc}",
+            })
+
+    return results

@@ -140,13 +140,18 @@ def main():
                 if "error" in result:
                     print(f"  skipping {symbol}: {result['error']}")
                     continue
-                gain = result.get("realized_gain")
-                actual_price = float(result.get("execution_price", fill_price))
-                slip = actual_price - suggested
-                trades_detail += f"  {action} {symbol} - {qty:.0f}sh @ ${actual_price:.2f} (slippage: {'+' if slip>=0 else ''}{slip:.2f})\n"
-                if gain is not None:
-                    gain_f = float(gain)
-                    trades_detail += f"    Realized P&L: {'+' if gain_f>=0 else ''}${gain_f:,.2f}\n"
+                trade_id = result.get("trade_id", 0)
+                if trade_id == 0:
+                    # Alpaca fire-and-forget: order submitted, will reconcile later
+                    trades_detail += f"  {action} {symbol} - {qty:.0f}sh SUBMITTED @ limit ${fill_price:.2f} (reconcile in ~15min)\n"
+                else:
+                    gain = result.get("realized_gain")
+                    actual_price = float(result.get("execution_price", fill_price))
+                    slip = actual_price - suggested
+                    trades_detail += f"  {action} {symbol} - {qty:.0f}sh @ ${actual_price:.2f} (slippage: {'+' if slip>=0 else ''}{slip:.2f})\n"
+                    if gain is not None:
+                        gain_f = float(gain)
+                        trades_detail += f"    Realized P&L: {'+' if gain_f>=0 else ''}${gain_f:,.2f}\n"
             except urllib.error.HTTPError as e:
                 body = e.read().decode() if hasattr(e, 'read') else str(e)
                 print(f"confirm_trade {symbol} failed ({e.code}): {body}")

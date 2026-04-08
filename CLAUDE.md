@@ -40,7 +40,8 @@ The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator requ
 - `30 7 * * 1-5` ET (7:30 AM ET) → Phase 0: POST `/api/v1/research/prefetch` (data fetch, zero LLM cost)
 - `30 8 * * 1-5` ET (8:30 AM ET) → Phase 1: POST `/api/v1/recommendations/generate` (loads Phase 0 cache, Claude calls only)
 - `30 9 * * 1-5` ET (9:30 AM ET) → Phase 1.5: Circuit breaker gate (`cron/tradebot_phase1_5.py`)
-- `35 9 * * 1-5` ET (9:35 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec
+- `35 9 * * 1-5` ET (9:35 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec (fire-and-forget for Alpaca)
+- `50 9 * * 1-5` ET (9:50 AM ET) → Phase 2.5: POST `/api/v1/trades/reconcile` — checks pending Alpaca orders for fills
 - `*/5 9-15 * * 1-5` ET → Intraday: Position monitoring with trigger-based Claude exit evaluation (9:35 AM–3:55 PM ET, self-gates)
 - `01 16 * * 1-5` ET (4:01 PM ET) → Phase 3: EOD summary + playbook update
 
@@ -73,7 +74,8 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/circuit_breaker.py` | Pre-execution gate checks (stock gap, SPY drop, VIX spike) |
 | `src/scorched/trailing_stops.py` | ATR-based trailing stop logic — pure functions |
 | `src/scorched/services/reflection.py` | Weekly trade reflection: reviews outcomes, extracts learnings |
-| `src/scorched/broker/pending_fills.py` | Crash recovery: JSON-based pending fill records for Alpaca trades |
+| `src/scorched/broker/pending_fills.py` | Pending fill tracking: submitted orders awaiting Alpaca fill + crash recovery |
+| `cron/tradebot_reconcile.py` | Phase 2.5 cron: reconciles pending Alpaca orders, records fills in local DB |
 | `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
 | `src/scorched/api_tracker.py` | API call tracking — sync recorder, health aggregation, cleanup |
 | `src/scorched/tz.py` | Timezone utility: `market_today()`, `market_now()`, `MARKET_TZ` — all trading-day logic uses this |
@@ -172,7 +174,7 @@ The system supports three broker modes, controlled by `BROKER_MODE` in `.env`:
 
 **Architecture:** `BrokerAdapter` ABC in `src/scorched/broker/` with `PaperBroker` and `AlpacaBroker` implementations. `get_broker(db)` factory reads `settings.broker_mode`. The trade confirmation endpoint (`POST /api/v1/trades/confirm`) routes through the broker adapter — no other endpoints change.
 
-**AlpacaBroker flow:** Submits limit orders via `alpaca-py` SDK → polls for fill (2s interval, 60s timeout) → mirrors fill into local DB (Portfolio, Position, TradeHistory) for dashboard/tax consistency.
+**AlpacaBroker flow (fire-and-forget):** Submits limit orders via `alpaca-py` SDK → records order as pending fill → returns immediately. Phase 2.5 reconciliation cron (9:50 AM ET, 15 min later) checks all pending orders on Alpaca → records fills into local DB (Portfolio, Position, TradeHistory) → sends Telegram summary. This avoids blocking Phase 2 with polling timeouts that caused ghost positions (orders filling on Alpaca without local DB recording).
 
 **Circuit Breaker (Phase 1.5):** Runs at 9:30 AM ET, between Phase 1 (recommendations) and Phase 2 (execution). Gates buy orders based on:
 - Individual stock gap-down from prior close (default: >2%)
@@ -206,8 +208,9 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Benchmarks** — portfolio return compared against SPY, QQQ, RSP (equal weight), MTUM (momentum factor), SPMO (S&P momentum). DJI was removed. Trade performance metrics (win rate, profit factor, expectancy, max drawdown, avg holding period) computed from TradeHistory.
 - **Drawdown gate** — blocks all BUY recommendations when portfolio drops >8% from peak equity (configurable in `strategy.json` under `drawdown_gate`). Sells always pass. Peak is tracked in `Portfolio.peak_portfolio_value` column.
 - **Correlation check** — before accepting a BUY, computes 20-day return correlation with all held positions. r > 0.8 triggers a warning prepended to `key_risks` and a CORRELATION WARNINGS section in the risk review prompt.
-- **Crash recovery** — Alpaca fills write a pending-fill JSON record before DB recording. On startup, `main.py` reconciles any unrecorded fills. Records live at `/app/logs/pending_fills.json` (Docker volume).
-- **AlpacaBroker delegates to apply_buy/apply_sell** — no longer has duplicate portfolio logic. Same pattern as PaperBroker.
+- **Pending fills** — `pending_fills.json` tracks submitted Alpaca orders awaiting fill confirmation. Phase 2.5 reconciliation cron checks these and records fills. Also serves as crash recovery — on startup, `main.py` reconciles any unrecorded fills. Records live at `/app/logs/pending_fills.json` (Docker volume).
+- **AlpacaBroker is fire-and-forget** — `submit_buy/sell` submit the order and write a pending fill record, then return `status: "submitted"` immediately. No polling. `reconcile_pending_orders()` (called by Phase 2.5 cron) checks Alpaca for fills and calls `apply_buy/apply_sell` to record them in the local DB. PaperBroker still fills synchronously.
+- **Limit order slippage buffer** — Phase 2 adds a configurable buffer to limit prices: buys at open + 0.5%, sells at open - 0.5% (configurable in `strategy.json` under `execution.buy_limit_buffer_pct` / `sell_limit_buffer_pct`). Prevents timeouts on stocks that move away from the opening print before the order reaches Alpaca.
 - **Pydantic validation** — all Claude JSON outputs validated via `AnalysisOutput`, `DecisionOutput`, `RiskReviewOutput` models. Graceful fallback on validation failure.
 - **HTTP retry** — external data APIs (FRED, Polygon, Alpha Vantage, EDGAR, Finnhub) wrapped with `retry_get`/`retry_call` (3 attempts, 1s/3s/5s backoff on transient errors only).
 - **Timezone-aware datetimes** — all `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`. For DB queries against `TIMESTAMP WITHOUT TIME ZONE` columns, use `.replace(tzinfo=None)` to avoid asyncpg comparison errors.
