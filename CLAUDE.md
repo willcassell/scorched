@@ -141,8 +141,8 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | FRED (economic calendar) | Upcoming major releases: CPI, Jobs, FOMC, GDP, PPI, PCE | `FRED_API_KEY` (same key) |
 | SEC EDGAR | Form 4 insider filing counts (free, no key; type unknown from API) | No |
 | Momentum screener | Top 20 S&P 500 by 5-day momentum (batch `yf.download()`, price > 20d MA, vol > 1M) | No |
-| Sector ETFs | 5-day returns for 11 sector ETFs (XLK, XLF, etc.) for relative strength calc | No |
-| Technical analysis | MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile, ATR (computed from yfinance history) | No |
+| Sector ETFs | 5-day returns for 11 sector ETFs via Alpaca bars (XLK, XLF, etc.) for relative strength calc | No |
+| Technical analysis | MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile, ATR (computed from Alpaca bar history) | No |
 | Options (yfinance) | Put/call ratio, ATM IV, implied 30-day move — fetched only for candidates | No |
 
 ## Settings (config.py)
@@ -176,7 +176,7 @@ The system supports three broker modes, controlled by `BROKER_MODE` in `.env`:
 
 **Architecture:** `BrokerAdapter` ABC in `src/scorched/broker/` with `PaperBroker` and `AlpacaBroker` implementations. `get_broker(db)` factory reads `settings.broker_mode`. The trade confirmation endpoint (`POST /api/v1/trades/confirm`) routes through the broker adapter — no other endpoints change.
 
-**AlpacaBroker flow (fire-and-forget):** Submits limit orders via `alpaca-py` SDK → records order as pending fill → returns immediately. Phase 2.5 reconciliation cron (9:50 AM ET, 15 min later) checks all pending orders on Alpaca → records fills into local DB (Portfolio, Position, TradeHistory) → sends Telegram summary. This avoids blocking Phase 2 with polling timeouts that caused ghost positions (orders filling on Alpaca without local DB recording).
+**AlpacaBroker flow (fire-and-forget):** Submits limit orders via `alpaca-py` SDK → records order as pending fill → returns immediately. Phase 2.5 reconciliation cron (10:30 AM ET, 15 min later) checks all pending orders on Alpaca → records fills into local DB (Portfolio, Position, TradeHistory) → sends Telegram summary. This avoids blocking Phase 2 with polling timeouts that caused ghost positions (orders filling on Alpaca without local DB recording).
 
 **Circuit Breaker (Phase 1.5):** Runs at 9:30 AM ET, between Phase 1 (recommendations) and Phase 2 (execution). Gates buy orders based on:
 - Individual stock gap-down from prior close (default: >2%)
@@ -216,19 +216,21 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Alpaca Data API** — `alpaca_data.py` provides snapshots, bars (IEX feed), news, and screener via `StockHistoricalDataClient`, `NewsClient`, and `ScreenerClient`. All use IEX feed (free tier). Clients are lazy-initialized (created on first use). SIP feed requires $9/mo subscription. yfinance still used for fundamentals, options, earnings, insider data, and index symbols (^GSPC, ^VIX etc. — Alpaca only covers equities/ETFs).
 - **Phase 2 at 10:15 AM** — execution shifted from 9:35 AM to 10:15 AM to avoid opening range volatility (first 30 min sees 2-3x normal volatility and 0.5-1.5% overshooting). Phase 2.5 reconciliation shifted to 10:30 AM accordingly.
 - **Alpaca BarSet** — `get_stock_bars()` returns a `BarSet` Pydantic model, not a dict. Use `bars.data` to access the underlying `{symbol: [Bar, ...]}` dict — `.get()` doesn't work on `BarSet` directly.
+- **Robust JSON parsing** — `parse_json_response()` in `claude_client.py` uses a 4-strategy cascade: direct `json.loads`, `raw_decode` (handles trailing text), markdown code fence extraction, and first-brace scan. Prevents Phase 1 crashes when Claude returns JSON followed by commentary.
+- **analyst_guidance.md mount** — volume-mounted in `docker-compose.yml` (alongside `strategy.json`). Changes are reflected without rebuilding. If missing, Claude runs without hard rules — analysis quality degrades silently.
 - **Pydantic validation** — all Claude JSON outputs validated via `AnalysisOutput`, `DecisionOutput`, `RiskReviewOutput` models. Graceful fallback on validation failure.
 - **HTTP retry** — external data APIs (FRED, Polygon, Alpha Vantage, EDGAR, Finnhub) wrapped with `retry_get`/`retry_call` (3 attempts, 1s/3s/5s backoff on transient errors only).
 - **Timezone-aware datetimes** — all `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`. For DB queries against `TIMESTAMP WITHOUT TIME ZONE` columns, use `.replace(tzinfo=None)` to avoid asyncpg comparison errors.
 - **Trading day timezone** — NEVER use `date.today()` or `datetime.today()` in the backend. Always use `market_today()` or `market_now()` from `src/scorched/tz.py`. These return dates/times in NYSE timezone (`America/New_York`), ensuring the trading day is consistent regardless of server timezone. The Docker container also sets `TZ=America/New_York` as a safety net. The dashboard fetches the market date from `/api/v1/system/market-date` instead of using browser-local JS dates.
 - **Trailing stops** — ATR-based trailing stops in `trailing_stops.py`. High-water mark ratchets up, stop follows at `hwm - 2*ATR` (or -5% floor). Initialized on buy in `apply_buy()`. Tracked in Position model (`trailing_stop_price`, `high_water_mark`). Checked in intraday monitor.
-- **Pre-market data** — `_fetch_premarket_prices_sync()` fetches pre-market prices via `yf.download(prepost=True)`. Displayed per symbol in research context. Gap-up >5% flagged as chase risk. `check_gap_up_gate()` added to circuit breaker.
+- **Pre-market data** — `_fetch_premarket_prices_sync()` fetches pre-market/current prices via Alpaca snapshots (latest trade + previous daily bar close). Displayed per symbol in research context. Gap-up >5% flagged as chase risk. `check_gap_up_gate()` added to circuit breaker.
 - **Weekly reflection** — `POST /api/v1/market/weekly-reflection` reviews past week's trades vs outcomes. Claude (sonnet) extracts learnings, patterns, and strategy adjustments. Appends to playbook. Cron: Sunday 6 PM ET.
 - **Phase 0 cache location** — cache now writes to `/app/logs/` (Docker volume) instead of `/tmp` (ephemeral). Survives container restarts.
 - **Strategy coherence** — `analyst_guidance.md` hard rule #3 updated to match `strategy.json` sector limits (40% max, not "never two in same sector"). ATR and relative strength interpretation guides added.
 - **Twelvedata vs Alpha Vantage** — Twelvedata (800 calls/day) fetches RSI for ALL research symbols. Alpha Vantage (25 calls/day) only covers screener picks. Both are fetched in Phase 0; Twelvedata provides broader coverage.
 - **Cron setup script** — `python3 scripts/setup_cron.py` auto-detects DST and installs correct UTC cron times. Re-run after each DST change instead of manually editing crontab. Supports `--check`, `--remove`, `--dry-run`.
 - **Economic calendar** — uses FRED releases API (same key). Tracks CPI, Jobs, FOMC, GDP, PPI, PCE, retail sales, housing starts, consumer confidence, industrial production. Warns Claude about same-day releases.
-- **Congressional trading** — Finnhub free tier includes STOCK Act data. 90-day lookback. Not all symbols have data; empty results are normal.
+- **Congressional trading** — Finnhub free tier includes STOCK Act data. 90-day lookback via `_from`/`to` date params (required since finnhub-python 2.4.27). Not all symbols have data; empty results are normal.
 - **MCP auth** — MCP mutation tools (`confirm_trade`, `reject_recommendation`, `get_recommendations`) require the `pin` parameter when `SETTINGS_PIN` is set. Read-only tools don't require a PIN. This matches REST endpoint behavior.
 - **MCP confirm_trade routes through broker** — MCP `confirm_trade` uses `get_broker(db)` → `broker.submit_buy/sell()`, same as the REST endpoint. This ensures Alpaca orders are actually submitted (not just recorded in DB) regardless of whether the trade is confirmed via REST or MCP.
 
