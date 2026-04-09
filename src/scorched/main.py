@@ -44,8 +44,14 @@ async def lifespan(app: FastAPI):
 
 
 async def _reconcile_pending_fills() -> None:
-    """Replay pending fills that were confirmed by Alpaca but not yet recorded in DB."""
-    from .services.portfolio import apply_buy, apply_sell
+    """Reconcile pending fills on startup using Alpaca order status.
+
+    With fire-and-forget orders, pending fills are written at submission
+    time (before Alpaca confirms).  On restart we must check Alpaca for
+    the actual fill status and price — never blindly replay the placeholder
+    limit price from the pending record.
+    """
+    from .broker.alpaca import reconcile_pending_orders
     from .services.telegram import send_telegram
 
     pending = get_pending_fills()
@@ -53,73 +59,30 @@ async def _reconcile_pending_fills() -> None:
         return
 
     logging.critical(
-        "CRASH RECOVERY: Found %d pending fill(s) from previous run", len(pending)
+        "STARTUP RECONCILIATION: Found %d pending order(s) from previous run", len(pending)
     )
 
-    recovered = []
-    failed = []
-    for fill in pending:
-        order_id = fill["order_id"]
-        symbol = fill["symbol"]
-        action = fill["action"]
-        qty = Decimal(fill["qty"])
-        price = Decimal(fill["fill_price"])
-        rec_id = fill.get("recommendation_id")
+    try:
+        async with AsyncSessionLocal() as db:
+            results = await reconcile_pending_orders(db)
 
-        try:
-            async with AsyncSessionLocal() as db:
-                if action == "buy":
-                    await apply_buy(
-                        db,
-                        recommendation_id=rec_id,
-                        symbol=symbol,
-                        shares=qty,
-                        execution_price=price,
-                        executed_at=datetime.now(timezone.utc),
-                    )
-                elif action == "sell":
-                    await apply_sell(
-                        db,
-                        recommendation_id=rec_id,
-                        symbol=symbol,
-                        shares=qty,
-                        execution_price=price,
-                        executed_at=datetime.now(timezone.utc),
-                    )
-                else:
-                    logging.error("Unknown action '%s' in pending fill %s", action, order_id)
-                    failed.append(f"{action} {symbol} (unknown action)")
-                    continue
-
-            remove_pending_fill(order_id)
-            recovered.append(f"{action} {qty} {symbol} @ ${price}")
-            logging.info("Recovered pending fill: order=%s %s %s x%s @ %s", order_id, action, symbol, qty, price)
-
-        except ValueError as exc:
-            # e.g. insufficient cash for buy, no position for sell
-            logging.error(
-                "Failed to recover pending fill order=%s: %s", order_id, exc
-            )
-            failed.append(f"{action} {symbol} ({exc})")
-            # Don't remove — leave for manual inspection
-        except Exception as exc:
-            logging.error(
-                "Unexpected error recovering pending fill order=%s: %s", order_id, exc,
-                exc_info=True,
-            )
-            failed.append(f"{action} {symbol} ({type(exc).__name__}: {exc})")
-
-    # Send Telegram summary
-    parts = ["TRADEBOT // CRASH RECOVERY"]
-    if recovered:
-        parts.append(f"Recovered {len(recovered)} fill(s):")
-        parts.extend(f"  - {r}" for r in recovered)
-    if failed:
-        parts.append(f"FAILED to recover {len(failed)} fill(s):")
-        parts.extend(f"  - {f}" for f in failed)
-        parts.append("Manual intervention required — check /app/logs/pending_fills.json")
-
-    await send_telegram("\n".join(parts))
+        if results:
+            filled = [r for r in results if r["status"] == "filled"]
+            other = [r for r in results if r["status"] != "filled"]
+            parts = ["TRADEBOT // STARTUP RECONCILIATION"]
+            if filled:
+                parts.append(f"Recorded {len(filled)} fill(s):")
+                parts.extend(
+                    f"  - {r['action'].upper()} {r['symbol']} {r['filled_qty']}sh @ ${r['filled_price']}"
+                    for r in filled
+                )
+            if other:
+                parts.append(f"Not filled ({len(other)}):")
+                parts.extend(f"  - {r['action'].upper()} {r['symbol']}: {r['status']}" for r in other)
+            await send_telegram("\n".join(parts))
+    except Exception as exc:
+        logging.error("Startup reconciliation failed: %s", exc, exc_info=True)
+        await send_telegram(f"TRADEBOT // STARTUP RECONCILIATION FAILED\n{exc}")
 
 app = FastAPI(
     title="Tradebot",

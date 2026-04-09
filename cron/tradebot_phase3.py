@@ -25,6 +25,17 @@ def main():
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 3: end-of-day summary for {today_str}")
 
+    # Final reconciliation — catch any orders that filled after Phase 2.5
+    try:
+        recon = http_post("/api/v1/trades/reconcile", {})
+        recon_count = recon.get("reconciled", 0)
+        if recon_count > 0:
+            print(f"EOD reconciliation: {recon_count} pending order(s) processed")
+            for r in recon.get("results", []):
+                print(f"  {r.get('action', '?').upper()} {r.get('symbol', '?')}: {r.get('status', '?')}")
+    except Exception as e:
+        print(f"EOD reconciliation failed (non-fatal): {e}")
+
     try:
         portfolio = http_get("/api/v1/portfolio")
         history = http_get("/api/v1/portfolio/history?limit=50")
