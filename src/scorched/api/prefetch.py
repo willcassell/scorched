@@ -28,7 +28,6 @@ from ..services.research import (
     fetch_market_context,
     fetch_momentum_screener,
     fetch_news,
-    fetch_polygon_news,
     fetch_premarket_prices,
     fetch_price_data,
     fetch_sector_returns,
@@ -65,8 +64,8 @@ def _timed(name: str, timing: dict):
 async def prefetch_research(db: AsyncSession = Depends(get_db)):
     """Fetch all external research data and cache processed results.
 
-    Called by Phase 0 cron at 7:30 AM ET. The cache is consumed by
-    Phase 1 (generate_recommendations) at 8:30 AM ET.
+    Called by Phase 0 cron at 9:35 AM ET (post market open).
+    The cache is consumed by Phase 1 at 9:45 AM ET.
     """
     import asyncio
     from datetime import date as date_type, datetime, timezone
@@ -103,7 +102,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     parallel_start = time.monotonic()
     (
         price_data, news_data, earnings_surprise, insider_activity,
-        market_context, fred_macro, polygon_news, av_technicals, twelvedata_rsi,
+        market_context, fred_macro, av_technicals, twelvedata_rsi,
         sector_returns, premarket_data, economic_calendar
     ) = await asyncio.gather(
         _timed_fetch("price_data", fetch_price_data(research_symbols, tracker=tracker)),
@@ -112,13 +111,15 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         _timed_fetch("edgar_insider", fetch_edgar_insider(research_symbols, tracker=tracker)),
         _timed_fetch("market_context", fetch_market_context(session_date, research_symbols, tracker=tracker)),
         _timed_fetch("fred_macro", fetch_fred_macro(settings.fred_api_key, tracker=tracker)),
-        _timed_fetch("polygon_news", fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker)),
         _timed_fetch("av_technicals", fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker)),
         _timed_fetch("twelvedata_rsi", fetch_twelvedata_rsi(research_symbols, settings.twelvedata_api_key, tracker=tracker)),
         _timed_fetch("sector_returns", fetch_sector_returns(tracker=tracker)),
         _timed_fetch("premarket", fetch_premarket_prices(research_symbols, tracker=tracker)),
         _timed_fetch("economic_calendar", fetch_economic_calendar(settings.fred_api_key, tracker=tracker)),
     )
+    # Polygon news removed — Alpaca news via fetch_news covers this. Was the sole
+    # Phase 0 bottleneck (1010s of 1209s total). yfinance headlines remain as news source.
+    polygon_news = {}
     timing["parallel_fetch_wall"] = round(time.monotonic() - parallel_start, 1)
     logger.info("Phase 0: parallel_fetch wall time %.1fs", timing["parallel_fetch_wall"])
 
@@ -218,8 +219,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
 
     logger.info("Phase 0: TOTAL completed in %.1fs — cache written to %s", total_elapsed, out_path)
 
-    if total_elapsed > 3300:  # 55 min — cutting into Phase 1 window
-        logger.warning("Phase 0: took %.0fs (>55min) — dangerously close to Phase 1 start", total_elapsed)
+    if total_elapsed > 480:  # 8 min — cutting into Phase 1 at 9:45
+        logger.warning("Phase 0: took %.0fs (>8min) — dangerously close to Phase 1 start", total_elapsed)
 
     return {
         "status": "ok",

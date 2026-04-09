@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Order Reconciliation — runs ~15 min after Phase 2 (9:50 AM ET, Mon-Fri)
+Order Reconciliation — runs ~30 min after Phase 2 (10:45 AM ET, Mon-Fri)
 
 Checks pending Alpaca orders for fills and records them in the local DB.
 Sends a Telegram summary of what was filled and what wasn't.

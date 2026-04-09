@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Phase 0 — Data prefetch (7:30 AM ET, Mon-Fri)
+Phase 0 — Data prefetch (9:35 AM ET, Mon-Fri, post market open)
 
-Fetches all external research data (yfinance, FRED, Polygon, Finnhub, etc.)
+Fetches all external research data (Alpaca, yfinance, FRED, Finnhub, etc.)
 and caches it for Phase 1. No LLM calls — zero Claude cost.
 
-Phase 1 at 8:30 AM loads the cache and skips straight to Claude analysis.
-If Phase 0 fails, Phase 1 falls back to inline fetching.
+Runs after market open so Claude gets real opening data (gaps, volume,
+early sentiment) instead of stale pre-market prices. Phase 1 at 9:45 AM
+loads the cache and runs Claude analysis with ~10 min of live market data.
 
 Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
               TRADEBOT_URL (optional, defaults to http://localhost:8000)
@@ -22,7 +23,7 @@ load_env()
 
 def main():
     now_est, today_str = now_et()
-    check_expected_hour(7, "Phase 0")
+    check_expected_hour(9, "Phase 0")
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 0: prefetching research data for {today_str}")
 

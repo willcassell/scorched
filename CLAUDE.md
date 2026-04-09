@@ -37,11 +37,11 @@ FastAPI app (`src/scorched/main.py`) with two transports:
 - **REST** at `/api/v1/` — same logic via standard HTTP; cron jobs hit these endpoints directly
 
 The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator required:
-- `30 7 * * 1-5` ET (7:30 AM ET) → Phase 0: POST `/api/v1/research/prefetch` (data fetch, zero LLM cost)
-- `30 8 * * 1-5` ET (8:30 AM ET) → Phase 1: POST `/api/v1/recommendations/generate` (loads Phase 0 cache, Claude calls only)
-- `30 9 * * 1-5` ET (9:30 AM ET) → Phase 1.5: Circuit breaker gate (`cron/tradebot_phase1_5.py`)
+- `35 9 * * 1-5` ET (9:35 AM ET) → Phase 0: POST `/api/v1/research/prefetch` (post-open data fetch with live gaps/volume, zero LLM cost)
+- `45 9 * * 1-5` ET (9:45 AM ET) → Phase 1: POST `/api/v1/recommendations/generate` (Claude sees real opening data, not pre-market guesses)
+- `55 9 * * 1-5` ET (9:55 AM ET) → Phase 1.5: Circuit breaker gate with 25 min of live data (`cron/tradebot_phase1_5.py`)
 - `15 10 * * 1-5` ET (10:15 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec (fire-and-forget for Alpaca, post opening range)
-- `30 10 * * 1-5` ET (10:30 AM ET) → Phase 2.5: POST `/api/v1/trades/reconcile` — checks pending Alpaca orders for fills
+- `45 10 * * 1-5` ET (10:45 AM ET) → Phase 2.5: POST `/api/v1/trades/reconcile` — checks pending Alpaca orders for fills (30 min buffer)
 - `*/5 9-15 * * 1-5` ET → Intraday: Position monitoring with trigger-based Claude exit evaluation (9:35 AM–3:55 PM ET, self-gates)
 - `01 16 * * 1-5` ET (4:01 PM ET) → Phase 3: EOD summary + playbook update
 
@@ -133,7 +133,7 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | Alpaca Data API | Price bars (IEX, 1y daily), snapshots (current/prev close/OHLV), news (headlines+summaries), screener (most active/movers) | `ALPACA_API_KEY` (shared with broker) |
 | yfinance | Fundamentals (PE, market cap, short ratio), earnings dates, options chains, insider purchases, index prices (^GSPC etc.) | No |
 | FRED | Fed funds rate, 10Y/2Y yields, CPI, unemployment, retail sales, HY credit spread, PCE, industrial production | `FRED_API_KEY` |
-| Polygon.io | (REPLACED by Alpaca news — kept as fallback config) | `POLYGON_API_KEY` |
+| Polygon.io | (REMOVED — replaced by Alpaca news, fetch removed from Phase 0) | `POLYGON_API_KEY` (unused) |
 | Alpha Vantage | RSI(14) for screener picks only (≤20 symbols, free tier = 25 calls/day) | `ALPHA_VANTAGE_API_KEY` |
 | Twelvedata | RSI(14) for full watchlist (800 calls/day free tier) | `TWELVEDATA_API_KEY` |
 | Finnhub | Analyst consensus ratings, price targets, recommendation trends | `FINNHUB_API_KEY` |
@@ -176,9 +176,9 @@ The system supports three broker modes, controlled by `BROKER_MODE` in `.env`:
 
 **Architecture:** `BrokerAdapter` ABC in `src/scorched/broker/` with `PaperBroker` and `AlpacaBroker` implementations. `get_broker(db)` factory reads `settings.broker_mode`. The trade confirmation endpoint (`POST /api/v1/trades/confirm`) routes through the broker adapter — no other endpoints change.
 
-**AlpacaBroker flow (fire-and-forget):** Submits limit orders via `alpaca-py` SDK → records order as pending fill → returns immediately. Phase 2.5 reconciliation cron (10:30 AM ET, 15 min later) checks all pending orders on Alpaca → records fills into local DB (Portfolio, Position, TradeHistory) → sends Telegram summary. This avoids blocking Phase 2 with polling timeouts that caused ghost positions (orders filling on Alpaca without local DB recording).
+**AlpacaBroker flow (fire-and-forget):** Submits limit orders via `alpaca-py` SDK → records order as pending fill → returns immediately. Phase 2.5 reconciliation cron (10:45 AM ET, 30 min later) checks all pending orders on Alpaca → records fills into local DB (Portfolio, Position, TradeHistory) → sends Telegram summary. This avoids blocking Phase 2 with polling timeouts that caused ghost positions (orders filling on Alpaca without local DB recording).
 
-**Circuit Breaker (Phase 1.5):** Runs at 9:30 AM ET, between Phase 1 (recommendations) and Phase 2 (execution). Gates buy orders based on:
+**Circuit Breaker (Phase 1.5):** Runs at 9:55 AM ET, between Phase 1 (recommendations) and Phase 2 (execution), with 25 min of live market data. Gates buy orders based on:
 - Individual stock gap-down from prior close (default: >2%)
 - Price drift from Claude's suggested price (default: >1.5%)
 - SPY gap-down (default: >1%)
@@ -214,7 +214,8 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **AlpacaBroker is fire-and-forget** — `submit_buy/sell` submit the order and write a pending fill record, then return `status: "submitted"` immediately. No polling. `reconcile_pending_orders()` (called by Phase 2.5 cron) checks Alpaca for fills and calls `apply_buy/apply_sell` to record them in the local DB. PaperBroker still fills synchronously.
 - **Limit order slippage buffer** — Phase 2 adds a configurable buffer to limit prices: buys at price + 0.3%, sells at price - 0.3% (configurable in `strategy.json` under `execution.buy_limit_buffer_pct` / `sell_limit_buffer_pct`). Tightened from 0.5% to 0.3% when execution moved to 10:15 AM (narrower post-opening-range spreads).
 - **Alpaca Data API** — `alpaca_data.py` provides snapshots, bars (IEX feed), news, and screener via `StockHistoricalDataClient`, `NewsClient`, and `ScreenerClient`. All use IEX feed (free tier). Clients are lazy-initialized (created on first use). SIP feed requires $9/mo subscription. yfinance still used for fundamentals, options, earnings, insider data, and index symbols (^GSPC, ^VIX etc. — Alpaca only covers equities/ETFs).
-- **Phase 2 at 10:15 AM** — execution shifted from 9:35 AM to 10:15 AM to avoid opening range volatility (first 30 min sees 2-3x normal volatility and 0.5-1.5% overshooting). Phase 2.5 reconciliation shifted to 10:30 AM accordingly.
+- **Phase 2 at 10:15 AM** — execution at 10:15 AM avoids opening range volatility (first 30 min sees 2-3x normal volatility). Phase 2.5 reconciliation at 10:45 AM (30 min buffer for slow fills).
+- **Post-open pipeline** — Phase 0 runs at 9:35 AM (5 min after open) so Claude sees real opening data (gaps, volume, sentiment) instead of stale pre-market prices. Entire pipeline (Phase 0→1→1.5) completes in ~15 min before 10:15 execution. Polygon news fetch removed (was 1010s bottleneck, redundant with yfinance headlines); Phase 0 now takes ~5 min.
 - **Alpaca BarSet** — `get_stock_bars()` returns a `BarSet` Pydantic model, not a dict. Use `bars.data` to access the underlying `{symbol: [Bar, ...]}` dict — `.get()` doesn't work on `BarSet` directly.
 - **Robust JSON parsing** — `parse_json_response()` in `claude_client.py` uses a 4-strategy cascade: direct `json.loads`, `raw_decode` (handles trailing text), markdown code fence extraction, and first-brace scan. Prevents Phase 1 crashes when Claude returns JSON followed by commentary.
 - **analyst_guidance.md mount** — volume-mounted in `docker-compose.yml` (alongside `strategy.json`). Changes are reflected without rebuilding. If missing, Claude runs without hard rules — analysis quality degrades silently.

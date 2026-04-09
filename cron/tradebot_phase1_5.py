@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-Phase 1.5 — Circuit breaker gate (9:30 AM ET, Mon-Fri)
+Phase 1.5 — Circuit breaker gate (9:55 AM ET, Mon-Fri)
 
 Reads Phase 1's recommendations JSON, runs circuit breaker checks,
 filters out any buys that fail gate checks, writes a filtered
 recommendations file for Phase 2, and sends gate results via Telegram.
+
+Runs 20 min before execution with 25 min of live market data —
+much better signal than checking at the open.
 
 Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
               TRADEBOT_URL (optional, defaults to http://localhost:8000)
@@ -26,7 +29,7 @@ FILTERED_FILE = "/tmp/tradebot_recommendations_gated.json"
 
 def main():
     now_est, today_str = now_et()
-    check_expected_hour(9, "Phase 1.5")
+    check_expected_hour(9, "Phase 1.5")  # runs at 9:55, still hour 9
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 1.5: circuit breaker for {today_str}")
 

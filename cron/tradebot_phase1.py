@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Phase 1 — Pre-market (8:30 AM ET, Mon-Fri)
+Phase 1 — Claude analysis (9:45 AM ET, Mon-Fri)
 
 Calls tradebot to generate today's trade recommendations and sends them via Telegram.
 Writes /tmp/tradebot_recommendations.json for Phase 2 to consume.
+
+Runs 10 min after market open so Claude sees real opening data (gaps, volume,
+early sentiment) from Phase 0's post-open cache.
 
 Requirements: pip3 install pytz
 Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
@@ -24,7 +27,7 @@ RECS_FILE = "/tmp/tradebot_recommendations.json"
 
 def main():
     now_est, today_str = now_et()
-    check_expected_hour(8, "Phase 1")
+    check_expected_hour(9, "Phase 1")
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 1: generating recommendations for {today_str}")
 

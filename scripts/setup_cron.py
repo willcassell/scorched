@@ -20,11 +20,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # The trading schedule in ET (Eastern Time)
 # Each entry: (ET hour, ET minute, cron day-of-week, script, description)
 SCHEDULE = [
-    (7,  30, "1-5", "cron/tradebot_phase0.py",         "Phase 0: Data prefetch"),
-    (8,  30, "1-5", "cron/tradebot_phase1.py",          "Phase 1: Claude analysis"),
-    (9,  30, "1-5", "cron/tradebot_phase1_5.py",        "Phase 1.5: Circuit breaker"),
+    (9,  35, "1-5", "cron/tradebot_phase0.py",         "Phase 0: Data prefetch (post open)"),
+    (9,  45, "1-5", "cron/tradebot_phase1.py",          "Phase 1: Claude analysis"),
+    (9,  55, "1-5", "cron/tradebot_phase1_5.py",        "Phase 1.5: Circuit breaker"),
     (10, 15, "1-5", "cron/tradebot_phase2.py",          "Phase 2: Execute trades"),
-    (10, 30, "1-5", "cron/tradebot_reconcile.py",      "Phase 2.5: Reconcile fills"),
+    (10, 45, "1-5", "cron/tradebot_reconcile.py",      "Phase 2.5: Reconcile fills"),
     (16,  1, "1-5", "cron/tradebot_phase3.py",          "Phase 3: EOD review"),
     (18,  0, "0",   "cron/tradebot_weekly_reflection.py","Weekly reflection (Sun)"),
 ]

@@ -1019,7 +1019,7 @@ def build_research_context(
     missing = []
     if not price_data: missing.append("price data")
     if not news_data: missing.append("news")
-    if not polygon_news: missing.append("Polygon news")
+    if not polygon_news: missing.append("detailed news (Alpaca)")
     if not analyst_consensus: missing.append("analyst consensus")
     if not fred_macro: missing.append("FRED macro")
     if not av_technicals: missing.append("Alpha Vantage technicals")

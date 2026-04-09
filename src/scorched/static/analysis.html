@@ -323,7 +323,33 @@
   <div class="col-dictionary">
     <div class="dict-header">Data Dictionary</div>
     <div class="dict-intro">
-      Every morning, Phase 0 fetches data from 9 sources. Phase 1 pre-filters to the top ~25 symbols, then sends a structured research context to Claude for analysis.
+      Every morning, Phase 0 fetches data from 11 sources. Phase 1 pre-filters to the top ~25 symbols, then sends a structured research context to Claude for analysis.
+    </div>
+
+    <div class="dict-source" id="ds-alpaca">
+      <div class="dict-source-header" onclick="toggleDict('ds-alpaca')">
+        <span class="dict-source-name">Alpaca Data API</span>
+        <span class="dict-source-badge key">API KEY</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Price Bars (1 year, IEX feed)</div>
+          <div class="dict-field-desc">Daily OHLCV for all symbols. Used for: current price, returns, 52-week range, all technical indicators. Replaced yfinance for price data (more reliable, no scraping).</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Snapshots</div>
+          <div class="dict-field-desc">Real-time latest trade price, previous close, daily OHLV. Used for pre-market gap detection and intraday monitoring.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">News</div>
+          <div class="dict-field-desc">Up to 5 articles per symbol: headline + summary + source. Replaced Polygon.io for news (free with Alpaca account, no extra key).</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Screener</div>
+          <div class="dict-field-desc">Most active stocks by volume and top gainers/losers. Supplements the momentum screener with market-wide activity data.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Primary data backbone for prices and news. Claude sees price action, momentum, and catalyst headlines per symbol. Batch API — fast and reliable.</div>
+      </div>
     </div>
 
     <div class="dict-source" id="ds-yfinance">
@@ -333,10 +359,6 @@
       </div>
       <div class="dict-source-body">
         <div class="dict-field">
-          <div class="dict-field-name">Price History (1 year)</div>
-          <div class="dict-field-desc">Daily OHLCV. Used for: current price, 1-week/1-month returns, 52-week range, all technical indicators.</div>
-        </div>
-        <div class="dict-field">
           <div class="dict-field-name">Fundamentals</div>
           <div class="dict-field-desc">P/E ratio, forward P/E, EPS, market cap, short ratio, short % of float.</div>
         </div>
@@ -345,20 +367,24 @@
           <div class="dict-field-desc">Last 4 quarters: EPS estimate vs actual, surprise %, beat/miss/inline verdict.</div>
         </div>
         <div class="dict-field">
-          <div class="dict-field-name">News Headlines</div>
-          <div class="dict-field-desc">Up to 3 recent headlines per symbol. Fallback when Polygon data is unavailable.</div>
-        </div>
-        <div class="dict-field">
           <div class="dict-field-name">Options Chains</div>
           <div class="dict-field-desc">Put/call ratio, ATM implied volatility, 30-day implied move. Fetched only for Call 1 candidates.</div>
         </div>
-        <div class="dict-llm-note">LLM use: Primary data backbone. Claude sees price action, momentum, fundamentals, and earnings track record per symbol.</div>
+        <div class="dict-field">
+          <div class="dict-field-name">Insider Purchases</div>
+          <div class="dict-field-desc">Recent insider transactions from yfinance. Supplements EDGAR Form 4 data.</div>
+        </div>
+        <div class="dict-field">
+          <div class="dict-field-name">Index Prices (^GSPC, ^VIX, etc.)</div>
+          <div class="dict-field-desc">Alpaca only covers equities/ETFs. yfinance still used for index symbols like S&P 500, VIX, and DJI.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Fundamentals and earnings backbone. Claude cross-references valuation metrics with momentum signals. Also sole source for index prices and options data.</div>
       </div>
     </div>
 
     <div class="dict-source" id="ds-technicals">
       <div class="dict-source-header" onclick="toggleDict('ds-technicals')">
-        <span class="dict-source-name">Technical Analysis</span>
+        <span class="dict-source-name">Technical Analysis (from Alpaca bars)</span>
         <span class="dict-source-badge computed">COMPUTED</span>
       </div>
       <div class="dict-source-body">
@@ -398,7 +424,7 @@
       <div class="dict-source-body">
         <div class="dict-field">
           <div class="dict-field-name">Relative Strength</div>
-          <div class="dict-field-desc">Stock's 5-day return minus its sector ETF's 5-day return. Positive = outperforming sector. Covers 11 sector ETFs (XLK, XLF, XLV, XLE, XLI, XLC, XLY, XLP, XLB, XLU, XLRE).</div>
+          <div class="dict-field-desc">Stock's 5-day return minus its sector ETF's 5-day return (via Alpaca batch bars). Positive = outperforming sector. Covers 11 sector ETFs (XLK, XLF, XLV, XLE, XLI, XLC, XLY, XLP, XLB, XLU, XLRE).</div>
         </div>
         <div class="dict-llm-note">LLM use: Distinguishes true momentum from sector beta. A stock up 3% in a sector up 5% is actually weak.</div>
       </div>
@@ -438,17 +464,17 @@
       </div>
     </div>
 
-    <div class="dict-source" id="ds-polygon">
-      <div class="dict-source-header" onclick="toggleDict('ds-polygon')">
-        <span class="dict-source-name">Polygon.io</span>
+    <div class="dict-source" id="ds-twelvedata">
+      <div class="dict-source-header" onclick="toggleDict('ds-twelvedata')">
+        <span class="dict-source-name">Twelvedata</span>
         <span class="dict-source-badge key">API KEY</span>
       </div>
       <div class="dict-source-body">
         <div class="dict-field">
-          <div class="dict-field-name">News Articles</div>
-          <div class="dict-field-desc">Up to 5 articles per symbol: headline + description/summary. Richer than yfinance news — includes article summaries.</div>
+          <div class="dict-field-name">RSI (14-day) — Full Watchlist</div>
+          <div class="dict-field-desc">Relative Strength Index for ALL research symbols (800 calls/day free tier). Broader coverage than Alpha Vantage. OVERBOUGHT (>70), OVERSOLD (&lt;30), NEUTRAL.</div>
         </div>
-        <div class="dict-llm-note">LLM use: Claude evaluates catalyst quality. Named catalysts (earnings, upgrades, FDA, activist) are required for a buy recommendation per strategy rules.</div>
+        <div class="dict-llm-note">LLM use: Momentum confirmation across the full universe. Alpha Vantage covers screener picks only; Twelvedata provides RSI for everything.</div>
       </div>
     </div>
 
@@ -462,7 +488,11 @@
           <div class="dict-field-name">Analyst Consensus</div>
           <div class="dict-field-desc">Strong Buy / Buy / Hold / Sell / Strong Sell counts. Bullish % computed. Used to gauge Wall Street sentiment.</div>
         </div>
-        <div class="dict-llm-note">LLM use: Confirmation/contradiction signal. Claude cross-references analyst consensus with its own technical and catalyst analysis.</div>
+        <div class="dict-field">
+          <div class="dict-field-name">Congressional Trading (STOCK Act)</div>
+          <div class="dict-field-desc">Congressional stock trades from the last 90 days. Shows what members of Congress are buying/selling. Not all symbols have data.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Confirmation/contradiction signal. Claude cross-references analyst consensus and congressional activity with its own technical and catalyst analysis.</div>
       </div>
     </div>
 
@@ -480,6 +510,20 @@
       </div>
     </div>
 
+    <div class="dict-source" id="ds-econ-cal">
+      <div class="dict-source-header" onclick="toggleDict('ds-econ-cal')">
+        <span class="dict-source-name">Economic Calendar (FRED)</span>
+        <span class="dict-source-badge key">API KEY</span>
+      </div>
+      <div class="dict-source-body">
+        <div class="dict-field">
+          <div class="dict-field-name">Upcoming Releases</div>
+          <div class="dict-field-desc">Tracks CPI, Jobs (NFP), FOMC, GDP, PPI, PCE, retail sales, housing starts, consumer confidence, industrial production. Warns Claude about same-day releases that could move markets.</div>
+        </div>
+        <div class="dict-llm-note">LLM use: Event risk overlay. Claude factors in upcoming data releases when sizing positions and setting stops. Same-day releases may trigger caution.</div>
+      </div>
+    </div>
+
     <div class="dict-source" id="ds-av">
       <div class="dict-source-header" onclick="toggleDict('ds-av')">
         <span class="dict-source-name">Alpha Vantage</span>
@@ -487,10 +531,10 @@
       </div>
       <div class="dict-source-body">
         <div class="dict-field">
-          <div class="dict-field-name">RSI (14-day)</div>
-          <div class="dict-field-desc">Relative Strength Index for momentum screener picks only (max ~20 symbols). OVERBOUGHT (>70), OVERSOLD (<30), NEUTRAL. Free tier: 25 calls/day.</div>
+          <div class="dict-field-name">RSI (14-day) — Screener Picks Only</div>
+          <div class="dict-field-desc">RSI for momentum screener picks only (max ~20 symbols). Free tier: 25 calls/day. Twelvedata provides broader RSI coverage for the full watchlist.</div>
         </div>
-        <div class="dict-llm-note">LLM use: Supplementary momentum confirmation for screener candidates. Not fetched for watchlist symbols to stay within rate limits.</div>
+        <div class="dict-llm-note">LLM use: Secondary RSI source for screener candidates. Twelvedata covers the full watchlist; Alpha Vantage fills in for any gaps.</div>
       </div>
     </div>
 
@@ -512,20 +556,28 @@
     <div class="dict-pipeline">
       <div class="dict-pipeline-title">Daily Pipeline</div>
       <div class="dict-pipeline-step">
+        <span class="dict-step-num">—</span>
+        <span class="dict-step-desc"><span class="dict-step-label">9:30 AM</span> — Market opens. Pipeline waits 5 min for opening auction to settle.</span>
+      </div>
+      <div class="dict-pipeline-step">
         <span class="dict-step-num">0</span>
-        <span class="dict-step-desc"><span class="dict-step-label">7:30 AM</span> — Phase 0 fetches all data sources in parallel, computes technicals + relative strength, caches to disk. Zero LLM cost.</span>
+        <span class="dict-step-desc"><span class="dict-step-label">9:35 AM</span> — Phase 0 fetches all data sources with live opening data (gaps, volume, sentiment). ~5 min. Zero LLM cost.</span>
       </div>
       <div class="dict-pipeline-step">
         <span class="dict-step-num">1</span>
-        <span class="dict-step-desc"><span class="dict-step-label">8:30 AM</span> — Pre-filter scores ~78 symbols → top 25 + held. Claude Call 1 (analysis, extended thinking) + Call 2 (decision) + Call 3 (risk review).</span>
+        <span class="dict-step-desc"><span class="dict-step-label">9:45 AM</span> — Pre-filter scores ~78 symbols → top 25 + held. Claude sees real opening reaction, not pre-market guesses.</span>
       </div>
       <div class="dict-pipeline-step">
         <span class="dict-step-num">1.5</span>
-        <span class="dict-step-desc"><span class="dict-step-label">9:30 AM</span> — Circuit breaker gates buys on gap-downs, VIX spikes, price drift. Sells always pass.</span>
+        <span class="dict-step-desc"><span class="dict-step-label">9:55 AM</span> — Circuit breaker with 25 min of live data. Gates buys on gap-downs, VIX spikes, price drift. Sells always pass.</span>
       </div>
       <div class="dict-pipeline-step">
         <span class="dict-step-num">2</span>
-        <span class="dict-step-desc"><span class="dict-step-label">9:35 AM</span> — Cleared recommendations execute via Alpaca broker. Fills mirrored to local DB.</span>
+        <span class="dict-step-desc"><span class="dict-step-label">10:15 AM</span> — Cleared recommendations execute via Alpaca broker (post opening range, narrower spreads). Limit orders with 0.3% buffer.</span>
+      </div>
+      <div class="dict-pipeline-step">
+        <span class="dict-step-num">2.5</span>
+        <span class="dict-step-desc"><span class="dict-step-label">10:45 AM</span> — Reconcile pending Alpaca orders. Records fills into local DB, sends Telegram summary.</span>
       </div>
       <div class="dict-pipeline-step">
         <span class="dict-step-num">—</span>

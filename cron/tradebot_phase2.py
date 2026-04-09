@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Phase 2 — Market open (9:45 AM ET, Mon-Fri)
+Phase 2 — Execute trades (10:15 AM ET, Mon-Fri)
 
-Reads Phase 1's recommendations JSON, fetches actual opening prices,
-confirms (or rejects) each trade, then sends a fill report via Telegram.
-Deletes the recommendations JSON when done.
+Reads Phase 1's recommendations JSON (filtered by Phase 1.5 circuit breaker),
+fetches current prices, confirms each trade via Alpaca, then sends a
+fill report via Telegram. Deletes the recommendations JSON when done.
+
+Runs 45 min after open to avoid opening range volatility.
 
 Requirements: pip3 install pytz
 Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
