@@ -27,6 +27,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./strategy.json:/app/strategy.json
+      - ./analyst_guidance.md:/app/analyst_guidance.md
     depends_on:
       postgres:
         condition: service_healthy

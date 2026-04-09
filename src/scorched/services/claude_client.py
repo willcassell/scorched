@@ -115,14 +115,59 @@ def extract_thinking(content: list) -> str:
 
 
 def parse_json_response(raw: str) -> dict:
-    """Parse JSON from a response, handling markdown code fences."""
+    """Parse JSON from a response, handling markdown code fences and trailing text.
+
+    Strategies tried in order:
+    1. Direct json.loads (clean JSON)
+    2. raw_decode — parses the first JSON object, ignoring trailing text
+    3. Extract from markdown code fence, then raw_decode on that
+    4. Find first '{' and raw_decode from there
+    """
+    # Strategy 1: clean JSON
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
-        if match:
-            return json.loads(match.group(1))
-        return {}
+        pass
+
+    # Strategy 2: raw_decode from start (handles trailing text after JSON)
+    decoder = json.JSONDecoder()
+    stripped = raw.lstrip()
+    if stripped.startswith("{"):
+        try:
+            obj, _ = decoder.raw_decode(stripped)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: extract from markdown code fence
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    if match:
+        try:
+            obj, _ = decoder.raw_decode(match.group(1).strip())
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            # Try greedy match as fallback (multiple objects less likely inside fence)
+            match2 = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
+            if match2:
+                try:
+                    return json.loads(match2.group(1))
+                except json.JSONDecodeError:
+                    pass
+
+    # Strategy 4: find first '{' anywhere and raw_decode
+    brace_pos = raw.find("{")
+    if brace_pos >= 0:
+        try:
+            obj, _ = decoder.raw_decode(raw[brace_pos:])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    logger.warning("parse_json_response: could not extract JSON from response (%d chars)", len(raw))
+    return {}
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────

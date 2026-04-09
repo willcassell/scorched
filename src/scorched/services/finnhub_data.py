@@ -112,14 +112,17 @@ def fetch_congressional_trading_sync(
 
     from datetime import datetime, timedelta
 
-    cutoff = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    now = datetime.now()
+    date_from = (now - timedelta(days=90)).strftime("%Y-%m-%d")
+    date_to = now.strftime("%Y-%m-%d")
+    cutoff = date_from
     results: dict[str, list[dict]] = {}
 
     for symbol in symbols:
         try:
             with _api_ctx(tracker, "finnhub", "congress_trading", symbol):
                 data = retry_call(
-                    client.congressional_trading, symbol,
+                    client.congressional_trading, symbol, date_from, date_to,
                     label=f"Finnhub congress {symbol}",
                 )
             if data:
