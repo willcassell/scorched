@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import yfinance as yf
 
+from ..config import settings
 from ..http_retry import retry_call, retry_get
 from ..tz import market_today
 
@@ -42,24 +43,43 @@ WATCHLIST = [
 
 
 def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
+    """Fetch price history from Alpaca (reliable) + fundamentals from yfinance.
+
+    Alpaca provides: daily bars (1y), current price via snapshots.
+    yfinance provides: fundamentals (PE, market cap, short ratio, company name).
+    """
+    from .alpaca_data import fetch_bars_sync, fetch_snapshots_sync
+
     result = {}
+
+    # Batch fetch from Alpaca — much faster than per-symbol yfinance
+    alpaca_bars = fetch_bars_sync(symbols, days=365, tracker=tracker)
+    alpaca_snaps = fetch_snapshots_sync(symbols, tracker=tracker)
+
     for symbol in symbols:
         try:
-            ticker = yf.Ticker(symbol)
-            with _api_ctx(tracker, "yfinance", "history", symbol):
-                hist = ticker.history(period="1y")
-                info = ticker.info
-            if hist.empty:
+            bars = alpaca_bars.get(symbol, [])
+            snap = alpaca_snaps.get(symbol)
+            if not bars:
+                logger.warning("No Alpaca bars for %s — skipping", symbol)
                 continue
-            # Use fast_info for real-time last price; fall back to daily close
+
+            closes = [b["close"] for b in bars]
+            current_price = snap["current_price"] if snap else closes[-1]
+            week_ago_price = closes[-5] if len(closes) >= 5 else current_price
+            month_ago_price = closes[-22] if len(closes) >= 22 else closes[0]
+            high_52w = max(b["high"] for b in bars)
+            low_52w = min(b["low"] for b in bars)
+
+            # Fundamentals from yfinance (PE, market cap, etc.) — Alpaca doesn't have these
+            info = {}
             try:
-                current_price = float(ticker.fast_info["last_price"])
-            except (KeyError, IndexError):
-                current_price = float(hist["Close"].iloc[-1])
-            week_ago_price = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else current_price
-            month_ago_price = float(hist["Close"].iloc[-22]) if len(hist) >= 22 else float(hist["Close"].iloc[0])
-            high_52w = float(info.get("fiftyTwoWeekHigh", 0))
-            low_52w = float(info.get("fiftyTwoWeekLow", 0))
+                ticker = yf.Ticker(symbol)
+                with _api_ctx(tracker, "yfinance", "info", symbol):
+                    info = ticker.info
+            except Exception:
+                logger.debug("yfinance info fetch failed for %s (non-fatal)", symbol)
+
             result[symbol] = {
                 "current_price": current_price,
                 "week_change_pct": round((current_price - week_ago_price) / week_ago_price * 100, 2),
@@ -74,10 +94,10 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
                 "short_percent_float": info.get("shortPercentOfFloat"),
                 "company_name": info.get("shortName", ""),
                 "insider_buy_pct": None,  # populated separately
-                "history_close": [float(x) for x in hist["Close"].tolist()],
-                "history_volume": [float(x) for x in hist["Volume"].tolist()],
-                "history_high": [float(x) for x in hist["High"].tolist()],
-                "history_low": [float(x) for x in hist["Low"].tolist()],
+                "history_close": closes,
+                "history_volume": [b["volume"] for b in bars],
+                "history_high": [b["high"] for b in bars],
+                "history_low": [b["low"] for b in bars],
             }
         except Exception:
             logger.warning("Price data fetch failed for %s", symbol, exc_info=True)
@@ -256,44 +276,31 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30, tracker=N
 
 
 def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol: int = 5, tracker=None) -> dict:
-    """
-    Fetch recent news from Polygon.io for each symbol.
+    """Fetch news from Alpaca Data API (replaces Polygon).
+
     Returns {symbol: [{"title": ..., "description": ...}, ...]}
-    Description field contains article summaries on all tiers (verified 2026-03-29).
-    yfinance news remains as fallback in build_research_context().
+    Maintains the same return format so build_research_context() doesn't change.
+    Falls back to empty on any error.
     """
-    import time
-    if not api_key:
+    from .alpaca_data import fetch_news_sync as _alpaca_news
+
+    # Use Alpaca news regardless of Polygon API key — it's free with Alpaca account
+    if not settings.alpaca_api_key:
         return {}
+
+    alpaca_result = _alpaca_news(symbols, limit_per_symbol=limit_per_symbol, tracker=tracker)
+
+    # Convert Alpaca format to existing Polygon format for compatibility
     result = {}
-    base = "https://api.polygon.io/v2/reference/news"
-    for symbol in symbols:
-        try:
-            with _api_ctx(tracker, "polygon", "news", symbol):
-                resp = retry_get(
-                    base,
-                    label=f"Polygon {symbol}",
-                    params={"ticker": symbol, "limit": limit_per_symbol, "apiKey": api_key},
-                    timeout=10,
-                )
-                articles = resp.json().get("results", [])
-            result[symbol] = [
-                {
-                    "title": a.get("title", ""),
-                    "description": a.get("description", ""),
-                }
-                for a in articles
-                if a.get("title")
-            ]
-        except Exception as exc:
-            logger.warning("Polygon news fetch failed for %s", symbol, exc_info=True)
-            result[symbol] = []
-            # Stop on rate limit — no point burning through remaining symbols
-            if "429" in str(exc):
-                logger.info("Polygon rate limit hit after %d symbols, stopping", len(result))
-                break
-        # Rate limit: Polygon free tier = 5 calls/min
-        time.sleep(12.5)
+    for symbol, articles in alpaca_result.items():
+        result[symbol] = [
+            {
+                "title": a.get("headline", ""),
+                "description": a.get("summary", ""),
+            }
+            for a in articles
+            if a.get("headline")
+        ]
     return result
 
 
@@ -391,58 +398,41 @@ def _fetch_twelvedata_rsi_sync(symbols: list[str], api_key: str, tracker=None) -
 
 
 def _fetch_premarket_prices_sync(symbols: list[str], tracker=None) -> dict[str, dict]:
-    """Fetch pre-market prices for symbols using yfinance prepost=True.
+    """Fetch pre-market/current prices using Alpaca snapshots.
+
+    Alpaca snapshots include the latest trade (which reflects extended hours)
+    and the previous daily bar close — exactly what we need for gap analysis.
 
     Returns {symbol: {"premarket_price": float, "premarket_change_pct": float,
                        "prior_close": float, "has_premarket": bool}}
     """
+    from .alpaca_data import fetch_snapshots_sync
+
     result = {}
     if not symbols:
         return result
     empty = {"premarket_price": None, "premarket_change_pct": None, "has_premarket": False}
-    try:
-        with _api_ctx(tracker, "yfinance", "premarket"):
-            data = yf.download(
-                symbols if len(symbols) > 1 else symbols[0],
-                period="1d",
-                prepost=True,
-                interval="1m",
-                progress=False,
-                group_by="ticker" if len(symbols) > 1 else None,
-            )
-        if data.empty:
-            return {sym: dict(empty) for sym in symbols}
 
-        for sym in symbols:
-            try:
-                sym_data = data[sym] if len(symbols) > 1 and sym in data.columns.get_level_values(0) else data if len(symbols) == 1 else None
-                if sym_data is None or sym_data.empty:
-                    result[sym] = dict(empty)
-                    continue
-                closes = sym_data["Close"].dropna()
-                if closes.empty:
-                    result[sym] = dict(empty)
-                    continue
-                premarket_price = float(closes.iloc[-1])
-                try:
-                    ticker = yf.Ticker(sym)
-                    hist = ticker.history(period="2d", interval="1d")
-                    prior_close = float(hist["Close"].iloc[-1]) if len(hist) >= 1 else None
-                    change_pct = round((premarket_price - prior_close) / prior_close * 100, 2) if prior_close else None
-                except Exception:
-                    prior_close = None
-                    change_pct = None
-                result[sym] = {
-                    "premarket_price": round(premarket_price, 4),
-                    "premarket_change_pct": change_pct,
-                    "prior_close": prior_close,
-                    "has_premarket": True,
-                }
-            except Exception:
-                result[sym] = dict(empty)
-    except Exception:
-        logger.warning("Pre-market price download failed", exc_info=True)
-        return {sym: dict(empty) for sym in symbols}
+    snaps = fetch_snapshots_sync(symbols, tracker=tracker)
+
+    for sym in symbols:
+        snap = snaps.get(sym)
+        if not snap:
+            result[sym] = dict(empty)
+            continue
+        try:
+            current = snap["current_price"]
+            prev_close = snap.get("prev_close")
+            change_pct = round((current - prev_close) / prev_close * 100, 2) if prev_close else None
+            result[sym] = {
+                "premarket_price": round(current, 4),
+                "premarket_change_pct": change_pct,
+                "prior_close": prev_close,
+                "has_premarket": True,
+            }
+        except Exception:
+            result[sym] = dict(empty)
+
     return result
 
 
@@ -756,30 +746,35 @@ def _fetch_momentum_screener_sync(n: int = 20, tracker=None) -> list[str]:
 
 
 def _fetch_opening_prices_sync(symbols: list[str], trade_date: date, tracker=None) -> dict[str, float | None]:
+    """Fetch today's opening prices using Alpaca snapshots.
+
+    The snapshot's daily_bar.open gives us the official market open price.
+    Falls back to yfinance if Alpaca fails.
+    """
+    from .alpaca_data import fetch_snapshots_sync
+
     results: dict[str, float | None] = {}
-    date_str = trade_date.isoformat()
-    next_day = (trade_date + timedelta(days=1)).isoformat()
+    snaps = fetch_snapshots_sync(symbols, tracker=tracker)
+
     for symbol in symbols:
-        try:
-            with _api_ctx(tracker, "yfinance", "opening_prices", symbol):
-                df = yf.download(
-                    symbol,
-                    start=date_str,
-                    end=next_day,
-                    interval="1m",
-                    progress=False,
-                    auto_adjust=True,
-                )
-            if df.empty:
+        snap = snaps.get(symbol)
+        if snap and snap.get("daily_open") is not None:
+            results[symbol] = round(snap["daily_open"], 4)
+        else:
+            # Fallback to yfinance for symbols Alpaca doesn't cover
+            try:
+                date_str = trade_date.isoformat()
+                next_day = (trade_date + timedelta(days=1)).isoformat()
+                with _api_ctx(tracker, "yfinance", "opening_prices", symbol):
+                    df = yf.download(symbol, start=date_str, end=next_day,
+                                     interval="1m", progress=False, auto_adjust=True)
+                if not df.empty:
+                    results[symbol] = round(float(df["Open"].values.flat[0]), 4)
+                else:
+                    results[symbol] = None
+            except Exception:
+                logger.warning("Opening price fetch failed for %s", symbol, exc_info=True)
                 results[symbol] = None
-                continue
-            # yfinance ≥0.2 returns MultiIndex columns even for a single symbol,
-            # so df["Open"].iloc[0] is a Series not a scalar.
-            # .values.flat[0] extracts the first scalar from a 1D or 2D array.
-            results[symbol] = round(float(df["Open"].values.flat[0]), 4)
-        except Exception:
-            logger.warning("Opening price fetch failed for %s", symbol, exc_info=True)
-            results[symbol] = None
     return results
 
 
@@ -1104,32 +1099,23 @@ _SECTOR_ETFS = sorted(set(_SECTOR_ETF_MAP.values()))
 
 
 def _fetch_sector_returns_sync(tracker=None) -> dict[str, float]:
-    """Fetch 5-day returns for all sector ETFs. Returns {etf: pct_return}."""
+    """Fetch 5-day returns for all sector ETFs using Alpaca bars.
+
+    Returns {etf: pct_return}.
+    """
+    from .alpaca_data import fetch_bars_sync
+
     result = {}
     try:
-        with _api_ctx(tracker, "yfinance", "sector_etfs", "batch"):
-            df = yf.download(
-                _SECTOR_ETFS,
-                period="10d",
-                interval="1d",
-                progress=False,
-                group_by="ticker",
-                threads=True,
-            )
+        bars_data = fetch_bars_sync(_SECTOR_ETFS, days=15, tracker=tracker)
         for etf in _SECTOR_ETFS:
-            try:
-                if len(_SECTOR_ETFS) == 1:
-                    closes = df["Close"].dropna()
-                else:
-                    closes = df[(etf, "Close")].dropna()
-                if len(closes) >= 5:
-                    current = float(closes.iloc[-1])
-                    five_ago = float(closes.iloc[-5])
-                    result[etf] = round((current - five_ago) / five_ago * 100, 2)
-            except Exception:
-                continue
+            bars = bars_data.get(etf, [])
+            if len(bars) >= 5:
+                current = bars[-1]["close"]
+                five_ago = bars[-5]["close"]
+                result[etf] = round((current - five_ago) / five_ago * 100, 2)
     except Exception:
-        logger.warning("Sector ETF batch download failed", exc_info=True)
+        logger.warning("Sector ETF fetch failed", exc_info=True)
     return result
 
 
@@ -1227,8 +1213,13 @@ async def fetch_opening_prices(symbols: list[str], trade_date: date, tracker=Non
 
 
 def _fetch_market_eod_sync(target_date: date) -> dict:
-    """Fetch end-of-day performance for major indices and S&P sector ETFs."""
-    import yfinance as yf
+    """Fetch end-of-day performance for major indices and S&P sector ETFs.
+
+    Uses Alpaca snapshots for sector ETFs (reliable).
+    Keeps yfinance for indices (^GSPC, ^IXIC, etc.) since Alpaca doesn't
+    cover index symbols — only ETFs and equities.
+    """
+    from .alpaca_data import fetch_snapshots_sync
 
     indices = {
         "S&P 500": "^GSPC",
@@ -1242,28 +1233,29 @@ def _fetch_market_eod_sync(target_date: date) -> dict:
         "XLB": "Materials", "XLC": "Comm Svcs", "XLU": "Utilities", "XLRE": "Real Estate",
     }
 
-    def _pct(symbol: str) -> tuple[float | None, float | None]:
-        try:
-            hist = yf.Ticker(symbol).history(period="2d", interval="1d")
-            if len(hist) < 2:
-                return None, None
-            close = float(hist["Close"].iloc[-1])
-            prev = float(hist["Close"].iloc[-2])
-            return round(close, 2), round((close - prev) / prev * 100, 2)
-        except Exception:
-            logger.debug("Market context: pct calculation failed", exc_info=True)
-            return None, None
-
     result: dict = {"indices": {}, "sectors": {}}
 
+    # Indices: yfinance (Alpaca doesn't have ^GSPC etc.)
     for label, symbol in indices.items():
-        price, pct = _pct(symbol)
-        if price is not None:
-            result["indices"][label] = {"symbol": symbol, "price": price, "change_pct": pct}
+        try:
+            hist = yf.Ticker(symbol).history(period="2d", interval="1d")
+            if len(hist) >= 2:
+                close = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                pct = round((close - prev) / prev * 100, 2)
+                result["indices"][label] = {"symbol": symbol, "price": round(close, 2), "change_pct": pct}
+        except Exception:
+            logger.debug("Index EOD fetch failed for %s", symbol)
 
+    # Sectors: Alpaca snapshots (much more reliable than per-ticker yfinance)
+    sector_symbols = list(sectors.keys())
+    snaps = fetch_snapshots_sync(sector_symbols)
     for symbol, label in sectors.items():
-        _, pct = _pct(symbol)
-        if pct is not None:
+        snap = snaps.get(symbol)
+        if snap and snap.get("current_price") and snap.get("prev_close"):
+            close = snap["current_price"]
+            prev = snap["prev_close"]
+            pct = round((close - prev) / prev * 100, 2)
             result["sectors"][symbol] = {"label": label, "change_pct": pct}
 
     return result

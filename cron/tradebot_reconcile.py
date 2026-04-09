@@ -17,7 +17,7 @@ load_env()
 
 def main():
     now_est, today_str = now_et()
-    check_expected_hour(9, "Reconcile")
+    check_expected_hour(10, "Reconcile")
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Reconciling pending orders for {today_str}")
 

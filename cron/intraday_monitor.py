@@ -66,41 +66,81 @@ def is_on_cooldown(symbol: str, cooldowns: dict, cooldown_minutes: int) -> bool:
 
 
 def fetch_position_data(symbols: list[str]) -> dict:
-    """Fetch current prices, today's OHLV, and 20d avg volume via yfinance."""
+    """Fetch current prices, today's OHLV, and 20d avg volume.
+
+    Uses Alpaca snapshots + bars for equities/ETFs (reliable).
+    Falls back to yfinance for ^VIX (Alpaca doesn't cover index symbols).
+    """
     import yfinance as yf
 
     data = {}
-    all_symbols = list(set(symbols + ["SPY", "^VIX"]))
+    all_symbols = list(set(symbols + ["SPY"]))
 
-    for sym in all_symbols:
-        try:
-            ticker = yf.Ticker(sym)
-            hist_1d = ticker.history(period="1d")
-            hist_1mo = ticker.history(period="1mo")
+    # Alpaca for equities and ETFs (batch — fast and reliable)
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from scorched.services.alpaca_data import fetch_snapshots_sync, fetch_bars_sync
 
-            if hist_1d.empty:
+        snaps = fetch_snapshots_sync(all_symbols)
+        bars_data = fetch_bars_sync(all_symbols, days=30)
+
+        for sym in all_symbols:
+            snap = snaps.get(sym)
+            if not snap:
                 continue
-
-            current_price = float(hist_1d["Close"].iloc[-1])
-            today_open = float(hist_1d["Open"].iloc[-1])
-            today_high = float(hist_1d["High"].iloc[-1])
-            today_low = float(hist_1d["Low"].iloc[-1])
-            today_volume = float(hist_1d["Volume"].iloc[-1])
-
+            bars = bars_data.get(sym, [])
             avg_volume_20d = 0.0
-            if not hist_1mo.empty and len(hist_1mo) >= 2:
-                avg_volume_20d = float(hist_1mo["Volume"].iloc[:-1].tail(20).mean())
+            if len(bars) >= 2:
+                vol_bars = bars[:-1][-20:]  # exclude today, last 20 days
+                avg_volume_20d = sum(b["volume"] for b in vol_bars) / len(vol_bars) if vol_bars else 0
 
             data[sym] = {
-                "current_price": current_price,
-                "today_open": today_open,
-                "today_high": today_high,
-                "today_low": today_low,
-                "today_volume": today_volume,
+                "current_price": snap["current_price"],
+                "today_open": snap.get("daily_open", 0),
+                "today_high": snap.get("daily_high", 0),
+                "today_low": snap.get("daily_low", 0),
+                "today_volume": snap.get("daily_volume", 0),
                 "avg_volume_20d": avg_volume_20d,
             }
-        except Exception as e:
-            print(f"  Fetch failed for {sym}: {e}")
+    except Exception as e:
+        print(f"  Alpaca fetch failed, falling back to yfinance: {e}")
+        # Fallback to yfinance for all symbols
+        for sym in all_symbols:
+            try:
+                ticker = yf.Ticker(sym)
+                hist_1d = ticker.history(period="1d")
+                hist_1mo = ticker.history(period="1mo")
+                if hist_1d.empty:
+                    continue
+                avg_volume_20d = 0.0
+                if not hist_1mo.empty and len(hist_1mo) >= 2:
+                    avg_volume_20d = float(hist_1mo["Volume"].iloc[:-1].tail(20).mean())
+                data[sym] = {
+                    "current_price": float(hist_1d["Close"].iloc[-1]),
+                    "today_open": float(hist_1d["Open"].iloc[-1]),
+                    "today_high": float(hist_1d["High"].iloc[-1]),
+                    "today_low": float(hist_1d["Low"].iloc[-1]),
+                    "today_volume": float(hist_1d["Volume"].iloc[-1]),
+                    "avg_volume_20d": avg_volume_20d,
+                }
+            except Exception as e2:
+                print(f"  Fetch failed for {sym}: {e2}")
+
+    # VIX — yfinance only (Alpaca doesn't cover index symbols)
+    try:
+        ticker = yf.Ticker("^VIX")
+        hist = ticker.history(period="1d")
+        if not hist.empty:
+            data["^VIX"] = {
+                "current_price": float(hist["Close"].iloc[-1]),
+                "today_open": float(hist["Open"].iloc[-1]),
+                "today_high": float(hist["High"].iloc[-1]),
+                "today_low": float(hist["Low"].iloc[-1]),
+                "today_volume": 0,
+                "avg_volume_20d": 0,
+            }
+    except Exception as e:
+        print(f"  Fetch failed for ^VIX: {e}")
 
     return data
 

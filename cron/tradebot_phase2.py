@@ -36,7 +36,7 @@ def _cleanup_recs_file(path):
 
 def main():
     now_est, today_str = now_et()
-    check_expected_hour(9, "Phase 2")
+    check_expected_hour(10, "Phase 2")
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 2: confirming trades for {today_str}")
 
