@@ -40,8 +40,8 @@ The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator requ
 - `30 7 * * 1-5` ET (7:30 AM ET) → Phase 0: POST `/api/v1/research/prefetch` (data fetch, zero LLM cost)
 - `30 8 * * 1-5` ET (8:30 AM ET) → Phase 1: POST `/api/v1/recommendations/generate` (loads Phase 0 cache, Claude calls only)
 - `30 9 * * 1-5` ET (9:30 AM ET) → Phase 1.5: Circuit breaker gate (`cron/tradebot_phase1_5.py`)
-- `35 9 * * 1-5` ET (9:35 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec (fire-and-forget for Alpaca)
-- `50 9 * * 1-5` ET (9:50 AM ET) → Phase 2.5: POST `/api/v1/trades/reconcile` — checks pending Alpaca orders for fills
+- `15 10 * * 1-5` ET (10:15 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec (fire-and-forget for Alpaca, post opening range)
+- `30 10 * * 1-5` ET (10:30 AM ET) → Phase 2.5: POST `/api/v1/trades/reconcile` — checks pending Alpaca orders for fills
 - `*/5 9-15 * * 1-5` ET → Intraday: Position monitoring with trigger-based Claude exit evaluation (9:35 AM–3:55 PM ET, self-gates)
 - `01 16 * * 1-5` ET (4:01 PM ET) → Phase 3: EOD summary + playbook update
 
@@ -57,7 +57,8 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/mcp_tools.py` | 7 MCP tool definitions (FastMCP) |
 | `src/scorched/api/prefetch.py` | Phase 0: POST /api/v1/research/prefetch — fetches all external data, caches for Phase 1 |
 | `src/scorched/services/recommender.py` | Claude pipeline (4-call: analysis → decision → risk review → position mgmt), loads Phase 0 cache or falls back to inline fetch |
-| `src/scorched/services/research.py` | All data fetching: yfinance, FRED, Polygon, Alpha Vantage, EDGAR, Finnhub, momentum screener, options |
+| `src/scorched/services/alpaca_data.py` | Alpaca Data API: snapshots, bars (IEX), news, screener — replaces yfinance for prices and Polygon for news |
+| `src/scorched/services/research.py` | Data orchestration: Alpaca (prices/news), yfinance (fundamentals/options), FRED, Alpha Vantage, EDGAR, Finnhub |
 | `src/scorched/services/technicals.py` | MACD, Bollinger Bands, MA crossover, support/resistance, volume profile, ATR calculations |
 | `src/scorched/services/economic_calendar.py` | FRED-based upcoming economic release tracking (CPI, Jobs, FOMC, GDP, etc.) |
 | `src/scorched/services/finnhub_data.py` | Analyst consensus ratings, price targets, and congressional trading data from Finnhub |
@@ -129,9 +130,10 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 
 | Source | What it provides | Key? |
 |--------|-----------------|------|
-| yfinance | Price history, fundamentals, news, earnings dates, options chains, insider purchases | No |
+| Alpaca Data API | Price bars (IEX, 1y daily), snapshots (current/prev close/OHLV), news (headlines+summaries), screener (most active/movers) | `ALPACA_API_KEY` (shared with broker) |
+| yfinance | Fundamentals (PE, market cap, short ratio), earnings dates, options chains, insider purchases, index prices (^GSPC etc.) | No |
 | FRED | Fed funds rate, 10Y/2Y yields, CPI, unemployment, retail sales, HY credit spread, PCE, industrial production | `FRED_API_KEY` |
-| Polygon.io | News headlines + article descriptions (paid tier provides full summaries) | `POLYGON_API_KEY` |
+| Polygon.io | (REPLACED by Alpaca news — kept as fallback config) | `POLYGON_API_KEY` |
 | Alpha Vantage | RSI(14) for screener picks only (≤20 symbols, free tier = 25 calls/day) | `ALPHA_VANTAGE_API_KEY` |
 | Twelvedata | RSI(14) for full watchlist (800 calls/day free tier) | `TWELVEDATA_API_KEY` |
 | Finnhub | Analyst consensus ratings, price targets, recommendation trends | `FINNHUB_API_KEY` |
@@ -158,8 +160,8 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | `TWELVEDATA_API_KEY` | "" | Empty = Twelvedata RSI skipped (falls back to Alpha Vantage) |
 | `settings_pin` | "" | If set, PUT /api/v1/strategy requires this PIN |
 | `BROKER_MODE` | "paper" | "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live |
-| `ALPACA_API_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
-| `ALPACA_SECRET_KEY` | "" | Required for alpaca_paper / alpaca_live modes |
+| `ALPACA_API_KEY` | "" | Required for broker + data API (prices, news, screener) |
+| `ALPACA_SECRET_KEY` | "" | Required for broker + data API |
 | `MARKET_TIMEZONE` | "America/New_York" | IANA timezone for trading day boundaries. Always NYSE time — do NOT change for user display preferences |
 
 ## Broker Integration (Alpaca)
@@ -210,7 +212,10 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Correlation check** — before accepting a BUY, computes 20-day return correlation with all held positions. r > 0.8 triggers a warning prepended to `key_risks` and a CORRELATION WARNINGS section in the risk review prompt.
 - **Pending fills** — `pending_fills.json` tracks submitted Alpaca orders awaiting fill confirmation. Phase 2.5 reconciliation cron checks these and records fills. Also serves as crash recovery — on startup, `main.py` reconciles any unrecorded fills. Records live at `/app/logs/pending_fills.json` (Docker volume).
 - **AlpacaBroker is fire-and-forget** — `submit_buy/sell` submit the order and write a pending fill record, then return `status: "submitted"` immediately. No polling. `reconcile_pending_orders()` (called by Phase 2.5 cron) checks Alpaca for fills and calls `apply_buy/apply_sell` to record them in the local DB. PaperBroker still fills synchronously.
-- **Limit order slippage buffer** — Phase 2 adds a configurable buffer to limit prices: buys at open + 0.5%, sells at open - 0.5% (configurable in `strategy.json` under `execution.buy_limit_buffer_pct` / `sell_limit_buffer_pct`). Prevents timeouts on stocks that move away from the opening print before the order reaches Alpaca.
+- **Limit order slippage buffer** — Phase 2 adds a configurable buffer to limit prices: buys at price + 0.3%, sells at price - 0.3% (configurable in `strategy.json` under `execution.buy_limit_buffer_pct` / `sell_limit_buffer_pct`). Tightened from 0.5% to 0.3% when execution moved to 10:15 AM (narrower post-opening-range spreads).
+- **Alpaca Data API** — `alpaca_data.py` provides snapshots, bars (IEX feed), news, and screener via `StockHistoricalDataClient`, `NewsClient`, and `ScreenerClient`. All use IEX feed (free tier). Clients are lazy-initialized (created on first use). SIP feed requires $9/mo subscription. yfinance still used for fundamentals, options, earnings, insider data, and index symbols (^GSPC, ^VIX etc. — Alpaca only covers equities/ETFs).
+- **Phase 2 at 10:15 AM** — execution shifted from 9:35 AM to 10:15 AM to avoid opening range volatility (first 30 min sees 2-3x normal volatility and 0.5-1.5% overshooting). Phase 2.5 reconciliation shifted to 10:30 AM accordingly.
+- **Alpaca BarSet** — `get_stock_bars()` returns a `BarSet` Pydantic model, not a dict. Use `bars.data` to access the underlying `{symbol: [Bar, ...]}` dict — `.get()` doesn't work on `BarSet` directly.
 - **Pydantic validation** — all Claude JSON outputs validated via `AnalysisOutput`, `DecisionOutput`, `RiskReviewOutput` models. Graceful fallback on validation failure.
 - **HTTP retry** — external data APIs (FRED, Polygon, Alpha Vantage, EDGAR, Finnhub) wrapped with `retry_get`/`retry_call` (3 attempts, 1s/3s/5s backoff on transient errors only).
 - **Timezone-aware datetimes** — all `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`. For DB queries against `TIMESTAMP WITHOUT TIME ZONE` columns, use `.replace(tzinfo=None)` to avoid asyncpg comparison errors.
