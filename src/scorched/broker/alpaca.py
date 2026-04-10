@@ -86,12 +86,14 @@ class AlpacaBroker(BrokerAdapter):
         recommendation_id: int | None,
     ) -> dict:
         limit_price = Decimal(str(limit_price)).quantize(Decimal("0.01"))
+        client_oid = f"scorched-{recommendation_id}-{symbol}-buy" if recommendation_id else None
         order_data = LimitOrderRequest(
             symbol=symbol,
             qty=float(qty),
             side=OrderSide.BUY,
             time_in_force=TimeInForce.DAY,
             limit_price=float(limit_price),
+            client_order_id=client_oid,
         )
 
         start = time.monotonic()
@@ -151,6 +153,12 @@ class AlpacaBroker(BrokerAdapter):
         loop = asyncio.get_running_loop()
         alpaca_pos = await loop.run_in_executor(None, self._get_position_sync, symbol)
         if alpaca_pos is None:
+            from ..config import settings as _settings
+            if _settings.broker_mode == "alpaca_live":
+                raise ValueError(
+                    f"SELL rejected for {symbol}: no position on Alpaca (live mode). "
+                    f"Cannot fall back to paper broker — resolve manually."
+                )
             logger.warning(
                 "Sell rejected for %s: no position held on Alpaca (would create short)", symbol
             )
@@ -169,12 +177,14 @@ class AlpacaBroker(BrokerAdapter):
             qty = alpaca_qty
 
         limit_price = Decimal(str(limit_price)).quantize(Decimal("0.01"))
+        client_oid = f"scorched-{recommendation_id}-{symbol}-sell" if recommendation_id else None
         order_data = LimitOrderRequest(
             symbol=symbol,
             qty=float(qty),
             side=OrderSide.SELL,
             time_in_force=TimeInForce.DAY,
             limit_price=float(limit_price),
+            client_order_id=client_oid,
         )
 
         start = time.monotonic()

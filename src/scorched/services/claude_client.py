@@ -216,6 +216,9 @@ async def call_decision(
     playbook_content: str,
     min_cash_pct: int,
     user_content: str,
+    *,
+    max_position_pct: int = 20,
+    max_holdings: int = 5,
     tracker=None,
 ):
     """Call 2: Decision (standard, no extended thinking).
@@ -227,6 +230,8 @@ async def call_decision(
         playbook=playbook_content,
         strategy=strategy,
         guidance=guidance,
+        max_position_pct=max_position_pct,
+        max_holdings=max_holdings,
     )
     ctx = track_call(tracker, "claude", "decision") if tracker else nullcontext()
     with ctx:

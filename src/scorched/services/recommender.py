@@ -24,6 +24,7 @@ from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from ..drawdown_gate import update_peak_and_check
 from ..correlation import find_high_correlations
+from .telegram import send_telegram
 from .research import (
     WATCHLIST,
     build_options_context,
@@ -418,8 +419,12 @@ async def generate_recommendations(
                 f"{pos['days_held']}d ({pos['tax_category']})\n"
             )
 
+    strategy_conc = strategy_json.get("concentration", {})
     call2_response, decision_raw, parsed = await call_decision(
-        strategy, guidance, playbook.content, min_cash_pct, call2_user, tracker=tracker,
+        strategy, guidance, playbook.content, min_cash_pct, call2_user,
+        max_position_pct=strategy_conc.get("max_position_pct", 20),
+        max_holdings=strategy_conc.get("max_holdings", 5),
+        tracker=tracker,
     )
 
     usage2 = call2_response.usage
@@ -524,6 +529,39 @@ async def generate_recommendations(
             min_cash = portfolio.cash_balance * settings.min_cash_reserve_pct
             if portfolio.cash_balance - estimated_cost < min_cash:
                 logger.warning("Skipping %s buy — would violate cash reserve", symbol)
+                await send_telegram(
+                    f"TRADEBOT // Cash reserve gate: {symbol} BUY skipped — "
+                    f"${estimated_cost:,.0f} would breach {int(settings.min_cash_reserve_pct * 100)}% reserve"
+                )
+                continue
+
+            # Max position size gate
+            total_value = Decimal(str(portfolio_dict["total_value"]))
+            max_pos_pct = strategy_conc.get("max_position_pct", 20)
+            max_pos_dollars = total_value * Decimal(str(max_pos_pct)) / Decimal("100")
+            if estimated_cost > max_pos_dollars:
+                logger.warning(
+                    "Skipping %s buy — $%s exceeds %d%% max position ($%s)",
+                    symbol, estimated_cost, max_pos_pct, max_pos_dollars,
+                )
+                await send_telegram(
+                    f"TRADEBOT // Position size gate: {symbol} BUY skipped — "
+                    f"${estimated_cost:,.0f} > {max_pos_pct}% limit (${max_pos_dollars:,.0f})"
+                )
+                continue
+
+            # Max holdings gate
+            max_holdings = strategy_conc.get("max_holdings", 5)
+            current_count = len(current_positions)
+            if current_count >= max_holdings:
+                logger.warning(
+                    "Skipping %s buy — at max holdings (%d/%d)",
+                    symbol, current_count, max_holdings,
+                )
+                await send_telegram(
+                    f"TRADEBOT // Holdings gate: {symbol} BUY skipped — "
+                    f"already holding {current_count}/{max_holdings} positions"
+                )
                 continue
 
         key_risks = rec.get("key_risks") or ""

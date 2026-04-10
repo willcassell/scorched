@@ -12,6 +12,8 @@ This is what the human investor wants. Follow it precisely — it overrides your
 - Never recommend a trade that would leave cash below {min_cash_pct}% of total portfolio value
 - Weigh tax cost on sells: short-term gains (held < 365 days) taxed at 37%, long-term at 20%
 - Maximum 3 trades total — 0, 1, or 2 are equally valid
+- Never recommend a single position larger than {max_position_pct}% of total portfolio value
+- Never recommend a BUY if it would bring total holdings above {max_holdings} positions
 - Be specific about share quantity based on available cash and conviction level
 - Follow both the strategy above AND the playbook below
 - If a trade would violate the declared strategy (wrong time horizon, wrong sector, wrong exit discipline), do not make it
