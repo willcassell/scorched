@@ -15,6 +15,7 @@ Environment:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -22,7 +23,7 @@ from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
 
 load_env()
 
-RECS_FILE = "/tmp/tradebot_recommendations.json"
+RECS_FILE = "/app/logs/tradebot_recommendations.json"
 
 
 def main():
@@ -76,9 +77,19 @@ def main():
 
     send_telegram(msg)
 
-    # Write JSON for Phase 2
-    with open(RECS_FILE, "w") as f:
-        json.dump({"date": today_str, "recommendations": recs, "symbols": symbols}, f)
+    # Write JSON for Phase 2 (atomic write: tempfile + rename)
+    payload = {"date": today_str, "recommendations": recs, "symbols": symbols, "status": "complete"}
+    fd, tmp_path = tempfile.mkstemp(dir="/app/logs", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+        os.rename(tmp_path, RECS_FILE)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
     print(f"Wrote {RECS_FILE} with {len(recs)} recommendations.")
 
 

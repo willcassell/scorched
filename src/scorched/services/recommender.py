@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..cost import record_usage
+from ..cost import record_usage, check_daily_cost_ceiling
 from ..models import Portfolio, Position, RecommendationSession, TokenUsage, TradeHistory, TradeRecommendation
 from ..schemas import PortfolioSummary, RecommendationItem, RecommendationsResponse
 from .claude_client import MODEL, call_analysis, call_decision, call_risk_review, parse_json_response
@@ -349,6 +349,9 @@ async def generate_recommendations(
     db.add(session_row)
     await db.flush()
 
+    # ── Daily cost ceiling check ────────────────────────────────────────────
+    await check_daily_cost_ceiling(db)
+
     # ── Call 1: Analysis with extended thinking ────────────────────────────
     logger.info("Call 1: analysis with extended thinking")
     call1_user = f"Today's date: {session_date}\n\n{market_context}\n\n{research_context}"
@@ -489,22 +492,31 @@ async def generate_recommendations(
         )
 
         risk_decisions = parse_risk_review_response(risk_raw)
-        rejected_symbols = {
-            d["symbol"].upper()
-            for d in risk_decisions
-            if d.get("verdict") == "reject" and d.get("action", "").lower() == "buy"
-        }
-        if rejected_symbols:
-            logger.info("Risk committee rejected buys: %s", rejected_symbols)
-            for d in risk_decisions:
-                if d.get("verdict") == "reject":
-                    logger.info("  %s %s: %s", d.get("action"), d.get("symbol"), d.get("reason"))
 
-        # Filter out rejected buy recommendations (sells always pass through)
-        raw_recs = [
-            r for r in raw_recs
-            if not (r.get("action", "").lower() == "buy" and r.get("symbol", "").upper() in rejected_symbols)
-        ]
+        if risk_decisions is None:
+            # Parse failure → fail-closed: reject ALL buys, let sells through
+            logger.warning("Risk review parse failure — rejecting all buys (fail-closed)")
+            await send_telegram(
+                "TRADEBOT // Risk committee parse failure — all BUY recs rejected (fail-closed)"
+            )
+            raw_recs = [r for r in raw_recs if r.get("action", "").lower() != "buy"]
+        else:
+            rejected_symbols = {
+                d["symbol"].upper()
+                for d in risk_decisions
+                if d.get("verdict") == "reject" and d.get("action", "").lower() == "buy"
+            }
+            if rejected_symbols:
+                logger.info("Risk committee rejected buys: %s", rejected_symbols)
+                for d in risk_decisions:
+                    if d.get("verdict") == "reject":
+                        logger.info("  %s %s: %s", d.get("action"), d.get("symbol"), d.get("reason"))
+
+            # Filter out rejected buy recommendations (sells always pass through)
+            raw_recs = [
+                r for r in raw_recs
+                if not (r.get("action", "").lower() == "buy" and r.get("symbol", "").upper() in rejected_symbols)
+            ]
 
     recommendation_rows = []
     for rec in raw_recs:
@@ -611,6 +623,16 @@ async def generate_recommendations(
         recommendation_rows.append(row)
 
     await tracker.flush(db)
+
+    # If no recommendations survived filtering, delete the session so cron can
+    # retry without needing force=True (#12: empty session caching blocks retries)
+    if not recommendation_rows:
+        logger.info("No recommendations survived filtering — removing empty session to allow retry")
+        await db.execute(
+            update(TokenUsage).where(TokenUsage.session_id == session_row.id).values(session_id=None)
+        )
+        await db.delete(session_row)
+
     await db.commit()
     for row in recommendation_rows:
         await db.refresh(row)

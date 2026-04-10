@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alpaca.trading.client import TradingClient
@@ -13,7 +14,13 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 
 from ..services.portfolio import apply_buy, apply_sell
 from .base import BrokerAdapter
-from .pending_fills import write_pending_fill, remove_pending_fill
+from .pending_fills import (
+    write_pending_fill,
+    update_pending_fill_order_id,
+    remove_pending_fill,
+    remove_pending_fill_by_client_oid,
+    get_pending_fills,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +103,17 @@ class AlpacaBroker(BrokerAdapter):
             client_order_id=client_oid,
         )
 
+        # Write pending fill BEFORE submitting to Alpaca — survives crashes
+        await write_pending_fill(
+            self.db,
+            client_order_id=client_oid,
+            symbol=symbol,
+            action="buy",
+            qty=qty,
+            limit_price=limit_price,
+            recommendation_id=recommendation_id,
+        )
+
         start = time.monotonic()
         try:
             order = await self._submit_order_with_retry(order_data)
@@ -105,20 +123,17 @@ class AlpacaBroker(BrokerAdapter):
             elapsed_ms = int((time.monotonic() - start) * 1000)
             await _record_api_call(self.db, "submit_buy", "error", elapsed_ms,
                                    error_message=str(exc)[:500], symbol=symbol)
+            # Clean up the pre-written pending fill on submission failure
+            if client_oid:
+                await remove_pending_fill_by_client_oid(self.db, client_oid)
             raise
 
         order_id = str(order.id)
         logger.info("Submitted BUY %s x%s limit=$%s — order_id=%s", symbol, qty, limit_price, order_id)
 
-        # Record as pending — reconcile_pending_orders will check for fills later
-        write_pending_fill(
-            order_id=order_id,
-            symbol=symbol,
-            action="buy",
-            qty=qty,
-            fill_price=limit_price,  # placeholder until actual fill
-            recommendation_id=recommendation_id,
-        )
+        # Update pending fill with real Alpaca order ID
+        if client_oid:
+            await update_pending_fill_order_id(self.db, client_order_id=client_oid, order_id=order_id)
 
         return {
             "status": "submitted",
@@ -148,6 +163,7 @@ class AlpacaBroker(BrokerAdapter):
         qty: Decimal,
         limit_price: Decimal,
         recommendation_id: int | None,
+        _client_order_id_override: str | None = None,
     ) -> dict:
         # Guard: verify position exists on Alpaca to prevent accidental shorts
         loop = asyncio.get_running_loop()
@@ -177,7 +193,9 @@ class AlpacaBroker(BrokerAdapter):
             qty = alpaca_qty
 
         limit_price = Decimal(str(limit_price)).quantize(Decimal("0.01"))
-        client_oid = f"scorched-{recommendation_id}-{symbol}-sell" if recommendation_id else None
+        client_oid = _client_order_id_override or (
+            f"scorched-{recommendation_id}-{symbol}-sell" if recommendation_id else None
+        )
         order_data = LimitOrderRequest(
             symbol=symbol,
             qty=float(qty),
@@ -185,6 +203,17 @@ class AlpacaBroker(BrokerAdapter):
             time_in_force=TimeInForce.DAY,
             limit_price=float(limit_price),
             client_order_id=client_oid,
+        )
+
+        # Write pending fill BEFORE submitting to Alpaca — survives crashes
+        await write_pending_fill(
+            self.db,
+            client_order_id=client_oid,
+            symbol=symbol,
+            action="sell",
+            qty=qty,
+            limit_price=limit_price,
+            recommendation_id=recommendation_id,
         )
 
         start = time.monotonic()
@@ -196,20 +225,17 @@ class AlpacaBroker(BrokerAdapter):
             elapsed_ms = int((time.monotonic() - start) * 1000)
             await _record_api_call(self.db, "submit_sell", "error", elapsed_ms,
                                    error_message=str(exc)[:500], symbol=symbol)
+            # Clean up the pre-written pending fill on submission failure
+            if client_oid:
+                await remove_pending_fill_by_client_oid(self.db, client_oid)
             raise
 
         order_id = str(order.id)
         logger.info("Submitted SELL %s x%s limit=$%s — order_id=%s", symbol, qty, limit_price, order_id)
 
-        # Record as pending — reconcile_pending_orders will check for fills later
-        write_pending_fill(
-            order_id=order_id,
-            symbol=symbol,
-            action="sell",
-            qty=qty,
-            fill_price=limit_price,  # placeholder until actual fill
-            recommendation_id=recommendation_id,
-        )
+        # Update pending fill with real Alpaca order ID
+        if client_oid:
+            await update_pending_fill_order_id(self.db, client_order_id=client_oid, order_id=order_id)
 
         return {
             "status": "submitted",
@@ -281,9 +307,8 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
     """Check all pending orders on Alpaca and record fills in local DB.
 
     Returns a list of reconciliation results for each pending order.
-    Called by the reconcile cron job ~15 min after Phase 2.
+    Called by the reconcile cron job ~30 min after Phase 2.
     """
-    from .pending_fills import get_pending_fills, remove_pending_fill
     from ..config import settings
 
     if settings.broker_mode not in ("alpaca_paper", "alpaca_live"):
@@ -296,7 +321,7 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
         paper=is_paper,
     )
 
-    pending = get_pending_fills()
+    pending = await get_pending_fills(db)
     if not pending:
         logger.info("No pending orders to reconcile")
         return []
@@ -307,9 +332,33 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
 
     for fill in pending:
         order_id = fill["order_id"]
+        client_oid = fill.get("client_order_id")
         symbol = fill["symbol"]
         action = fill["action"]
         recommendation_id = fill.get("recommendation_id")
+
+        # If we crashed before getting the Alpaca order_id, look up by client_order_id
+        if not order_id and client_oid:
+            try:
+                order = await loop.run_in_executor(
+                    None, lambda coid=client_oid: client.get_order_by_client_id(client_order_id=coid)
+                )
+                order_id = str(order.id)
+                await update_pending_fill_order_id(db, client_order_id=client_oid, order_id=order_id)
+                logger.info("Recovered order_id=%s from client_oid=%s", order_id, client_oid)
+            except Exception as exc:
+                # Order was never submitted to Alpaca (crashed before submission)
+                logger.info("No Alpaca order found for client_oid=%s — cleaning up: %s", client_oid, exc)
+                await remove_pending_fill_by_client_oid(db, client_oid)
+                results.append({
+                    "symbol": symbol, "action": action,
+                    "status": "never_submitted", "filled_qty": "0", "filled_price": None,
+                })
+                continue
+
+        if not order_id:
+            logger.warning("Pending fill for %s has no order_id or client_order_id — skipping", symbol)
+            continue
 
         try:
             order = await loop.run_in_executor(
@@ -330,7 +379,8 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
                         execution_price=filled_price,
                         executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
-                    remove_pending_fill(order_id)
+                    await remove_pending_fill(db, order_id)
+                    await db.commit()
                     results.append({
                         "symbol": symbol,
                         "action": action,
@@ -350,7 +400,8 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
                         execution_price=filled_price,
                         executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
-                    remove_pending_fill(order_id)
+                    await remove_pending_fill(db, order_id)
+                    await db.commit()
                     results.append({
                         "symbol": symbol,
                         "action": action,
@@ -363,15 +414,63 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
                     logger.info("Reconciled SELL %s: %s shares @ $%s", symbol, filled_qty, filled_price)
 
             elif status in ("canceled", "expired", "rejected"):
-                # Terminal non-fill — clean up pending record, mark rec as pending again
-                remove_pending_fill(order_id)
-                results.append({
-                    "symbol": symbol,
-                    "action": action,
-                    "status": status,
-                    "filled_qty": "0",
-                    "filled_price": None,
-                })
+                # Check for partial fills before cleaning up (#3)
+                filled_qty_raw = order.filled_qty
+                filled_qty = Decimal(str(filled_qty_raw)) if filled_qty_raw else Decimal("0")
+
+                if filled_qty > 0:
+                    # Partial fill on a now-terminal order — record the filled portion
+                    filled_price = Decimal(str(order.filled_avg_price))
+                    logger.warning(
+                        "Order %s for %s %s is %s with partial fill: %s shares @ $%s",
+                        order_id, action, symbol, status, filled_qty, filled_price,
+                    )
+                    if action == "buy":
+                        result = await apply_buy(
+                            db,
+                            recommendation_id=recommendation_id,
+                            symbol=symbol,
+                            shares=filled_qty,
+                            execution_price=filled_price,
+                            executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        )
+                    elif action == "sell":
+                        result = await apply_sell(
+                            db,
+                            recommendation_id=recommendation_id,
+                            symbol=symbol,
+                            shares=filled_qty,
+                            execution_price=filled_price,
+                            executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        )
+                    await remove_pending_fill(db, order_id)
+                    await db.commit()
+                    results.append({
+                        "symbol": symbol,
+                        "action": action,
+                        "status": f"partial_fill ({status})",
+                        "filled_qty": str(filled_qty),
+                        "filled_price": str(filled_price),
+                    })
+                else:
+                    # Terminal with zero fill — clean up and mark rec as rejected (#13)
+                    if recommendation_id:
+                        from ..models import TradeRecommendation
+                        rec_row = (await db.execute(
+                            select(TradeRecommendation).where(TradeRecommendation.id == recommendation_id)
+                        )).scalars().first()
+                        if rec_row and rec_row.status == "submitted":
+                            rec_row.status = "rejected"
+                            logger.info("Marked rec %d as rejected (order %s)", recommendation_id, status)
+                    await remove_pending_fill(db, order_id)
+                    await db.commit()
+                    results.append({
+                        "symbol": symbol,
+                        "action": action,
+                        "status": status,
+                        "filled_qty": "0",
+                        "filled_price": None,
+                    })
                 logger.info("Order %s for %s %s reached terminal: %s", order_id, action, symbol, status)
 
             else:

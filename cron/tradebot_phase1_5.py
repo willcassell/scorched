@@ -23,8 +23,8 @@ from common import load_env, send_telegram, now_et, acquire_lock, release_lock, 
 
 load_env()
 
-RECS_FILE = "/tmp/tradebot_recommendations.json"
-FILTERED_FILE = "/tmp/tradebot_recommendations_gated.json"
+RECS_FILE = "/app/logs/tradebot_recommendations.json"
+FILTERED_FILE = "/app/logs/tradebot_recommendations_gated.json"
 
 
 def main():
@@ -42,6 +42,11 @@ def main():
 
     if stored["date"] != today_str:
         print(f"Date mismatch: {stored['date']} != {today_str}")
+        return
+
+    if stored.get("status") != "complete":
+        print(f"Phase 1 did not complete successfully (status={stored.get('status')})")
+        send_telegram(f"TRADEBOT // {today_str} - Phase 1.5 skipped: Phase 1 incomplete")
         return
 
     recs = stored["recommendations"]
@@ -95,7 +100,7 @@ def main():
     # Write filtered file for Phase 2 (atomic write via temp file + rename)
     stored["recommendations"] = passed
     stored["symbols"] = [r["symbol"] for r in passed]
-    fd, tmp_path = tempfile.mkstemp(dir="/tmp", suffix=".json")
+    fd, tmp_path = tempfile.mkstemp(dir="/app/logs", suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(stored, f)

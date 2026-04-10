@@ -24,8 +24,8 @@ from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
 
 load_env()
 
-GATED_FILE = "/tmp/tradebot_recommendations_gated.json"
-ORIGINAL_FILE = "/tmp/tradebot_recommendations.json"
+GATED_FILE = "/app/logs/tradebot_recommendations_gated.json"
+ORIGINAL_FILE = "/app/logs/tradebot_recommendations.json"
 
 
 def _cleanup_recs_file(path):
@@ -62,6 +62,15 @@ def main():
         )
         _cleanup_recs_file(recs_file)
         print(f"Date mismatch: {stored['date']} != {today_str}")
+        return
+
+    if stored.get("status") != "complete":
+        send_telegram(
+            f"TRADEBOT // {today_str} - Phase 2 skipped: "
+            f"Phase 1 did not complete successfully (status={stored.get('status')})"
+        )
+        _cleanup_recs_file(recs_file)
+        print(f"Phase 1 incomplete: status={stored.get('status')}")
         return
 
     recs = stored["recommendations"]

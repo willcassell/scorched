@@ -643,7 +643,7 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tr
 # S&P 500 members not already in WATCHLIST — used as the screener candidate pool.
 # Update periodically as index composition changes. Excludes all 40 WATCHLIST symbols.
 _SP500_POOL = [
-    "A", "AAL", "AAP", "AbbVie", "ABC", "ACGL", "ACN", "ADSK", "AEE", "AEP",
+    "A", "AAL", "AAP", "ABBV", "ABC", "ACGL", "ACN", "ADSK", "AEE", "AEP",
     "AES", "AFL", "AIG", "AIZ", "AJG", "AKAM", "ALB", "ALGN", "ALL", "ALLY",
     "ALNY", "ALSN", "ALT", "AMCR", "AME", "AMGN", "AMP", "AMT", "AMTM", "AON",
     "AOS", "APD", "APH", "APO", "ARE", "ATO", "AVB", "AVTR", "AVY", "AWK",

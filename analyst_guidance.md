@@ -111,7 +111,7 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 
 1. **Catalyst required**: Do not recommend a buy without a specific, named, verifiable catalyst. "Strong technicals" or "sector momentum" alone is not sufficient.
 2. **No earnings risk**: Do not open a new position if the company reports earnings within 3 trading days (unless the position predates the announcement date).
-3. **No sector doubling**: Never hold two positions in the same sector simultaneously (e.g., two tech stocks).
+3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value (e.g., with 5 positions at 20% each, max 2 in same sector).
 4. **Stop loss at -5%**: Any position down 5% from entry must be exited in full. No exceptions, no averaging down.
 5. **Time stop at 7 days**: If a position is flat or down after 7 trading days, exit. Do not let a short-term trade become a long-term hold by inaction.
 6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.

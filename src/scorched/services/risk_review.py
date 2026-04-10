@@ -63,8 +63,12 @@ def build_risk_review_prompt(
     return "\n".join(lines)
 
 
-def parse_risk_review_response(raw: str) -> list[dict]:
-    """Parse the risk review JSON response. Returns list of decision dicts, or [] on failure."""
+def parse_risk_review_response(raw: str) -> list[dict] | None:
+    """Parse the risk review JSON response.
+
+    Returns list of decision dicts on success, or **None** on parse failure.
+    Callers must treat None as fail-closed (reject all buys).
+    """
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
@@ -75,10 +79,10 @@ def parse_risk_review_response(raw: str) -> list[dict]:
                 parsed = json.loads(match.group(1))
             except json.JSONDecodeError:
                 logger.warning("Failed to parse risk review response (even after fence extraction)")
-                return []
+                return None
         else:
             logger.warning("Failed to parse risk review response as JSON")
-            return []
+            return None
 
     # Validate with Pydantic if available
     from .claude_client import validate_llm_output, RiskReviewOutput

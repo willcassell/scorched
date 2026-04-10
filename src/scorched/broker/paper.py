@@ -51,6 +51,7 @@ class PaperBroker(BrokerAdapter):
         qty: Decimal,
         limit_price: Decimal,
         recommendation_id: int | None,
+        _client_order_id_override: str | None = None,
     ) -> dict:
         result = await apply_sell(
             self.db,

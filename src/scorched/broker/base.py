@@ -30,6 +30,7 @@ class BrokerAdapter(ABC):
         qty: Decimal,
         limit_price: Decimal,
         recommendation_id: int | None,
+        _client_order_id_override: str | None = None,
     ) -> dict:
         """Submit a sell order. Returns fill info dict with same keys as submit_buy,
         plus realized_gain, tax_category.

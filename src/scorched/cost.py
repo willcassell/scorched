@@ -1,7 +1,16 @@
 """Token cost estimation. Prices in USD per million tokens as of 2026-02."""
+from datetime import datetime, timezone
 from decimal import Decimal
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from .models import TokenUsage
+
+# Maximum daily Claude spend before the system refuses new calls.
+# Configurable via DAILY_COST_CEILING_USD env var (not yet wired —
+# hardcoded default is generous enough for normal operation).
+DAILY_COST_CEILING_USD = Decimal("5.00")
 
 # (input_usd_per_mtok, output_usd_per_mtok, thinking_usd_per_mtok)
 _PRICING: dict[str, tuple[float, float, float]] = {
@@ -49,3 +58,28 @@ async def record_usage(
     )
     db.add(row)
     return row
+
+
+async def get_today_cost(db: AsyncSession) -> Decimal:
+    """Sum today's Claude API cost from token_usage table."""
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None,
+    )
+    result = await db.execute(
+        select(func.coalesce(func.sum(TokenUsage.estimated_cost_usd), 0))
+        .where(TokenUsage.created_at >= today_start)
+    )
+    return Decimal(str(result.scalar()))
+
+
+async def check_daily_cost_ceiling(db: AsyncSession) -> None:
+    """Raise if today's Claude spend exceeds the daily ceiling.
+
+    Call before each Claude API call to prevent runaway costs.
+    """
+    today_cost = await get_today_cost(db)
+    if today_cost >= DAILY_COST_CEILING_USD:
+        raise RuntimeError(
+            f"Daily Claude cost ceiling exceeded: ${today_cost:.4f} >= "
+            f"${DAILY_COST_CEILING_USD} — refusing new API calls"
+        )

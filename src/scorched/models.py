@@ -128,6 +128,26 @@ class TokenUsage(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class PendingFill(Base):
+    """Tracks submitted Alpaca orders awaiting fill confirmation.
+
+    Written BEFORE submitting to Alpaca (with client_order_id, no order_id yet).
+    Updated with real order_id after Alpaca accepts.  Removed once the fill is
+    recorded in TradeHistory via apply_buy/apply_sell.
+    """
+    __tablename__ = "pending_fills"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
+    client_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(10), nullable=False)
+    action: Mapped[str] = mapped_column(String(4), nullable=False)
+    qty: Mapped[Decimal] = mapped_column(Numeric(15, 6), nullable=False)
+    limit_price: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
+    recommendation_id: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class ApiCallLog(Base):
     __tablename__ = "api_call_log"
 

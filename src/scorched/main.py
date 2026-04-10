@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from .api import broker_status, costs, intraday, market, onboarding, playbook, portfolio, prefetch, recommendations, strategy, system, trades
-from .broker.pending_fills import get_pending_fills, remove_pending_fill
+from .broker.pending_fills import get_pending_fills
 from .config import settings
 from .database import AsyncSessionLocal
 from .models import Portfolio
@@ -54,15 +54,16 @@ async def _reconcile_pending_fills() -> None:
     from .broker.alpaca import reconcile_pending_orders
     from .services.telegram import send_telegram
 
-    pending = get_pending_fills()
-    if not pending:
-        return
-
-    logging.critical(
-        "STARTUP RECONCILIATION: Found %d pending order(s) from previous run", len(pending)
-    )
-
     try:
+        async with AsyncSessionLocal() as db:
+            pending = await get_pending_fills(db)
+        if not pending:
+            return
+
+        logging.critical(
+            "STARTUP RECONCILIATION: Found %d pending order(s) from previous run", len(pending)
+        )
+
         async with AsyncSessionLocal() as db:
             results = await reconcile_pending_orders(db)
 

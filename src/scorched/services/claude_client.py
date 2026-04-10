@@ -266,7 +266,7 @@ async def call_risk_review(user_content: str, tracker=None):
         response = await claude_call_with_retry(
             _client(), "Call 3 (risk review)",
             model=MODEL,
-            max_tokens=1024,
+            max_tokens=2048,
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         )

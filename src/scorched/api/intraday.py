@@ -1,4 +1,5 @@
 """Intraday monitoring endpoint — evaluates triggered positions via Claude."""
+import asyncio
 import json
 import logging
 from decimal import Decimal
@@ -19,6 +20,7 @@ from ..schemas import (
     IntradayTriggerItem,
 )
 from ..services.claude_client import call_intraday_exit, parse_json_response
+from ..tz import market_today
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,18 @@ def _is_hard_stop(trigger: IntradayTriggerItem, hard_stop_pct: float) -> tuple[b
     return drop_pct >= hard_stop_pct, drop_pct
 
 
+def _fresh_price(symbol: str) -> Decimal | None:
+    """Fetch a fresh snapshot price from Alpaca (sync, runs in executor)."""
+    try:
+        from ..services.alpaca_data import fetch_snapshots_sync
+        snaps = fetch_snapshots_sync([symbol])
+        if symbol in snaps:
+            return Decimal(str(snaps[symbol]["current_price"]))
+    except Exception as exc:
+        logger.warning("Fresh snapshot fetch failed for %s: %s", symbol, exc)
+    return None
+
+
 async def _execute_sell(
     trigger: IntradayTriggerItem,
     sell_qty: Decimal,
@@ -55,12 +69,23 @@ async def _execute_sell(
 ) -> tuple[dict | None, str | None]:
     """Execute a sell via broker. Returns (trade_result, error_msg)."""
     broker = get_broker(db)
+
+    # Fetch fresh price from Alpaca — don't use stale trigger.current_price (#16)
+    loop = asyncio.get_running_loop()
+    fresh = await loop.run_in_executor(None, _fresh_price, trigger.symbol)
+    limit_price = (fresh or Decimal(str(trigger.current_price))).quantize(Decimal("0.01"))
+
+    # Deterministic idempotency key for intraday sells (#8)
+    today = market_today().isoformat()
+    client_oid = f"scorched-intraday-{trigger.symbol}-{today}"
+
     try:
         result = await broker.submit_sell(
             symbol=trigger.symbol,
             qty=sell_qty,
-            limit_price=Decimal(str(trigger.current_price)).quantize(Decimal("0.01")),
+            limit_price=limit_price,
             recommendation_id=None,
+            _client_order_id_override=client_oid,
         )
         if result["status"] == "filled":
             trade_result = {
@@ -72,6 +97,19 @@ async def _execute_sell(
             logger.info(
                 "Intraday exit executed: SELL %s %s shares @ %s",
                 trigger.symbol, sell_qty, result["filled_avg_price"],
+            )
+            return trade_result, None
+        elif result["status"] == "submitted":
+            # Fire-and-forget Alpaca order — treat as success, reconcile later
+            trade_result = {
+                "trade_id": None,
+                "shares": float(sell_qty),
+                "execution_price": float(limit_price),
+                "realized_gain": None,
+            }
+            logger.info(
+                "Intraday exit submitted: SELL %s %s shares @ limit %s (reconcile later)",
+                trigger.symbol, sell_qty, limit_price,
             )
             return trade_result, None
         else:
@@ -143,6 +181,20 @@ async def evaluate_triggers(
             continue
 
         # ── Normal Claude evaluation path ─────────────────────────────
+        # Check daily cost ceiling before calling Claude
+        from ..cost import check_daily_cost_ceiling
+        try:
+            await check_daily_cost_ceiling(db)
+        except RuntimeError as e:
+            logger.warning("Skipping Claude eval for %s: %s", trigger.symbol, e)
+            decisions.append(IntradayDecision(
+                symbol=trigger.symbol,
+                action="hold",
+                reasoning=f"Daily cost ceiling exceeded — holding without evaluation",
+                trade_result=None,
+            ))
+            continue
+
         prompt = _build_exit_prompt(trigger, body.market_context)
 
         response, raw_text = await call_intraday_exit(prompt)
