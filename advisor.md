@@ -60,7 +60,6 @@ The system gathers data from 12+ sources:
 | **Economic calendar** | FRED releases API — upcoming CPI, Jobs, FOMC, GDP, PPI, PCE | Volatility risk awareness |
 | **News** | Yahoo Finance + Polygon.io | Catalyst identification |
 | **Analyst consensus** | Finnhub — buy/hold/sell counts, recommendation trends | Institutional sentiment |
-| **Congressional trading** | Finnhub (STOCK Act disclosures) | Insider-adjacent signal |
 | **Insider activity** | SEC EDGAR (Form 4 filings) | Corporate insider transactions |
 | **Technical indicators** | Computed locally — RSI (via Twelvedata + Alpha Vantage), MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile, ATR | Entry/exit timing |
 | **Options data** | Yahoo Finance — put/call ratio, implied volatility, implied 30-day move | Sentiment and risk gauge |

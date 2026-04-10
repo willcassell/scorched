@@ -41,7 +41,7 @@ The daily cycle is driven by **cron jobs on the VM** — no AI orchestrator requ
 - `45 9 * * 1-5` ET (9:45 AM ET) → Phase 1: POST `/api/v1/recommendations/generate` (Claude sees real opening data, not pre-market guesses)
 - `55 9 * * 1-5` ET (9:55 AM ET) → Phase 1.5: Circuit breaker gate with 25 min of live data (`cron/tradebot_phase1_5.py`)
 - `15 10 * * 1-5` ET (10:15 AM ET) → Phase 2: POST `/api/v1/trades/confirm` for each cleared rec (fire-and-forget for Alpaca, post opening range)
-- `45 10 * * 1-5` ET (10:45 AM ET) → Phase 2.5: POST `/api/v1/trades/reconcile` — checks pending Alpaca orders for fills (30 min buffer)
+- `45 10 * * 1-5` ET (10:45 AM ET) → Phase 2.5: POST `/api/v1/trades/reconcile` + POST `/api/v1/broker/sync` — reconciles pending fills, then syncs positions against Alpaca
 - `*/5 9-15 * * 1-5` ET → Intraday: Position monitoring with trigger-based Claude exit evaluation (9:35 AM–3:55 PM ET, self-gates)
 - `01 16 * * 1-5` ET (4:01 PM ET) → Phase 3: EOD summary + playbook update
 
@@ -61,7 +61,7 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/services/research.py` | Data orchestration: Alpaca (prices/news), yfinance (fundamentals/options), FRED, Alpha Vantage, EDGAR, Finnhub |
 | `src/scorched/services/technicals.py` | MACD, Bollinger Bands, MA crossover, support/resistance, volume profile, ATR calculations |
 | `src/scorched/services/economic_calendar.py` | FRED-based upcoming economic release tracking (CPI, Jobs, FOMC, GDP, etc.) |
-| `src/scorched/services/finnhub_data.py` | Analyst consensus ratings, price targets, and congressional trading data from Finnhub |
+| `src/scorched/services/finnhub_data.py` | Analyst consensus ratings and recommendation trends from Finnhub |
 | `src/scorched/services/risk_review.py` | Call 3: Adversarial risk committee review of recommendations |
 | `src/scorched/services/position_mgmt.py` | Call 4: EOD position management review and stop suggestions |
 | `src/scorched/services/portfolio.py` | apply_buy(), apply_sell(), get_portfolio_state() |
@@ -76,7 +76,8 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/trailing_stops.py` | ATR-based trailing stop logic — pure functions |
 | `src/scorched/services/reflection.py` | Weekly trade reflection: reviews outcomes, extracts learnings |
 | `src/scorched/broker/pending_fills.py` | Pending fill tracking: submitted orders awaiting Alpaca fill + crash recovery |
-| `cron/tradebot_reconcile.py` | Phase 2.5 cron: reconciles pending Alpaca orders, records fills in local DB |
+| `cron/tradebot_reconcile.py` | Phase 2.5 cron: reconciles pending Alpaca orders, then syncs positions against Alpaca |
+| `src/scorched/services/reconciliation.py` | Position check + sync: compares local DB vs Alpaca, auto-corrects mismatches |
 | `src/scorched/cost.py` | Claude token cost calculator + record_usage() |
 | `src/scorched/api_tracker.py` | API call tracking — sync recorder, health aggregation, cleanup |
 | `src/scorched/tz.py` | Timezone utility: `market_today()`, `market_now()`, `MARKET_TZ` — all trading-day logic uses this |
@@ -99,7 +100,7 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 
 **Call 1 — Analysis** (extended thinking, budget=16000 tokens):
 - System: `ANALYSIS_SYSTEM` — analyst persona, strategy injected, 6-step structured framework (macro → sector → screening → ranking → position review → output)
-- Input: market context + pre-filtered research context (top 25 symbols + held positions, with relative strength, ATR, economic calendar, and congressional trading data)
+- Input: market context + pre-filtered research context (top 25 symbols + held positions, with relative strength, ATR, and economic calendar)
 - Output: `{"analysis": "...", "candidates": ["TICK1", ...]}` — validated via Pydantic `AnalysisOutput`
 
 **Call 2 — Decision** (standard, no extended thinking):
@@ -137,7 +138,6 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | Alpha Vantage | RSI(14) for screener picks only (≤20 symbols, free tier = 25 calls/day) | `ALPHA_VANTAGE_API_KEY` |
 | Twelvedata | RSI(14) for full watchlist (800 calls/day free tier) | `TWELVEDATA_API_KEY` |
 | Finnhub | Analyst consensus ratings, price targets, recommendation trends | `FINNHUB_API_KEY` |
-| Finnhub (congressional) | Congressional stock trades (STOCK Act), last 90 days | `FINNHUB_API_KEY` (same key) |
 | FRED (economic calendar) | Upcoming major releases: CPI, Jobs, FOMC, GDP, PPI, PCE | `FRED_API_KEY` (same key) |
 | SEC EDGAR | Form 4 insider filing counts (free, no key; type unknown from API) | No |
 | Momentum screener | Top 20 S&P 500 by 5-day momentum (batch `yf.download()`, price > 20d MA, vol > 1M) | No |
@@ -231,7 +231,6 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Twelvedata vs Alpha Vantage** — Twelvedata (800 calls/day) fetches RSI for ALL research symbols. Alpha Vantage (25 calls/day) only covers screener picks. Both are fetched in Phase 0; Twelvedata provides broader coverage.
 - **Cron setup script** — `python3 scripts/setup_cron.py` auto-detects DST and installs correct UTC cron times. Re-run after each DST change instead of manually editing crontab. Supports `--check`, `--remove`, `--dry-run`.
 - **Economic calendar** — uses FRED releases API (same key). Tracks CPI, Jobs, FOMC, GDP, PPI, PCE, retail sales, housing starts, consumer confidence, industrial production. Warns Claude about same-day releases.
-- **Congressional trading** — Finnhub free tier includes STOCK Act data. 90-day lookback via `_from`/`to` date params (required since finnhub-python 2.4.27). Not all symbols have data; empty results are normal.
 - **MCP auth** — MCP mutation tools (`confirm_trade`, `reject_recommendation`, `get_recommendations`) require the `pin` parameter when `SETTINGS_PIN` is set. Read-only tools don't require a PIN. This matches REST endpoint behavior.
 - **MCP confirm_trade routes through broker** — MCP `confirm_trade` uses `get_broker(db)` → `broker.submit_buy/sell()`, same as the REST endpoint. This ensures Alpaca orders are actually submitted (not just recorded in DB) regardless of whether the trade is confirmed via REST or MCP.
 

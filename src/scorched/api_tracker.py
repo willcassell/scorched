@@ -10,15 +10,16 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 SERVICES = [
+    "alpaca_data",
+    "alpaca_trade",
+    "alpaca_sync",
     "yfinance",
     "fred",
-    "polygon",
     "finnhub",
     "alpha_vantage",
     "twelvedata",
     "edgar",
     "claude",
-    "alpaca",
 ]
 
 

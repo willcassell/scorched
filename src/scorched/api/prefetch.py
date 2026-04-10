@@ -15,7 +15,7 @@ from ..database import get_db
 from ..models import Position
 from .deps import require_owner_pin
 from ..services.economic_calendar import fetch_economic_calendar, build_economic_calendar_context
-from ..services.finnhub_data import fetch_analyst_consensus_sync, build_analyst_context, fetch_congressional_trading_sync, build_congressional_context
+from ..services.finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from ..services.research import (
     WATCHLIST,
     build_research_context,
@@ -143,15 +143,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         )
     logger.info("Phase 0: fetched analyst consensus for %d symbols", len(analyst_consensus))
 
-    with _timed("finnhub_congress", timing):
-        congressional_data = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: fetch_congressional_trading_sync(research_symbols, finnhub_client, tracker=tracker)
-        )
-    logger.info("Phase 0: fetched congressional trading for %d symbols", len(congressional_data))
-
     # 5. Build the analyst context text
     analyst_context = build_analyst_context(analyst_consensus)
-    congressional_context = build_congressional_context(congressional_data)
 
     # 6. Serialize price_data for cache (convert non-serializable types)
     price_data_cache = {}
@@ -190,8 +183,6 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "technicals": technicals,
         "analyst_consensus": analyst_consensus,
         "analyst_context": analyst_context,
-        "congressional_data": congressional_data,
-        "congressional_context": congressional_context,
         "sector_returns": sector_returns,
         "relative_strength": relative_strength,
         "premarket_data": premarket_data,

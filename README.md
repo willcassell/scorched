@@ -45,17 +45,17 @@ The bot also runs fully autonomously on a daily schedule — no manual intervent
 ```
 Cron (VM)
     │
-    │  7:30 AM ET — Data prefetch (zero LLM cost)
-    │  8:30 AM ET — Claude analysis + recommendations
-    │  9:30 AM ET — Circuit breaker safety gate
-    │  9:35 AM ET — Execute approved trades
+    │  9:35 AM ET — Data prefetch (post market open, zero LLM cost)
+    │  9:45 AM ET — Claude analysis + recommendations
+    │  9:55 AM ET — Circuit breaker safety gate
+    │  10:15 AM ET — Execute approved trades
     │  Every 5 min — Intraday position monitoring
     │  4:01 PM ET — EOD review + playbook update
     │
     ▼
 Scorched (FastAPI + PostgreSQL)
     │
-    ├── Phase 0: Fetches market data (yfinance, FRED, Polygon, Twelvedata, Finnhub, EDGAR)
+    ├── Phase 0: Fetches market data (Alpaca, yfinance, FRED, Twelvedata, Finnhub, EDGAR)
     ├── Phase 0: Runs momentum screener (top 20 S&P 500 movers)
     ├── Phase 1: Calls Claude (claude-sonnet-4-6) — multi-call pipeline
     │     Call 1: Analysis w/ extended thinking → identify candidates
@@ -79,11 +79,10 @@ Scorched (FastAPI + PostgreSQL)
 | MCP | `mcp[cli]` (FastMCP, Streamable HTTP) — talk to your bot from Claude Desktop |
 | Database | PostgreSQL 16 via SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
-| Market data | yfinance (prices, fundamentals, options, earnings, news, insider) |
+| Market data | Alpaca Data API (prices, bars, snapshots, news, screener) + yfinance (fundamentals, options, earnings, insider) |
 | Macro data | FRED API (Fed rate, CPI, yield curve, PCE, credit spreads, economic calendar) |
-| News | Polygon.io (preferred) + yfinance fallback |
 | Technicals | Twelvedata RSI(14) for full watchlist + Alpha Vantage fallback |
-| Analyst consensus | Finnhub (recommendation trends, congressional trading) |
+| Analyst consensus | Finnhub (recommendation trends) |
 | Insider filings | SEC EDGAR Form 4 (free, no key) |
 | Holiday detection | `pandas-market-calendars` (NYSE calendar) |
 | Automation | cron on the VM |
@@ -231,7 +230,7 @@ scorched/
             ├── recommender.py    # Claude 4-call pipeline + NYSE holiday check
             ├── research.py       # All data fetching (yfinance, FRED, Polygon, Twelvedata, Finnhub, EDGAR)
             ├── technicals.py     # MACD, Bollinger, MA crossover, support/resistance, ATR
-            ├── finnhub_data.py   # Analyst consensus, price targets, congressional trading
+            ├── finnhub_data.py   # Analyst consensus, recommendation trends
             ├── economic_calendar.py  # FRED-based upcoming release tracking
             ├── risk_review.py    # Call 3: adversarial risk committee review
             ├── position_mgmt.py  # Call 4: EOD position management review
@@ -308,7 +307,7 @@ HOST=0.0.0.0
 FRED_API_KEY=                    # Free: https://fredaccount.stlouisfed.org
 ALPHA_VANTAGE_API_KEY=           # Free tier: 25 calls/day
 POLYGON_API_KEY=                 # Free tier for news
-FINNHUB_API_KEY=                 # Free: analyst consensus + congressional trading
+FINNHUB_API_KEY=                 # Free: analyst consensus
 TWELVEDATA_API_KEY=              # Free tier: 800 calls/day, RSI for full watchlist
 
 # Optional: require a PIN to update strategy via dashboard

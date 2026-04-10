@@ -235,7 +235,7 @@ Save and close. The bot will now run automatically every trading day.
 
 | Time (ET) | What the Bot Does |
 |-----------|-------------------|
-| **7:30 AM** | **Phase 0:** Prefetches all market data — prices, news, analyst ratings, insider activity, economic indicators, economic calendar, congressional trading, momentum screener. Caches for Phase 1. Zero LLM cost. |
+| **9:35 AM** | **Phase 0:** Prefetches all market data — prices, news, analyst ratings, insider activity, economic indicators, economic calendar, momentum screener. Caches for Phase 1. Zero LLM cost. |
 | **8:30 AM** | **Phase 1:** Loads cached data. Asks Claude to analyze ~80 stocks and pick up to 3 trades. Takes ~3 min (was 20+ min before Phase 0). |
 | **9:30 AM** | **Phase 1.5:** Safety check — blocks any buys where the stock gapped down overnight or the market looks dangerous. |
 | **9:35 AM** | **Phase 2:** Executes approved trades at the actual opening price. |

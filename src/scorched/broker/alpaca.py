@@ -1,6 +1,7 @@
 """Alpaca broker — submits real orders via alpaca-py SDK."""
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -15,6 +16,25 @@ from .base import BrokerAdapter
 from .pending_fills import write_pending_fill, remove_pending_fill
 
 logger = logging.getLogger(__name__)
+
+
+async def _record_api_call(db: AsyncSession, endpoint: str, status: str,
+                           response_time_ms: int, error_message: str | None = None,
+                           symbol: str | None = None, service: str = "alpaca_trade"):
+    """Record an Alpaca API call to the api_call_log table."""
+    try:
+        from ..models import ApiCallLog
+        db.add(ApiCallLog(
+            service=service,
+            endpoint=endpoint,
+            status=status,
+            response_time_ms=response_time_ms,
+            error_message=error_message,
+            symbol=symbol,
+        ))
+        await db.commit()
+    except Exception:
+        pass  # Don't let tracking failures break trading
 
 
 class AlpacaBroker(BrokerAdapter):
@@ -74,7 +94,17 @@ class AlpacaBroker(BrokerAdapter):
             limit_price=float(limit_price),
         )
 
-        order = await self._submit_order_with_retry(order_data)
+        start = time.monotonic()
+        try:
+            order = await self._submit_order_with_retry(order_data)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "submit_buy", "success", elapsed_ms, symbol=symbol)
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "submit_buy", "error", elapsed_ms,
+                                   error_message=str(exc)[:500], symbol=symbol)
+            raise
+
         order_id = str(order.id)
         logger.info("Submitted BUY %s x%s limit=$%s — order_id=%s", symbol, qty, limit_price, order_id)
 
@@ -147,7 +177,17 @@ class AlpacaBroker(BrokerAdapter):
             limit_price=float(limit_price),
         )
 
-        order = await self._submit_order_with_retry(order_data)
+        start = time.monotonic()
+        try:
+            order = await self._submit_order_with_retry(order_data)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "submit_sell", "success", elapsed_ms, symbol=symbol)
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "submit_sell", "error", elapsed_ms,
+                                   error_message=str(exc)[:500], symbol=symbol)
+            raise
+
         order_id = str(order.id)
         logger.info("Submitted SELL %s x%s limit=$%s — order_id=%s", symbol, qty, limit_price, order_id)
 
@@ -175,7 +215,16 @@ class AlpacaBroker(BrokerAdapter):
 
     async def get_positions(self) -> list[dict]:
         loop = asyncio.get_running_loop()
-        positions = await loop.run_in_executor(None, self.client.get_all_positions)
+        start = time.monotonic()
+        try:
+            positions = await loop.run_in_executor(None, self.client.get_all_positions)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "get_positions", "success", elapsed_ms)
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "get_positions", "error", elapsed_ms,
+                                   error_message=str(exc)[:500])
+            raise
         return [
             {
                 "symbol": p.symbol,
@@ -189,7 +238,16 @@ class AlpacaBroker(BrokerAdapter):
 
     async def get_account(self) -> dict:
         loop = asyncio.get_running_loop()
-        account = await loop.run_in_executor(None, self.client.get_account)
+        start = time.monotonic()
+        try:
+            account = await loop.run_in_executor(None, self.client.get_account)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "get_account", "success", elapsed_ms)
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            await _record_api_call(self.db, "get_account", "error", elapsed_ms,
+                                   error_message=str(exc)[:500])
+            raise
         return {
             "cash": account.cash,
             "buying_power": account.buying_power,

@@ -60,7 +60,7 @@ class TradeRecommendation(Base):
     __tablename__ = "trade_recommendations"
     __table_args__ = (
         CheckConstraint("action IN ('buy', 'sell')", name="ck_rec_action"),
-        CheckConstraint("status IN ('pending', 'confirmed', 'rejected')", name="ck_rec_status"),
+        CheckConstraint("status IN ('pending', 'submitted', 'confirmed', 'rejected')", name="ck_rec_status"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
