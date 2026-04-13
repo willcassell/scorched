@@ -40,7 +40,7 @@ This is how you pay for Claude's "brain." The bot makes up to 7 AI calls per day
 
 ### 2. A Computer That Stays On During Market Hours
 
-The bot needs to run from **8:30 AM to 4:05 PM Eastern, Monday through Friday**. It doesn't need to run overnight or on weekends.
+The bot needs to run from **9:30 AM to 4:05 PM Eastern, Monday through Friday**. It doesn't need to run overnight or on weekends.
 
 Your options, from easiest to most reliable:
 
@@ -149,7 +149,7 @@ After completing the wizard, go to:
 http://localhost:8000
 ```
 
-This is your live dashboard. It will be empty at first — the bot generates its first picks at 8:30 AM ET on the next trading day.
+This is your live dashboard. It will be empty at first — the bot generates its first picks at 9:45 AM ET on the next trading day.
 
 ### Step 5: Talk to Your Bot (Recommended)
 
@@ -201,28 +201,31 @@ crontab -e
 
 Then paste these lines (they schedule the bot to run at the right times on weekdays):
 
-> **Timezone note:** The cron times below are in UTC and are correct from **mid-March through early November** (US Daylight Saving Time). When US clocks fall back in November, you need to add 1 hour to each UTC value. There is a reminder in the FAQ below.
+> **Timezone note:** The cron times below are in **Eastern Time (ET)** — same as NYSE local time. Make sure your VM is configured for `America/New_York` (or use the `setup_cron.py` helper described in the FAQ). No DST math required.
 
 ```cron
-# Scorched daily trading cycle (times in UTC — DST, see timezone note above)
+# Scorched daily trading cycle (times in ET / America/New_York)
 
-# 7:30 AM ET: Data prefetch — fetches all market data, caches for Phase 1 (zero LLM cost)
-30 11 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase0.py >> ~/scorched/cron.log 2>&1
+# 9:35 AM ET: Post-open data prefetch — live gaps and volume (zero LLM cost)
+35 9 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase0.py >> ~/scorched/cron.log 2>&1
 
-# 8:30 AM ET: Claude analysis and recommendations (loads Phase 0 cache)
-30 12 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1.py >> ~/scorched/cron.log 2>&1
+# 9:45 AM ET: Claude analysis + recommendations (uses real opening data)
+45 9 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1.py >> ~/scorched/cron.log 2>&1
 
-# 9:30 AM ET: Circuit breaker safety checks
-30 13 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1_5.py >> ~/scorched/cron.log 2>&1
+# 9:55 AM ET: Circuit breaker safety checks (with 25 min of live data)
+55 9 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1_5.py >> ~/scorched/cron.log 2>&1
 
-# 9:35 AM ET: Execute approved trades
-35 13 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase2.py >> ~/scorched/cron.log 2>&1
+# 10:15 AM ET: Submit approved orders (post opening-range volatility)
+15 10 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase2.py >> ~/scorched/cron.log 2>&1
 
-# 9:35 AM–3:55 PM ET: Intraday position monitoring (every 5 min, self-gates to market hours)
-*/5 13-19 * * 1-5 cd ~/scorched && python3 cron/intraday_monitor.py >> ~/scorched/cron.log 2>&1
+# 10:45 AM ET: Reconcile pending Alpaca fills + sync positions
+45 10 * * 1-5 cd ~/scorched && python3 cron/tradebot_reconcile.py >> ~/scorched/cron.log 2>&1
+
+# 9:35 AM–3:55 PM ET: Intraday position monitoring (every 5 min, self-gates)
+*/5 9-15 * * 1-5 cd ~/scorched && python3 cron/intraday_monitor.py >> ~/scorched/cron.log 2>&1
 
 # 4:01 PM ET: End-of-day review and learning
-01 20 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase3.py >> ~/scorched/cron.log 2>&1
+01 16 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase3.py >> ~/scorched/cron.log 2>&1
 ```
 
 Save and close. The bot will now run automatically every trading day.
@@ -235,10 +238,11 @@ Save and close. The bot will now run automatically every trading day.
 
 | Time (ET) | What the Bot Does |
 |-----------|-------------------|
-| **9:35 AM** | **Phase 0:** Prefetches all market data — prices, news, analyst ratings, insider activity, economic indicators, economic calendar, momentum screener. Caches for Phase 1. Zero LLM cost. |
-| **8:30 AM** | **Phase 1:** Loads cached data. Asks Claude to analyze ~80 stocks and pick up to 3 trades. Takes ~3 min (was 20+ min before Phase 0). |
-| **9:30 AM** | **Phase 1.5:** Safety check — blocks any buys where the stock gapped down overnight or the market looks dangerous. |
-| **9:35 AM** | **Phase 2:** Executes approved trades at the actual opening price. |
+| **9:35 AM** | **Phase 0:** Post-open data prefetch — prices with live opening gaps/volume, news, analyst ratings, insider activity, economic indicators, momentum screener. Zero LLM cost. |
+| **9:45 AM** | **Phase 1:** Loads cached data. Asks Claude to analyze ~80 stocks and pick up to 3 trades. Uses real opening data, not stale pre-market prices. |
+| **9:55 AM** | **Phase 1.5:** Safety check with 25 min of live data — blocks buys where the stock gapped, drifted from Claude's price, or the market looks dangerous (SPY/VIX). |
+| **10:15 AM** | **Phase 2:** Submits approved orders post opening-range (avoids the first 30 min of high volatility). |
+| **10:45 AM** | **Phase 2.5:** Reconciles Alpaca fills 30 min after submission, syncs positions against the broker as source of truth. |
 | **9:35 AM–3:55 PM** | **Intraday:** Checks held positions every 5 minutes against 5 triggers (position drop, SPY drop, VIX spike, volume surge). If any fire, Claude decides whether to exit. Zero cost on quiet days. |
 | **4:01 PM** | **Phase 3:** Reviews the day's performance. Updates its "playbook" — a living document of what strategies are working and what isn't. Tomorrow's picks will reflect today's lessons. |
 
@@ -269,7 +273,7 @@ docker compose up -d --build
 ## FAQ
 
 **How much does it cost to run?**
-About $5-8/month for the Claude API (up to 7 AI calls per day, though the intraday monitor only calls Claude when triggered — most days it adds zero cost). Everything else is free — all data sources (FRED, Alpha Vantage, Twelvedata, Polygon, Finnhub) have free tiers, Docker is free, and Oracle Cloud VM is free if you use one.
+About $5-8/month for the Claude API (up to 7 AI calls per day, though the intraday monitor only calls Claude when triggered — most days it adds zero cost). Everything else is free — all data sources (Alpaca, FRED, Twelvedata, Alpha Vantage, Finnhub) have free tiers, Docker is free, and Oracle Cloud VM is free if you use one.
 
 **Is this real money?**
 Not by default. It starts as paper trading with simulated $100,000. You can optionally connect an Alpaca brokerage account later if you want to go live.
@@ -290,7 +294,7 @@ No. The setup wizard handles configuration, the dashboard shows results, and the
 Anything about your portfolio, its trades, the market, or its strategy. It pulls live data when you ask. Some examples: "Why did you buy NVDA?", "What's my total return?", "How did the market do today?", "What does your playbook say about holding through earnings?" The bot has 7 tools that Claude calls automatically — you never need to know they exist.
 
 **The dashboard shows no recommendations — what's wrong?**
-The bot only generates picks at 8:30 AM ET on weekdays when the market is open. If you just started it, wait until the next trading day morning, or trigger it manually right now with:
+The bot only generates picks at 9:45 AM ET on weekdays when the market is open. If you just started it, wait until the next trading day morning, or trigger it manually right now with:
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/recommendations/generate \
   -H "Content-Type: application/json" \
@@ -299,22 +303,13 @@ curl -s -X POST http://localhost:8000/api/v1/recommendations/generate \
 Check the result — if it says `"market_closed": true` that means today is a holiday or weekend and that's expected behavior.
 
 **Do I need to update anything when the clocks change?**
-Yes, twice a year. The cron jobs use UTC times, and US Eastern Time shifts by 1 hour in spring and fall.
+No. The cron jobs run in **Eastern Time (NYSE local time)** directly, so DST changes don't affect the schedule. The Docker container sets `TZ=America/New_York`, and each cron script also runs a sanity check that warns via Telegram if it fires at the wrong ET hour.
 
-- **Spring (around March 8):** Subtract 1 hour from each UTC value in your crontab. Example: `30 13` becomes `30 12`.
-- **Fall (around November 1):** Add 1 hour back. Example: `30 12` becomes `30 13`.
-
-To edit: run `crontab -e` on your server and update the hour values. The [timeanddate.com DST calculator](https://www.timeanddate.com/time/dst/) can confirm the exact dates each year.
-
-**Or use the automated setup script** (handles DST for you):
-```bash
-python3 scripts/setup_cron.py
-```
-This auto-detects your timezone (EDT vs EST), calculates the correct UTC times, and installs everything. When US clocks change for daylight saving, just re-run the same command. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.
+If your VM is in UTC and you'd rather not change the system timezone, run `python3 scripts/setup_cron.py` and it will compute the right cron entries for your host.
 
 **How do I set up the cron jobs automatically?**
 Instead of manually editing your crontab, run:
 ```bash
 python3 scripts/setup_cron.py
 ```
-This auto-detects your timezone (EDT vs EST), calculates the correct UTC times, and installs everything. When US clocks change for daylight saving, just re-run the same command. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.
+Installs every phase entry, computing host-local times if the VM isn't already on Eastern. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.

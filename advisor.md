@@ -1,6 +1,6 @@
 # Scorched Trading System — Advisor & CPA Reference
 
-*Last updated: April 2, 2026*
+*Last updated: April 13, 2026*
 
 This document is written for CPAs, financial advisors, and compliance professionals who need to understand what this automated trading system does, how it makes decisions, what safeguards are in place, and what the tax and risk implications are.
 
@@ -49,26 +49,29 @@ The strategy is **fully configurable** via a web dashboard. All parameters above
 
 Each trading day, the system executes a multi-phase pipeline. No single AI call makes a trade unilaterally — every buy passes through multiple independent checks.
 
-### Phase 0 — Data Collection (7:30 AM ET, no AI cost)
+### Phase 0 — Data Collection (9:35 AM ET, no AI cost)
 
-The system gathers data from 12+ sources:
+The system gathers data from 12+ sources after the market opens, so prices reflect actual opening auctions and overnight gaps rather than stale pre-market values:
 
 | Data Category | Sources | Purpose |
 |---------------|---------|---------|
-| **Price & volume** | Yahoo Finance (1-year history, pre-market) | Technical analysis, momentum screening |
-| **Macro indicators** | Federal Reserve (FRED) — fed funds rate, yield curve, CPI, unemployment, PCE, credit spreads, industrial production | Market regime assessment |
-| **Economic calendar** | FRED releases API — upcoming CPI, Jobs, FOMC, GDP, PPI, PCE | Volatility risk awareness |
-| **News** | Yahoo Finance + Polygon.io | Catalyst identification |
-| **Analyst consensus** | Finnhub — buy/hold/sell counts, recommendation trends | Institutional sentiment |
-| **Insider activity** | SEC EDGAR (Form 4 filings) | Corporate insider transactions |
-| **Technical indicators** | Computed locally — RSI (via Twelvedata + Alpha Vantage), MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile, ATR | Entry/exit timing |
+| **Price & volume** | Alpaca Data API (IEX bars, snapshots, 1-year daily history) | Technical analysis, momentum screening |
+| **News** | Alpaca News API (headlines + summaries) | Catalyst identification |
+| **Screener** | Alpaca Screener (most active / movers) | Candidate sourcing beyond the static watchlist |
+| **Fundamentals** | Yahoo Finance — PE, market cap, short ratio | Valuation context |
 | **Options data** | Yahoo Finance — put/call ratio, implied volatility, implied 30-day move | Sentiment and risk gauge |
-| **Sector analysis** | 11 sector ETF returns, per-stock relative strength vs. sector | Rotation identification |
-| **Momentum screener** | Top 20 S&P 500 stocks by 5-day momentum with volume and MA confirmation | Candidate generation |
+| **Earnings & insiders** | Yahoo Finance (earnings dates) + SEC EDGAR (Form 4 filings) | Event risk + corporate signal |
+| **Macro indicators** | FRED — fed funds rate, yield curve, CPI, unemployment, PCE, credit spreads, industrial production | Market regime assessment |
+| **Economic calendar** | FRED releases API — upcoming CPI, Jobs, FOMC, GDP, PPI, PCE | Volatility risk awareness |
+| **Analyst consensus** | Finnhub — buy/hold/sell counts, recommendation trends | Institutional sentiment |
+| **Technical indicators** | Computed locally — RSI (Twelvedata for full watchlist, Alpha Vantage fallback for screener picks), MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile, ATR | Entry/exit timing |
+| **Sector analysis** | 11 sector ETF returns via Alpaca bars, per-stock relative strength vs. sector | Rotation identification |
 
-All data is cached locally. Phase 1 does not make any external data calls.
+All data is cached locally to `/app/logs/tradebot_research_cache_{date}.json`. Phase 1 does not make any external data calls.
 
-### Phase 1 — AI Analysis (8:30 AM ET)
+> **April 2026 data source change:** Polygon.io was removed; Alpaca Data API now provides prices, bars, snapshots, news, and the screener — all on the free IEX tier.
+
+### Phase 1 — AI Analysis (9:45 AM ET)
 
 Three sequential AI calls, each with a distinct role:
 
@@ -90,7 +93,7 @@ Three sequential AI calls, each with a distinct role:
 - **Sells always pass through** — the risk committee cannot block an exit
 - Rejected buys are removed from the pipeline before execution
 
-### Phase 1.5 — Circuit Breaker (9:30 AM ET)
+### Phase 1.5 — Circuit Breaker (9:55 AM ET)
 
 A programmatic safety gate (no AI involved) that checks real-time market conditions:
 
@@ -105,13 +108,25 @@ A programmatic safety gate (no AI involved) that checks real-time market conditi
 
 All thresholds are configurable. Sells are never blocked.
 
-### Phase 2 — Trade Execution (9:35 AM ET)
+### Phase 2 — Trade Submission (10:15 AM ET)
 
-Approved recommendations are executed through the configured broker (paper or Alpaca). The system:
+Approved recommendations are submitted to the configured broker (paper or Alpaca) **after the opening-range volatility window** (first 30 min of trading sees 2–3× normal volatility). The system:
 - Fetches the actual current market price (does not rely on the AI's suggested price)
+- Submits limit orders with a small slippage buffer (default ±0.3%)
 - Enforces the 10% minimum cash reserve — skips any buy that would violate it
 - Checks for wash sale conditions (same symbol sold within prior 30 days)
+- For Alpaca, this is **fire-and-forget**: the order is submitted with an idempotency key and recorded as a pending fill; Phase 2.5 reconciles the actual execution
 - Records the trade with full audit trail: price, quantity, reasoning, confidence, risks, timestamp
+
+### Phase 2.5 — Reconciliation (10:45 AM ET)
+
+Thirty minutes after submission, the system:
+- Polls Alpaca for the status of every pending order from Phase 2
+- Records filled orders into the local DB (Portfolio, Position, TradeHistory)
+- Runs a position sync that compares local DB positions against Alpaca holdings (Alpaca is the source of truth) and auto-corrects any mismatches
+- Sends a Telegram summary with fills, slippage, and any sync corrections
+
+This split avoids blocking Phase 2 with polling timeouts that previously caused "ghost positions" (orders filling on Alpaca without local DB recording).
 
 ### Intraday Monitoring (9:35 AM – 3:55 PM ET, every 5 minutes)
 
@@ -254,13 +269,14 @@ On quiet days when no intraday triggers fire, the cost is at the low end. The sy
 
 | Source | Cost |
 |--------|------|
-| Yahoo Finance | Free |
+| Alpaca Data API | Free (IEX feed; same key as broker) |
+| Yahoo Finance (yfinance) | Free |
 | FRED (Federal Reserve) | Free (API key required) |
 | Twelvedata | Free tier (800 calls/day) |
-| Alpha Vantage | Free tier (25 calls/day) |
-| Finnhub | Free tier |
+| Alpha Vantage | Free tier (25 calls/day; RSI fallback) |
+| Finnhub | Free tier (analyst consensus) |
 | SEC EDGAR | Free |
-| Polygon.io | Free tier (optional, improves news quality) |
+| Polygon.io | **Removed April 2026** — Alpaca news replaced it |
 
 ### Broker Costs
 

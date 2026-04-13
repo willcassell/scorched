@@ -45,23 +45,25 @@ The bot also runs fully autonomously on a daily schedule — no manual intervent
 ```
 Cron (VM)
     │
-    │  9:35 AM ET — Data prefetch (post market open, zero LLM cost)
-    │  9:45 AM ET — Claude analysis + recommendations
-    │  9:55 AM ET — Circuit breaker safety gate
-    │  10:15 AM ET — Execute approved trades
-    │  Every 5 min — Intraday position monitoring
-    │  4:01 PM ET — EOD review + playbook update
+    │  9:35 AM ET  — Phase 0: post-open data prefetch (zero LLM cost)
+    │  9:45 AM ET  — Phase 1: Claude analysis + recommendations
+    │  9:55 AM ET  — Phase 1.5: circuit breaker safety gate
+    │  10:15 AM ET — Phase 2: submit approved orders
+    │  10:45 AM ET — Phase 2.5: reconcile Alpaca fills + sync positions
+    │  Every 5 min — Intraday position monitoring (9:35 AM–3:55 PM ET)
+    │  4:01 PM ET  — Phase 3: EOD review + playbook update
     │
     ▼
 Scorched (FastAPI + PostgreSQL)
     │
-    ├── Phase 0: Fetches market data (Alpaca, yfinance, FRED, Twelvedata, Finnhub, EDGAR)
+    ├── Phase 0: Fetches market data (Alpaca, yfinance, FRED, Twelvedata, Alpha Vantage, Finnhub, EDGAR)
     ├── Phase 0: Runs momentum screener (top 20 S&P 500 movers)
     ├── Phase 1: Calls Claude (claude-sonnet-4-6) — multi-call pipeline
-    │     Call 1: Analysis w/ extended thinking → identify candidates
+    │     Call 1: Analysis w/ extended thinking → structured candidates + position actions
     │     Call 2: Decision → 0–3 concrete trade recommendations
     │     Call 3: Risk committee → challenge and reject weak picks
     │     Call 4: Position management → review open positions EOD
+    ├── Phase 2.5: Reconciles pending Alpaca fills + syncs positions vs broker
     ├── Tracks portfolio state in PostgreSQL
     └── Dashboard auto-refreshes at http://host:8000
 ```
@@ -79,9 +81,10 @@ Scorched (FastAPI + PostgreSQL)
 | MCP | `mcp[cli]` (FastMCP, Streamable HTTP) — talk to your bot from Claude Desktop |
 | Database | PostgreSQL 16 via SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
-| Market data | Alpaca Data API (prices, bars, snapshots, news, screener) + yfinance (fundamentals, options, earnings, insider) |
-| Macro data | FRED API (Fed rate, CPI, yield curve, PCE, credit spreads, economic calendar) |
-| Technicals | Twelvedata RSI(14) for full watchlist + Alpha Vantage fallback |
+| Market data | Alpaca Data API — prices, bars (IEX), snapshots, news, screener (Polygon removed Apr 2026) |
+| Fundamentals/options | yfinance — PE, market cap, options chains, earnings dates, insider purchases, index symbols |
+| Macro data | FRED API — Fed rate, CPI, yield curve, PCE, credit spreads, economic calendar |
+| Technicals | Twelvedata RSI(14) for full watchlist + Alpha Vantage fallback for screener picks |
 | Analyst consensus | Finnhub (recommendation trends) |
 | Insider filings | SEC EDGAR Form 4 (free, no key) |
 | Holiday detection | `pandas-market-calendars` (NYSE calendar) |
@@ -228,7 +231,8 @@ scorched/
         └── services/
             ├── portfolio.py      # apply_buy(), apply_sell(), get_portfolio_state()
             ├── recommender.py    # Claude 4-call pipeline + NYSE holiday check
-            ├── research.py       # All data fetching (yfinance, FRED, Polygon, Twelvedata, Finnhub, EDGAR)
+            ├── research.py       # Data orchestration: Alpaca, yfinance, FRED, Twelvedata, Alpha Vantage, Finnhub, EDGAR
+            ├── alpaca_data.py    # Alpaca Data API: snapshots, bars (IEX), news, screener
             ├── technicals.py     # MACD, Bollinger, MA crossover, support/resistance, ATR
             ├── finnhub_data.py   # Analyst consensus, recommendation trends
             ├── economic_calendar.py  # FRED-based upcoming release tracking
@@ -305,10 +309,10 @@ HOST=0.0.0.0
 
 # Optional data sources (enable richer context)
 FRED_API_KEY=                    # Free: https://fredaccount.stlouisfed.org
-ALPHA_VANTAGE_API_KEY=           # Free tier: 25 calls/day
-POLYGON_API_KEY=                 # Free tier for news
-FINNHUB_API_KEY=                 # Free: analyst consensus
 TWELVEDATA_API_KEY=              # Free tier: 800 calls/day, RSI for full watchlist
+ALPHA_VANTAGE_API_KEY=           # Free tier: 25 calls/day, RSI fallback for screener
+FINNHUB_API_KEY=                 # Free: analyst consensus
+# (Polygon.io was removed April 2026 — Alpaca news replaced it)
 
 # Optional: require a PIN to update strategy via dashboard
 SETTINGS_PIN=
@@ -336,12 +340,7 @@ See **[DEPLOY.md](DEPLOY.md)** for the full guide, including:
 - Cron job setup for the automated daily cycle
 - DST time adjustments
 
-**DST reminder:** The cron jobs use UTC times. When US clocks spring forward (around March 8), ET shifts from UTC-5 to UTC-4. Update the crontab:
-
-```
-Phase 1: 30 13 → 30 12   (8:30 AM ET)
-Phase 2: 45 14 → 45 13   (9:45 AM ET)
-```
+**Cron timezone:** Crontab entries use **Eastern Time (NYSE local)** directly — no DST math required. The Docker container sets `TZ=America/New_York`. Each cron script runs a sanity check that warns via Telegram if it fires at the wrong ET hour.
 
 ---
 

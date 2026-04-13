@@ -169,17 +169,25 @@ HOST=0.0.0.0
 #   2. My Account → API Keys → Request API Key (instant approval)
 FRED_API_KEY=
 
-# Alpha Vantage — free tier 25 calls/day; used for RSI(14) on screener picks only
-# https://www.alphavantage.co/support/#api-key
-ALPHA_VANTAGE_API_KEY=
+# Alpaca — primary market data (prices, snapshots, news, screener) + broker
+# Same key powers data + broker. Free IEX feed, paper trading is free.
+# https://alpaca.markets → Paper Trading → API Keys
+ALPACA_API_KEY=
+ALPACA_SECRET_KEY=
 
-# Twelvedata — free tier 800 calls/day; RSI for full watchlist (much better than Alpha Vantage's 25/day)
+# Twelvedata — free tier 800 calls/day; RSI(14) for full watchlist
 # https://twelvedata.com/account/api-keys
 TWELVEDATA_API_KEY=
 
-# Polygon.io — free tier; used for better news headlines
-# https://polygon.io/dashboard/signup
-POLYGON_API_KEY=
+# Alpha Vantage — free tier 25 calls/day; RSI(14) fallback for screener picks only
+# https://www.alphavantage.co/support/#api-key
+ALPHA_VANTAGE_API_KEY=
+
+# Finnhub — free tier; analyst consensus + recommendation trends
+# https://finnhub.io
+FINNHUB_API_KEY=
+
+# (Polygon.io was removed in April 2026 — Alpaca news replaced it)
 
 # ── OPTIONAL SECURITY ─────────────────────────────────────────────────────────
 
@@ -299,7 +307,7 @@ The daily trading cycle is driven entirely by cron jobs on the VM. No AI orchest
 python3 scripts/setup_cron.py
 ```
 
-This auto-detects EDT/EST, calculates correct UTC cron times, and installs everything. Re-run after each DST change. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.
+Installs all cron entries. Use `--check` to verify, `--dry-run` to preview, or `--remove` to uninstall.
 
 ### Manual setup (alternative)
 
@@ -309,55 +317,50 @@ This auto-detects EDT/EST, calculates correct UTC cron times, and installs every
 crontab -e
 ```
 
-Add these lines (all times are UTC — see DST table below):
+Add these lines. **Cron times are in ET (NYSE local time)** — the Docker container sets `TZ=America/New_York` and the VM crontab is configured for ET. No DST math required.
 
 ```cron
-# ── Tradebot daily cycle (times in UTC, after DST) ──────────────────────────
+# ── Tradebot daily cycle (times in ET) ──────────────────────────────────────
 
-# Phase 0: Data prefetch — all external APIs, zero LLM cost (7:30 AM ET = 11:30 UTC)
-30 11 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase0.py >> ~/scorched/cron.log 2>&1
+# Phase 0: Post-open data prefetch — live gaps/volume, zero LLM cost (9:35 AM ET)
+35 9 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase0.py >> ~/scorched/cron.log 2>&1
 
-# Phase 1: Claude analysis + recommendations, loads Phase 0 cache (8:30 AM ET = 12:30 UTC)
-30 12 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1.py >> ~/scorched/cron.log 2>&1
+# Phase 1: Claude analysis + recommendations with real opening data (9:45 AM ET)
+45 9 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1.py >> ~/scorched/cron.log 2>&1
 
-# Phase 1.5: Circuit breaker gate (9:30 AM ET = 13:30 UTC)
-30 13 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1_5.py >> ~/scorched/cron.log 2>&1
+# Phase 1.5: Circuit breaker gate with 25 min of live data (9:55 AM ET)
+55 9 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase1_5.py >> ~/scorched/cron.log 2>&1
 
-# Phase 2: Confirm trades at opening prices (9:35 AM ET = 13:35 UTC)
-35 13 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase2.py >> ~/scorched/cron.log 2>&1
+# Phase 2: Submit orders post opening range (10:15 AM ET)
+15 10 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase2.py >> ~/scorched/cron.log 2>&1
 
-# Intraday: Position monitoring with trigger-based exit evaluation (9:35 AM–3:55 PM ET, self-gates)
-*/5 13-19 * * 1-5 cd ~/scorched && python3 cron/intraday_monitor.py >> ~/scorched/cron.log 2>&1
+# Phase 2.5: Reconcile pending Alpaca fills + sync positions (10:45 AM ET, 30 min buffer)
+45 10 * * 1-5 cd ~/scorched && python3 cron/tradebot_reconcile.py >> ~/scorched/cron.log 2>&1
 
-# Phase 3: EOD summary + playbook update (4:01 PM ET = 20:01 UTC)
-01 20 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase3.py >> ~/scorched/cron.log 2>&1
+# Intraday: Position monitoring with trigger-based exit evaluation (every 5 min, self-gates to market hours)
+*/5 9-15 * * 1-5 cd ~/scorched && python3 cron/intraday_monitor.py >> ~/scorched/cron.log 2>&1
+
+# Phase 3: EOD summary + playbook update (4:01 PM ET)
+01 16 * * 1-5 cd ~/scorched && python3 cron/tradebot_phase3.py >> ~/scorched/cron.log 2>&1
 ```
 
 ### What Each Phase Does
 
 | Phase | Time (ET) | Script | Action |
 |-------|-----------|--------|--------|
-| 0 | 7:30 AM | `cron/tradebot_phase0.py` | Prefetches all external market data, caches for Phase 1. Zero LLM cost. |
-| 1 | 8:30 AM | `cron/tradebot_phase1.py` | Loads Phase 0 cache, runs Claude analysis + recommendations |
-| 1.5 | 9:30 AM | `cron/tradebot_phase1_5.py` | Circuit breaker — blocks buys that fail safety checks |
-| 2 | 9:35 AM | `cron/tradebot_phase2.py` | Confirms trades at opening prices via broker |
+| 0 | 9:35 AM | `cron/tradebot_phase0.py` | Prefetches all external market data with live gaps/volume. Zero LLM cost. |
+| 1 | 9:45 AM | `cron/tradebot_phase1.py` | Loads Phase 0 cache, runs Claude analysis + recommendations |
+| 1.5 | 9:55 AM | `cron/tradebot_phase1_5.py` | Circuit breaker — blocks buys that fail safety checks (25 min of live data) |
+| 2 | 10:15 AM | `cron/tradebot_phase2.py` | Submits orders to broker (post opening range volatility) |
+| 2.5 | 10:45 AM | `cron/tradebot_reconcile.py` | Reconciles pending Alpaca fills, syncs positions vs Alpaca |
 | Intraday | 9:35 AM–3:55 PM | `cron/intraday_monitor.py` | Every 5 min — checks positions against triggers, calls Claude for exit decisions if any fire |
 | 3 | 4:01 PM | `cron/tradebot_phase3.py` | EOD review, playbook update, summary notification |
 
 All scripts read `.env` from the project root automatically and send results via Telegram (if configured).
 
-### DST time adjustments
+### Daylight Saving Time
 
-The cron jobs use UTC. US Eastern Time shifts twice a year:
-
-| Period | ET offset | Phase 0 (7:30 AM ET) | Phase 1 (8:30 AM ET) | Phase 2 (9:35 AM ET) |
-|--------|-----------|----------------------|----------------------|----------------------|
-| After DST (~Mar 8) | UTC-4 | `30 11 * * 1-5` | `30 12 * * 1-5` | `35 13 * * 1-5` |
-| Before DST (~Nov 1) | UTC-5 | `30 12 * * 1-5` | `30 13 * * 1-5` | `35 14 * * 1-5` |
-
-Update the crontab on the VM each time US clocks change.
-
-**Or just re-run the setup script:** `python3 scripts/setup_cron.py` — it auto-detects DST and updates the cron times for you.
+Crontab uses **ET directly** (not UTC), so DST changes require no edits. Each cron script also runs a `check_expected_hour()` guard that sends a Telegram warning if it fires at the wrong ET hour — a cheap sanity check in case the host timezone drifts.
 
 ### Manual triggers
 
