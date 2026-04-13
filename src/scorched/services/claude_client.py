@@ -23,14 +23,55 @@ logger = logging.getLogger(__name__)
 
 # ── Pydantic validation models for Claude outputs ──────────────────────────
 
+class CandidateEntry(BaseModel):
+    symbol: str
+    conviction: str = "medium"  # high | medium | low
+    catalyst: str = ""
+    entry_rationale: str = ""
+    key_risks: str = ""
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def uppercase_symbol(cls, v: str) -> str:
+        return v.upper()
+
+    @field_validator("conviction", mode="before")
+    @classmethod
+    def lowercase_conviction(cls, v: str) -> str:
+        return (v or "medium").lower()
+
+
+class PositionAction(BaseModel):
+    symbol: str
+    action: str  # hold | exit | trim | monitor
+    rule: str = "none"
+    reasoning: str = ""
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def uppercase_symbol(cls, v: str) -> str:
+        return v.upper()
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def lowercase_action(cls, v: str) -> str:
+        return v.lower()
+
+
 class AnalysisOutput(BaseModel):
     analysis: str
-    candidates: list[str]
+    candidates: list[CandidateEntry] = []
+    position_actions: list[PositionAction] = []
 
     @field_validator("candidates", mode="before")
     @classmethod
-    def normalise_candidates(cls, v: list) -> list[str]:
-        return [s.upper() for s in v][:5]
+    def normalize_candidates(cls, v):
+        """Accept both new structured format and legacy list-of-strings."""
+        if not v:
+            return []
+        if isinstance(v[0], str):
+            return [{"symbol": s, "conviction": "medium"} for s in v][:5]
+        return v[:5]
 
 
 class RecommendationEntry(BaseModel):
@@ -181,7 +222,8 @@ def _client() -> anthropic.Anthropic:
 async def call_analysis(strategy: str, guidance: str, user_content: str, tracker=None):
     """Call 1: Analysis with extended thinking.
 
-    Returns (response, analysis_text, thinking_text, candidates).
+    Returns (response, analysis_text, thinking_text, candidates, position_actions)
+    where candidates is list[CandidateEntry] and position_actions is list[PositionAction].
     """
     system_prompt = load_prompt("analysis").format(strategy=strategy, guidance=guidance)
     ctx = track_call(tracker, "claude", "analysis") if tracker else nullcontext()
@@ -203,11 +245,14 @@ async def call_analysis(strategy: str, guidance: str, user_content: str, tracker
     if validated:
         analysis_text = validated.analysis
         candidates = validated.candidates
+        position_actions = validated.position_actions
     else:
+        # Fallback: preserve raw analysis text; no structured candidates/actions
         analysis_text = parsed.get("analysis", analysis_raw)
-        candidates = [s.upper() for s in parsed.get("candidates", [])][:5]
+        candidates = []
+        position_actions = []
 
-    return response, analysis_text, thinking_text, candidates
+    return response, analysis_text, thinking_text, candidates, position_actions
 
 
 async def call_decision(

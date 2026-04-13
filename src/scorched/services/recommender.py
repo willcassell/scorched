@@ -367,7 +367,7 @@ async def generate_recommendations(
             context_est_tokens // 1000,
         )
 
-    call1_response, analysis_text, analysis_thinking, candidates = await call_analysis(
+    call1_response, analysis_text, analysis_thinking, candidates, position_actions = await call_analysis(
         strategy, guidance, call1_user, tracker=tracker,
     )
 
@@ -387,26 +387,40 @@ async def generate_recommendations(
         thinking_tokens=thinking_tokens_est,
     )
 
-    # Store analysis text (thinking + analysis) on the session row
-    thinking_prefix = f"[THINKING]\n{analysis_thinking}\n\n[ANALYSIS]\n" if analysis_thinking else ""
-    session_row.analysis_text = thinking_prefix + analysis_text
+    # Store only the clean analysis prose. Thinking tokens are expensive but
+    # noisy — log their length for observability and discard from DB.
+    session_row.analysis_text = analysis_text
+    if analysis_thinking:
+        logger.info("Call 1 thinking: %d chars (not stored)", len(analysis_thinking))
 
-    logger.info("Call 1 candidates: %s", candidates)
+    candidate_symbols = [c.symbol for c in candidates]
+    logger.info(
+        "Call 1: %d candidates (%s), %d position actions",
+        len(candidates), candidate_symbols, len(position_actions),
+    )
 
     # ── Phase 2 fetch: options data for candidates only ────────────────────
     options_data = {}
-    if candidates:
-        logger.info("Fetching options data for candidates: %s", candidates)
-        options_data = await fetch_options_data(candidates, tracker=tracker)
+    if candidate_symbols:
+        logger.info("Fetching options data for candidates: %s", candidate_symbols)
+        options_data = await fetch_options_data(candidate_symbols, tracker=tracker)
 
     # ── Call 2: Decision (standard, no extended thinking) ─────────────────
     logger.info("Call 2: trade decision")
     min_cash_pct = int(settings.min_cash_reserve_pct * 100)
 
+    # Structured handoff from Analysis — give Decision the pre-screened shortlist
+    # and position actions as explicit JSON rather than requiring it to re-parse prose.
+    handoff = {
+        "candidates": [c.model_dump() for c in candidates],
+        "position_actions": [p.model_dump() for p in position_actions],
+    }
     options_context = build_options_context(options_data) if options_data else ""
     call2_user = (
         f"Today's date: {session_date}\n\n"
-        f"## Your Analysis\n{analysis_text}\n\n"
+        f"## Analysis Summary\n{analysis_text}\n\n"
+        f"## Pre-Screened Candidates & Position Actions (from Analysis)\n"
+        f"```json\n{json.dumps(handoff, indent=2)}\n```\n\n"
         f"{options_context}\n\n"
         f"## Current Portfolio\n"
         f"Cash available: ${portfolio_dict['cash_balance']:,.2f}\n"
@@ -419,7 +433,7 @@ async def generate_recommendations(
                 f"  {pos['symbol']}: {pos['shares']} shares, "
                 f"cost ${pos['avg_cost_basis']:.2f}, "
                 f"now ${pos['current_price']:.2f}, "
-                f"{pos['days_held']}d ({pos['tax_category']})\n"
+                f"{pos['days_held']}d held\n"
             )
 
     strategy_conc = strategy_json.get("concentration", {})
