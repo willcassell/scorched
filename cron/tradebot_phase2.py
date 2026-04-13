@@ -24,8 +24,10 @@ from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
 
 load_env()
 
-GATED_FILE = "/app/logs/tradebot_recommendations_gated.json"
-ORIGINAL_FILE = "/app/logs/tradebot_recommendations.json"
+# Host-side logs dir — cron runs on the VM, not in the container.
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+GATED_FILE = str(LOGS_DIR / "tradebot_recommendations_gated.json")
+ORIGINAL_FILE = str(LOGS_DIR / "tradebot_recommendations.json")
 
 
 def _cleanup_recs_file(path):

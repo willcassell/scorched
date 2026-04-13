@@ -23,8 +23,11 @@ from common import load_env, send_telegram, now_et, acquire_lock, release_lock, 
 
 load_env()
 
-RECS_FILE = "/app/logs/tradebot_recommendations.json"
-FILTERED_FILE = "/app/logs/tradebot_recommendations_gated.json"
+# Host-side logs dir — cron runs on the VM, not in the container.
+LOGS_DIR = pathlib.Path(__file__).resolve().parent.parent / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+RECS_FILE = str(LOGS_DIR / "tradebot_recommendations.json")
+FILTERED_FILE = str(LOGS_DIR / "tradebot_recommendations_gated.json")
 
 
 def main():
@@ -100,7 +103,7 @@ def main():
     # Write filtered file for Phase 2 (atomic write via temp file + rename)
     stored["recommendations"] = passed
     stored["symbols"] = [r["symbol"] for r in passed]
-    fd, tmp_path = tempfile.mkstemp(dir="/app/logs", suffix=".json")
+    fd, tmp_path = tempfile.mkstemp(dir=str(LOGS_DIR), suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(stored, f)

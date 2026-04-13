@@ -23,7 +23,11 @@ from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et
 
 load_env()
 
-RECS_FILE = "/app/logs/tradebot_recommendations.json"
+# Host-side logs dir — cron runs on the VM, not in the container.
+# The container sees the same directory mounted at /app/logs.
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+RECS_FILE = str(LOGS_DIR / "tradebot_recommendations.json")
 
 
 def main():
@@ -79,7 +83,7 @@ def main():
 
     # Write JSON for Phase 2 (atomic write: tempfile + rename)
     payload = {"date": today_str, "recommendations": recs, "symbols": symbols, "status": "complete"}
-    fd, tmp_path = tempfile.mkstemp(dir="/app/logs", suffix=".json")
+    fd, tmp_path = tempfile.mkstemp(dir=str(LOGS_DIR), suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(payload, f)
