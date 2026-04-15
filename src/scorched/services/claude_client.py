@@ -213,8 +213,22 @@ def parse_json_response(raw: str) -> dict:
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
-def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+# Per-request Claude timeout. Our longest call (analysis w/ 16k thinking) has
+# historically landed under 200s; give 5x headroom before giving up. This is
+# enforced at the httpx layer; retry.py catches APITimeoutError and retries.
+_CLAUDE_TIMEOUT_S = 300.0
+
+
+def _client() -> anthropic.AsyncAnthropic:
+    """Return an AsyncAnthropic client with explicit timeout.
+
+    Async avoids blocking the FastAPI event loop during long LLM calls, so
+    the dashboard and other endpoints remain responsive while Claude thinks.
+    """
+    return anthropic.AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=_CLAUDE_TIMEOUT_S,
+    )
 
 
 # ── Call wrappers ────────────────────────────────────────────────────────────

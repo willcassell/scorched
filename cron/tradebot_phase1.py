@@ -16,12 +16,17 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import load_env, http_get, http_post, send_telegram, fmt_pct, now_et, acquire_lock, release_lock, check_expected_hour
 
 load_env()
+
+# Phase 1 normally runs ~3-4 min end-to-end (analysis ~3m, decision+risk ~30s each).
+# Alert if it takes noticeably longer so we catch drift before it becomes a timeout.
+PHASE1_SLOW_THRESHOLD_S = 420
 
 # Host-side logs dir — cron runs on the VM, not in the container.
 # The container sees the same directory mounted at /app/logs.
@@ -36,13 +41,26 @@ def main():
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 1: generating recommendations for {today_str}")
 
+    t0 = time.monotonic()
     try:
-        session = http_post("/api/v1/recommendations/generate", {"session_date": today_str}, timeout=600)
+        session = http_post("/api/v1/recommendations/generate", {"session_date": today_str}, timeout=900)
     except Exception as e:
-        msg = f"TRADEBOT // {today_str} - Phase 1 failed\nError: {e}"
+        elapsed = time.monotonic() - t0
+        msg = (
+            f"TRADEBOT // {today_str} - Phase 1 failed after {elapsed:.0f}s\n"
+            f"Error: {e}"
+        )
         send_telegram(msg)
         print(f"Error: {e}")
         return
+
+    elapsed = time.monotonic() - t0
+    if elapsed > PHASE1_SLOW_THRESHOLD_S:
+        send_telegram(
+            f"TRADEBOT // {today_str} - ⚠️ Phase 1 slow: {elapsed:.0f}s "
+            f"(normal <{PHASE1_SLOW_THRESHOLD_S}s). "
+            f"Investigate before this becomes a timeout."
+        )
 
     if session.get("market_closed"):
         send_telegram(f"TRADEBOT // {today_str} - Market closed. No recommendations.")

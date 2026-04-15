@@ -126,25 +126,22 @@ def fetch_bars_sync(
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days + 10)  # extra buffer for weekends/holidays
 
-    # Alpaca supports multi-symbol bar requests
-    # Use IEX feed (free tier) — SIP requires paid subscription
-    batch_size = 50
-    for i in range(0, len(symbols), batch_size):
-        batch = symbols[i:i + batch_size]
+    def _fetch_batch(batch_symbols: list[str], batch_label: str) -> dict:
+        """Fetch one batch; return {symbol: [bar dicts, ...]} or empty on failure."""
+        batch_result = {}
         try:
-            with _api_ctx(tracker, "bars", f"batch_{i}"):
+            with _api_ctx(tracker, "bars", batch_label):
                 bars = client.get_stock_bars(StockBarsRequest(
-                    symbol_or_symbols=batch,
+                    symbol_or_symbols=batch_symbols,
                     timeframe=TimeFrame.Day,
                     start=start,
                     end=end,
                     feed=DataFeed.IEX,
                 ))
-            # BarSet uses [] indexing, not .get() — access via .data dict
             bars_dict = bars.data if hasattr(bars, 'data') else bars.dict()
-            for sym in batch:
+            for sym in batch_symbols:
                 sym_bars = bars_dict.get(sym, [])
-                result[sym] = [
+                batch_result[sym] = [
                     {
                         "date": b.timestamp.date().isoformat(),
                         "open": float(b.open),
@@ -155,8 +152,29 @@ def fetch_bars_sync(
                     }
                     for b in sym_bars
                 ]
-        except Exception:
-            logger.warning("Bars batch %d failed", i, exc_info=True)
+        except Exception as exc:
+            # "invalid symbol" from Alpaca fails the entire batch. Recover by
+            # splitting in half (down to 1) so one bad ticker only loses itself.
+            if len(batch_symbols) > 1:
+                msg = str(exc)
+                if "invalid symbol" in msg.lower() or "bad request" in msg.lower() or "422" in msg:
+                    logger.info(
+                        "Bars batch %s failed (%s) — bisecting to isolate bad symbol",
+                        batch_label, msg[:120],
+                    )
+                    mid = len(batch_symbols) // 2
+                    batch_result.update(_fetch_batch(batch_symbols[:mid], f"{batch_label}a"))
+                    batch_result.update(_fetch_batch(batch_symbols[mid:], f"{batch_label}b"))
+                    return batch_result
+            logger.warning("Bars batch %s failed", batch_label, exc_info=True)
+        return batch_result
+
+    # Alpaca supports multi-symbol bar requests
+    # Use IEX feed (free tier) — SIP requires paid subscription
+    batch_size = 50
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        result.update(_fetch_batch(batch, f"batch_{i}"))
 
     return result
 

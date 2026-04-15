@@ -140,8 +140,8 @@ Review these outcomes against the playbook and produce an updated version that r
 
     try:
         response, updated_content = await _call_playbook_update(user_content)
-    except anthropic.APIStatusError:
-        logger.error("Playbook update failed after all retries — using stale playbook")
+    except (anthropic.APIStatusError, anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
+        logger.error("Playbook update failed after all retries (%s) — using stale playbook", type(e).__name__)
         return playbook
 
     playbook.content = updated_content

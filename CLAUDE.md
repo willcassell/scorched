@@ -140,7 +140,7 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | Finnhub | Analyst consensus ratings, price targets, recommendation trends | `FINNHUB_API_KEY` |
 | FRED (economic calendar) | Upcoming major releases: CPI, Jobs, FOMC, GDP, PPI, PCE | `FRED_API_KEY` (same key) |
 | SEC EDGAR | Form 4 insider filing counts (free, no key; type unknown from API) | No |
-| Momentum screener | Top 20 S&P 500 by 5-day momentum (batch `yf.download()`, price > 20d MA, vol > 1M) | No |
+| Momentum screener | Top 20 S&P 500 by 5-day momentum (Alpaca bars primary, yfinance fallback; price > 20d MA, vol > 1M) | No |
 | Sector ETFs | 5-day returns for 11 sector ETFs via Alpaca bars (XLK, XLF, etc.) for relative strength calc | No |
 | Technical analysis | MACD, Bollinger Bands, 50/200 MA crossover, support/resistance, volume profile, ATR (computed from Alpaca bar history) | No |
 | Options (yfinance) | Put/call ratio, ATM IV, implied 30-day move — fetched only for candidates | No |
@@ -197,7 +197,7 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **`force: true` on recommendations** — NULLs out `token_usage.session_id` (nullable FK) before deleting the session, avoiding FK violation. Don't skip this step.
 - **Recommendation caching** — `get_recommendations` returns the existing session if one exists for today, unless `force=True`. This is intentional.
 - **NYSE holidays** — detected in `_is_market_open()` using `pandas_market_calendars`. Returns early before any DB or Claude work.
-- **Phase 0 cache** — `generate_recommendations()` checks for `/app/logs/tradebot_research_cache_{date}.json` written by Phase 0. If found, skips all data fetches and uses cached data. If missing, falls back to inline fetch. Date in filename uses `market_today()` (NYSE time).
+- **Phase 0 cache** — `generate_recommendations()` checks for `/app/logs/tradebot_research_cache_{date}.json` written by Phase 0. If found, skips all data fetches. If missing, it polls for up to 120s (Phase 0 may still be running) before falling back to inline fetch. Date in filename uses `market_today()` (NYSE time).
 - **VM cron times are ET** — DST (US clocks spring forward ~March 8): no crontab change needed since cron uses ET directly. Each cron script has a `check_expected_hour()` call that sends a Telegram warning if it runs at the wrong ET hour.
 - **`.env` on VM must not be overwritten** — rsync command uses `--exclude='.env'`. The local `.env` is a placeholder; the real API key lives only on the VM.
 - **Suggested price override** — after Claude outputs `suggested_price`, the code replaces it with the live price fetched from yfinance before saving to DB.
@@ -233,6 +233,13 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Economic calendar** — uses FRED releases API (same key). Tracks CPI, Jobs, FOMC, GDP, PPI, PCE, retail sales, housing starts, consumer confidence, industrial production. Warns Claude about same-day releases.
 - **MCP auth** — MCP mutation tools (`confirm_trade`, `reject_recommendation`, `get_recommendations`) require the `pin` parameter when `SETTINGS_PIN` is set. Read-only tools don't require a PIN. This matches REST endpoint behavior.
 - **MCP confirm_trade routes through broker** — MCP `confirm_trade` uses `get_broker(db)` → `broker.submit_buy/sell()`, same as the REST endpoint. This ensures Alpaca orders are actually submitted (not just recorded in DB) regardless of whether the trade is confirmed via REST or MCP.
+- **Momentum screener uses Alpaca bars** — `_fetch_momentum_screener_sync` calls `alpaca_data.fetch_bars_sync` for 90d of S&P 500 history (~5s vs yfinance's variable 60-500s). yfinance is a fallback if Alpaca returns nothing. Symbols are normalized `BRK-B` → `BRK.B` for Alpaca's dot-format tickers.
+- **Alpaca bars bisect on bad symbols** — `fetch_bars_sync` catches "invalid symbol" / 422 errors and recursively splits the batch in half so a single bad ticker only loses itself instead of taking down 50 neighbors.
+- **Phase 1 waits for Phase 0 cache** — if the cache is missing when Phase 1 starts (Phase 0 still running), Phase 1 polls up to 120s for it to appear before falling back to inline fetch. Prevents duplicate work when Phase 0 overruns.
+- **Claude client is AsyncAnthropic with 300s timeout** — `claude_client._client()` returns `AsyncAnthropic` so the FastAPI event loop stays responsive during long LLM calls. `retry.py` works with both sync and async clients and retries on `APIStatusError` (5xx/429/529), `APITimeoutError`, and `APIConnectionError`.
+- **Portfolio price fetch is Alpaca-first** — `_get_current_price` tries Alpaca snapshot first for equities/ETFs, yfinance only for index symbols (`^GSPC` etc.) or as fallback. Never raises — returns `Decimal("0")` on total failure.
+- **Intraday VIX has VXX fallback** — `cron/intraday_monitor.py` fetches `^VIX` from yfinance; if that fails it uses the `VXX` ETF snapshot via Alpaca as a volatility proxy so the VIX market trigger stays armed.
+- **Phase timing alerts** — Phase 0 flags `⚠️ SLOW` in Telegram when runtime >400s; Phase 1 flags when >420s. Phase 1's cron HTTP timeout is 900s (raised from 600s) so server-side errors surface before the client's opaque `socket.timeout`.
 
 ## Environment
 

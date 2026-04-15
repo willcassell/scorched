@@ -697,44 +697,89 @@ def _fetch_momentum_screener_sync(n: int = 20, tracker=None) -> list[str]:
       - Price > 20-day moving average
       - Average daily volume > 1M shares
       - Ranked by 5-day price momentum (top n)
-    Uses batch yf.download() for speed (~10s vs 3-7 min for per-symbol fetches).
-    Falls back to [] on any error.
+
+    Primary source: Alpaca bars (stable, ~5-10s for 500 symbols).
+    Fallback: yfinance batch download if Alpaca returns nothing.
+    Returns [] on total failure so the pipeline continues with just the
+    static watchlist.
     """
     screen_symbols = [s for s in _SP500_POOL if s not in WATCHLIST]
     if not screen_symbols:
         return []
 
+    from .alpaca_data import fetch_bars_sync
+
+    # Alpaca uses "." for class-suffix tickers (BRK.B, BF.B) while Yahoo uses "-".
+    # Normalize for Alpaca, then map results back to Yahoo-style symbols used
+    # elsewhere in the pipeline.
+    def _to_alpaca(sym: str) -> str:
+        return sym.replace("-", ".")
+
+    alpaca_to_yahoo = {_to_alpaca(s): s for s in screen_symbols}
+    alpaca_symbols = list(alpaca_to_yahoo.keys())
+
+    bars = {}
     try:
-        with _api_ctx(tracker, "yfinance", "screener_batch", "SP500"):
-            df = yf.download(
-                screen_symbols,
-                period="3mo",
-                interval="1d",
-                progress=False,
-                group_by="ticker",
-                threads=True,
-            )
+        with _api_ctx(tracker, "alpaca_data", "screener_bars", "SP500"):
+            # 90 days covers 20d MA and 5d momentum with weekends/holidays buffer
+            raw_bars = fetch_bars_sync(alpaca_symbols, days=90, tracker=None)
+        # Map Alpaca symbols back to the Yahoo-style keys we use everywhere else
+        bars = {alpaca_to_yahoo.get(s, s): v for s, v in raw_bars.items()}
     except Exception:
-        logger.warning("Batch screener download failed", exc_info=True)
-        return []
+        logger.warning("Alpaca screener bars failed — falling back to yfinance", exc_info=True)
 
-    candidates = []
-    for symbol in screen_symbols:
+    if not bars or sum(len(b) for b in bars.values()) == 0:
+        logger.warning("Alpaca returned no bars — falling back to yfinance batch")
         try:
-            # yf.download with group_by="ticker" returns MultiIndex: (ticker, field)
-            if len(screen_symbols) == 1:
-                sym_close = df["Close"]
-                sym_vol = df["Volume"]
-            else:
-                sym_close = df[(symbol, "Close")].dropna()
-                sym_vol = df[(symbol, "Volume")].dropna()
-
-            if len(sym_close) < 25:
+            with _api_ctx(tracker, "yfinance", "screener_batch", "SP500"):
+                df = yf.download(
+                    screen_symbols,
+                    period="3mo",
+                    interval="1d",
+                    progress=False,
+                    group_by="ticker",
+                    threads=True,
+                )
+        except Exception:
+            logger.warning("yfinance screener fallback also failed", exc_info=True)
+            return []
+        candidates = []
+        for symbol in screen_symbols:
+            try:
+                if len(screen_symbols) == 1:
+                    sym_close = df["Close"]
+                    sym_vol = df["Volume"]
+                else:
+                    sym_close = df[(symbol, "Close")].dropna()
+                    sym_vol = df[(symbol, "Volume")].dropna()
+                if len(sym_close) < 25:
+                    continue
+                current = float(sym_close.iloc[-1])
+                ma20 = float(sym_close.tail(20).mean())
+                avg_vol = float(sym_vol.tail(20).mean())
+                momentum_5d = (current - float(sym_close.iloc[-6])) / float(sym_close.iloc[-6]) * 100
+                if current > ma20 and avg_vol > 1_000_000:
+                    candidates.append((symbol, momentum_5d))
+            except Exception:
                 continue
-            current = float(sym_close.iloc[-1])
-            ma20 = float(sym_close.tail(20).mean())
-            avg_vol = float(sym_vol.tail(20).mean())
-            momentum_5d = (current - float(sym_close.iloc[-6])) / float(sym_close.iloc[-6]) * 100
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, _ in candidates[:n]]
+
+    # Primary path: Alpaca bars
+    candidates = []
+    for symbol, sym_bars in bars.items():
+        try:
+            if len(sym_bars) < 25:
+                continue
+            closes = [b["close"] for b in sym_bars]
+            volumes = [b["volume"] for b in sym_bars]
+            current = closes[-1]
+            ma20 = sum(closes[-20:]) / 20
+            avg_vol = sum(volumes[-20:]) / 20
+            ref = closes[-6]
+            if ref <= 0:
+                continue
+            momentum_5d = (current - ref) / ref * 100
             if current > ma20 and avg_vol > 1_000_000:
                 candidates.append((symbol, momentum_5d))
         except Exception:

@@ -23,15 +23,36 @@ from ..tax import classify_gain, estimate_tax, post_tax_gain
 
 
 async def _get_current_price(symbol: str) -> Decimal:
-    """Fetch latest price via yfinance in a thread (yfinance is sync)."""
-    import yfinance as yf
+    """Fetch latest price, preferring Alpaca for equities/ETFs and falling
+    back to yfinance for index symbols (^GSPC etc.) that Alpaca doesn't cover.
+
+    Always returns Decimal — never raises. On total failure returns 0.
+    """
+    # Alpaca first (reliable) for equities/ETFs. Skip for ^-prefixed indices.
+    if not symbol.startswith("^"):
+        try:
+            from .alpaca_data import fetch_snapshots_sync
+            loop = asyncio.get_running_loop()
+            snaps = await loop.run_in_executor(None, lambda: fetch_snapshots_sync([symbol]))
+            snap = snaps.get(symbol)
+            if snap and snap.get("current_price"):
+                return Decimal(str(round(float(snap["current_price"]), 4)))
+        except Exception:
+            pass  # fall through to yfinance
 
     def _fetch():
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="1d")
-        if hist.empty:
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="1d")
+            if hist is None or hist.empty:
+                return Decimal("0")
+            close = hist["Close"].iloc[-1]
+            if close is None:
+                return Decimal("0")
+            return Decimal(str(round(float(close), 4)))
+        except Exception:
             return Decimal("0")
-        return Decimal(str(hist["Close"].iloc[-1]))
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch)

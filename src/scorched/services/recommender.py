@@ -67,6 +67,30 @@ def _load_research_cache(session_date: date) -> dict | None:
         return None
 
 
+async def _wait_for_research_cache(session_date: date, max_wait_s: int = 120) -> dict | None:
+    """Poll for the Phase 0 cache, giving a slow Phase 0 up to max_wait_s seconds.
+
+    Returns the loaded cache dict, or None if it never appeared.
+    Used by Phase 1 so a slow Phase 0 doesn't trigger a duplicate inline fetch.
+    """
+    import asyncio as _asyncio
+
+    deadline = max_wait_s
+    elapsed = 0
+    poll_s = 5
+    while elapsed <= deadline:
+        cache = _load_research_cache(session_date)
+        if cache is not None:
+            if elapsed > 0:
+                logger.warning("Phase 0 cache arrived after waiting %ds", elapsed)
+            return cache
+        if elapsed + poll_s > deadline:
+            break
+        await _asyncio.sleep(poll_s)
+        elapsed += poll_s
+    return None
+
+
 async def _get_recent_sell(
     db: AsyncSession, symbol: str, as_of: date, days: int = 30
 ) -> TradeHistory | None:
@@ -212,8 +236,15 @@ async def generate_recommendations(
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]
 
-    # ── Try Phase 0 cache first, fall back to inline fetch ────────────────
+    # ── Try Phase 0 cache first, with a short wait for a slow Phase 0 ─────
+    # If Phase 0 is still running when Phase 1 fires, silently falling through
+    # to an inline fetch duplicates the slowest work in the pipeline. Instead,
+    # wait up to 120s for the cache file to appear. Only fall back to an
+    # inline fetch if Phase 0 is genuinely absent.
     cache = _load_research_cache(session_date)
+    if cache is None:
+        logger.warning("Phase 0 cache missing — waiting up to 120s for it to appear")
+        cache = await _wait_for_research_cache(session_date, max_wait_s=120)
 
     if cache is not None:
         logger.info("Phase 0 cache HIT — skipping data fetches (%d symbols, fetched at %s)",

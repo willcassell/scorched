@@ -51,12 +51,19 @@ def main():
             continue
         timing_lines.append(f"  {step}: {elapsed:.0f}s")
 
+    # Flag abnormal runtimes — Phase 0 normally runs ~250s; anything >400s risks
+    # overlapping Phase 1 at 9:45 AM ET.
+    SLOW_THRESHOLD_S = 400
+    flag = "⚠️ SLOW " if total_s > SLOW_THRESHOLD_S else ""
+
     msg = (
-        f"TRADEBOT // {today_str} - Phase 0 complete ({total_s:.0f}s)\n"
+        f"TRADEBOT // {today_str} - {flag}Phase 0 complete ({total_s:.0f}s)\n"
         f"Research universe: {n_symbols} symbols\n"
         f"Screener picks: {', '.join(screener[:10])}\n\n"
         f"Timing:\n" + "\n".join(timing_lines)
     )
+    if total_s > SLOW_THRESHOLD_S:
+        msg += f"\n\n⚠️ Ran {total_s - SLOW_THRESHOLD_S:.0f}s over normal budget. Phase 1 may be racing."
     send_telegram(msg)
     print(f"Phase 0 complete in {total_s:.0f}s for {n_symbols} symbols.")
 
