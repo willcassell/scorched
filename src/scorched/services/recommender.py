@@ -184,6 +184,85 @@ def _is_market_open(session_date: date) -> bool:
     return len(schedule) > 0
 
 
+# Reverse-map from sector ETF → human-readable sector name.
+# Matches the GICS sectors used in analyst_guidance.md and strategy.json commentary.
+_ETF_TO_SECTOR: dict[str, str] = {
+    "XLK": "Technology",
+    "XLC": "Communication Services",
+    "XLY": "Consumer Discretionary",
+    "XLF": "Financials",
+    "XLV": "Healthcare",
+    "XLE": "Energy",
+    "XLI": "Industrials",
+    "XLRE": "Real Estate",
+    "XLU": "Utilities",
+    "XLB": "Materials",
+    "XLP": "Consumer Staples",
+    "SPY": "Diversified",  # catch-all bucket in _SECTOR_ETF_MAP
+}
+
+
+def _get_sector_for_symbol(symbol: str) -> str | None:
+    """Return GICS sector name for a symbol, or None if not in the sector map.
+
+    Imports _SECTOR_ETF_MAP lazily to avoid a circular import with research.py.
+    Returns None (not a string) so callers can distinguish unknown from diversified.
+    """
+    from .research import _SECTOR_ETF_MAP  # local import avoids module-level circularity
+
+    etf = _SECTOR_ETF_MAP.get(symbol)
+    if etf is None:
+        return None
+    return _ETF_TO_SECTOR.get(etf)
+
+
+def check_sector_exposure(
+    proposed_symbol: str,
+    proposed_sector: str | None,
+    proposed_dollars: Decimal,
+    held_positions: list[dict],
+    total_value: Decimal,
+    max_sector_pct: float,
+) -> bool:
+    """Return True if the proposed buy keeps sector exposure <= max_sector_pct.
+
+    Args:
+        proposed_symbol:  Ticker being considered (used only for logging).
+        proposed_sector:  GICS sector name, or None if unknown.
+        proposed_dollars: Estimated cost of the proposed buy.
+        held_positions:   List of dicts with keys ``sector`` and ``market_value``.
+        total_value:      Total portfolio value (cash + all positions).
+        max_sector_pct:   Hard cap, e.g. 40.0 for 40%.
+
+    Returns True with a warning when sector is None — we don't block on
+    missing metadata (incomplete sector map should not freeze the bot).
+    """
+    if proposed_sector is None:
+        logger.warning(
+            "Sector gate: %s has no sector metadata — allowing through (unknown sector)",
+            proposed_symbol,
+        )
+        return True
+    if total_value <= 0:
+        return True
+
+    current_sector_value = sum(
+        (p.get("market_value") or Decimal("0"))
+        for p in held_positions
+        if (p.get("sector") or "").lower() == proposed_sector.lower()
+    )
+    post_buy_value = Decimal(str(current_sector_value)) + proposed_dollars
+    post_buy_pct = float(post_buy_value) / float(total_value) * 100
+
+    if post_buy_pct > max_sector_pct:
+        logger.info(
+            "Sector gate REJECT %s: %s exposure would be %.1f%% > %.1f%% cap",
+            proposed_symbol, proposed_sector, post_buy_pct, max_sector_pct,
+        )
+        return False
+    return True
+
+
 def _compute_portfolio_total_value(
     cash: Decimal, positions, price_data: dict
 ) -> Decimal:
@@ -581,6 +660,26 @@ async def generate_recommendations(
                 if not (r.get("action", "").lower() == "buy" and r.get("symbol", "").upper() in rejected_symbols)
             ]
 
+    # Build the list of held positions enriched with sector and market_value for the
+    # sector-exposure gate.  We compute this once before the loop so the gate has a
+    # stable baseline; accepted buys from *this run* are appended dynamically below.
+    total_value_decimal = Decimal(str(portfolio_dict["total_value"]))
+    held_positions_for_sector: list[dict] = []
+    for pos in current_positions:
+        live_px = price_data.get(pos.symbol, {}).get("current_price")
+        mkt_val = (
+            Decimal(str(live_px)) * Decimal(str(pos.shares))
+            if live_px
+            else Decimal(str(pos.avg_cost_basis)) * Decimal(str(pos.shares))
+        )
+        held_positions_for_sector.append(
+            {
+                "symbol": pos.symbol,
+                "sector": _get_sector_for_symbol(pos.symbol),
+                "market_value": mkt_val,
+            }
+        )
+
     recommendation_rows = []
     for rec in raw_recs:
         action = rec.get("action", "").lower()
@@ -638,6 +737,38 @@ async def generate_recommendations(
                     f"already holding {current_count}/{max_holdings} positions"
                 )
                 continue
+
+            # Sector concentration gate
+            max_sector_pct = strategy_conc.get("max_sector_pct", 40.0)
+            symbol_sector = _get_sector_for_symbol(symbol)
+            if not check_sector_exposure(
+                symbol,
+                symbol_sector,
+                estimated_cost,
+                held_positions_for_sector,
+                total_value_decimal,
+                max_sector_pct,
+            ):
+                sector_label = symbol_sector or "unknown sector"
+                logger.warning(
+                    "Skipping %s buy — sector concentration gate rejected (%s, cap=%.0f%%)",
+                    symbol, sector_label, max_sector_pct,
+                )
+                await send_telegram(
+                    f"TRADEBOT // Sector gate: {symbol} BUY skipped — "
+                    f"would breach {max_sector_pct:.0f}% {sector_label} cap"
+                )
+                continue
+
+            # Track this accepted buy so subsequent buys in the same sector see the
+            # correct running total (prevents two same-sector buys slipping through).
+            held_positions_for_sector.append(
+                {
+                    "symbol": symbol,
+                    "sector": symbol_sector,
+                    "market_value": estimated_cost,
+                }
+            )
 
         key_risks = rec.get("key_risks") or ""
 
