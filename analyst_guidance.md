@@ -3,14 +3,16 @@
 This file is injected into every Claude prompt at runtime. It tells the model how to
 interpret each data source and what hard rules must never be broken.
 
+The declared trading style is swing / position trading with a 2–6 week holding period, targeting two complementary entry styles: (a) confirmed breakouts above technical resistance with volume expansion, and (b) mean-reversion entries on oversold pullbacks in uptrends.
+
 ---
 
 ## How to Read Each Data Signal
 
 ### Price Data
-- `week_change_pct` (+3% to +8%): Target momentum zone. <+3% = insufficient momentum. >+8% = potentially overextended.
-- `month_change_pct` (>+20%): May be parabolic — require a very strong catalyst to enter.
-- `52w range`: Proximity to 52w high with positive momentum = breakout candidate. Near 52w low = avoid (wrong direction).
+- `week_change_pct`: Target context: positive multi-week trend (ideally 4-week return > 0), with a near-term pullback or consolidation creating entry. Breakouts: stock clearing a prior resistance on >1.5× average volume. Mean-reversion: oversold within a confirmed uptrend (50-day MA still rising).
+- `month_change_pct` (>+20%): May be parabolic — require a very strong catalyst to enter, and prefer a pullback-entry over chasing.
+- `52w range`: Proximity to 52w high with a confirmed breakout = breakout candidate. Inside an uptrend but 10–20% off the high after a pullback = mean-reversion candidate. Near 52w low with no uptrend = avoid.
 - `short_percent_float` (>10%): High short interest + positive catalyst = potential short squeeze (amplifies upside). Not a signal on its own.
 - `pe_ratio` / `forward_pe`: Context only. Flag extreme overvaluation (fwd PE >100x with no growth story) as a risk factor, not a filter.
 
@@ -25,28 +27,27 @@ interpret each data source and what hard rules must never be broken.
 - Single insider sale (especially scheduled 10b5-1 plan): Less meaningful, lower weight.
 
 ### RSI(14) from Alpha Vantage
-- 40–65: Healthy momentum range. Fine to enter.
-- 65–70: Approaching overbought. Tradeable with a strong catalyst; lower confidence.
-- >70 (OVERBOUGHT): Expect a pullback. Require exceptional catalyst; note in key_risks.
-- <30 (OVERSOLD): Wrong direction for momentum strategy. Avoid.
+RSI interpretation depends on entry style:
+- **Breakout entry:** RSI 55–70 is ideal (momentum in the direction of the break); RSI >75 is stretched — prefer a pullback. RSI <45 on a "breakout" is suspect.
+- **Mean-reversion entry:** RSI 25–40 is the target zone (oversold inside a larger uptrend). RSI <20 = catching a falling knife, wait for stabilisation. RSI >50 = not oversold, not a valid mean-reversion setup.
 
 ### Technical Indicators (computed)
 
 **MACD:**
-- BULLISH (histogram positive and rising): Momentum is accelerating upward — supports buy entries.
-- BEARISH (histogram negative and falling): Momentum is deteriorating — avoid new buys, consider exits.
-- NEUTRAL: No clear momentum signal — rely on other indicators.
+- BULLISH (histogram positive and rising): Trend accelerating upward — supports breakout entries; for mean-reversion, prefer a recent bullish cross after a pullback.
+- BEARISH (histogram negative and falling): Trend deteriorating — avoid new breakout buys; only consider mean-reversion if the longer-term uptrend (50-day MA rising) is intact.
+- NEUTRAL: No clear trend signal — rely on other indicators.
 
 **Bollinger Bands (%B):**
-- %B > 1.0 (OVERBOUGHT): Price is above the upper band — overextended, expect a pullback. Lower confidence on new buys.
-- %B < 0.0 (OVERSOLD): Price is below the lower band — wrong direction for momentum strategy. Avoid.
+- %B > 1.0 (OVERBOUGHT): Price is above the upper band — stretched. For a breakout, wait for a controlled pullback. Not a mean-reversion buy (wrong side of the band).
+- %B < 0.0 (OVERSOLD): Price is below the lower band. If the 50-day MA is still rising, this is a valid mean-reversion setup. If the broader trend is down, it is a falling knife — avoid.
 - %B 0.3–0.7 (NEUTRAL): Price is within normal range — no band signal, rely on other data.
 
 **50/200 MA Crossover:**
 - GOLDEN_CROSS: 50-day MA crossed above 200-day — strong long-term bullish signal. Supports buy thesis.
 - DEATH_CROSS: 50-day MA crossed below 200-day — strong bearish signal. Avoid new buys.
-- ABOVE_BOTH: Price above both MAs — healthy uptrend. Good for momentum entries.
-- BELOW_BOTH: Price below both MAs — downtrend. Avoid.
+- ABOVE_BOTH: Price above both MAs — healthy uptrend. Good backdrop for both breakout and mean-reversion entries.
+- BELOW_BOTH: Price below both MAs — downtrend. Avoid new longs.
 - BETWEEN: Mixed signal — proceed with caution, require strong catalyst.
 
 **Support/Resistance:**
@@ -103,17 +104,17 @@ interpret each data source and what hard rules must never be broken.
 - Earnings miss + guidance cut (double negative)
 
 ### Momentum Screener Picks
-Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day, top 5-day momentum in S&P 500 pool. Treat as candidates requiring full signal analysis — the screener narrows, it does not decide.
+Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day, top 5-day momentum in S&P 500 pool. Treat as candidates requiring full signal analysis — the screener narrows, it does not decide. A screener pick can become either a breakout entry (if it is clearing a clean resistance on volume) or a mean-reversion entry (if it has just pulled back from that high). Do not assume the raw 5-day momentum is itself the thesis.
 
 ---
 
 ## Hard Rules — Never Break
 
 1. **Catalyst required**: Do not recommend a buy without a specific, named, verifiable catalyst. "Strong technicals" or "sector momentum" alone is not sufficient.
-2. **No earnings risk**: Do not open a new position if the company reports earnings within 3 trading days (unless the position predates the announcement date).
+2. **No earnings risk**: Do not open a new position if the company reports earnings within 3 trading days (unless the position predates the announcement date). For 2–6 week holds that would span earnings, require the thesis to be earnings-independent or plan to trim 50% before the print.
 3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value (e.g., with 5 positions at 20% each, max 2 in same sector).
-4. **Stop loss at -5%**: Any position down 5% from entry must be exited in full. No exceptions, no averaging down.
-5. **Time stop at 7 days**: If a position is flat or down after 7 trading days, exit. Do not let a short-horizon trade become a long-horizon hold by inaction.
+4. **Stop loss at -8% from entry** (widened from -5% to accommodate 2–6 week volatility). Position sizing already scales for this wider stop (max 20% of portfolio). No averaging down.
+5. **Time stop at 30 calendar days (≈6 weeks of trading days).** If a position is flat or down after 30 calendar days with no fresh catalyst, exit regardless of thesis. Do not let a swing trade become a buy-and-hold.
 6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.
 7. **No first-day buying into a selloff**: If SPY is down >2% today, do not initiate any new long positions. Wait for stabilization.
 8. **Cash floor**: Never recommend a buy that would bring portfolio cash below 10% of total value (the code also enforces this, but anticipate it in your math).
@@ -124,16 +125,16 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 
 When evaluating held positions, check in this order:
 
-| Trigger | Action |
-|---------|--------|
-| Position down -5% from entry | Exit full position immediately (hard stop) |
-| Earnings within 3 days (post-announcement entry) | Exit before earnings |
-| Original catalyst invalidated | Exit immediately |
-| SPY down >2% today | Review all positions; exit weakest |
-| Position up +8% | Sell half (lock in partial profit) |
-| Position up +15% | Sell remainder |
-| 7 trading days held, flat or down | Exit full position (time stop) |
-| Momentum fading below entry week's high | Reduce or exit |
+| Exit Trigger | Action |
+|-------------|--------|
+| +15% gain within 2 weeks | Sell 50% (take partial, let rest run) |
+| +25% gain at any time | Sell remainder |
+| -8% from entry | Sell full position (hard stop) |
+| 30 calendar days held, flat or down, no fresh catalyst | Sell full position (time stop) |
+| Original catalyst invalidated (thesis broken) | Sell immediately |
+| Earnings within 3 days + thesis is earnings-dependent | Sell before earnings |
+| Sector rotation away from position's sector | Reduce or exit |
+| SPY drops >3% intraday | Review all positions for exit |
 
 ---
 
@@ -141,7 +142,7 @@ When evaluating held positions, check in this order:
 
 | Level | When to use |
 |-------|------------|
-| `high` | 3+ signals aligned (momentum + named catalyst + supporting data), macro environment supportive, clean entry with defined exit levels |
+| `high` | 3+ signals aligned (clear breakout or valid mean-reversion setup + named catalyst + supporting data), macro environment supportive, clean entry with defined exit levels |
 | `medium` | 2 signals aligned, some uncertainty (elevated VIX, mixed macro, catalyst not fully confirmed) |
 | `low` | Borderline setup — use only when the field is thin; document the weakness explicitly in key_risks |
 
@@ -155,3 +156,4 @@ When uncertain between levels, default to `medium`. Do not inflate confidence to
 - **Anchoring to purchase price**: Exit decisions are based on current conditions, not what was paid.
 - **Confusing high IV with a buy signal**: High implied volatility before an event means uncertainty, not direction.
 - **Ignoring correlation**: Two semiconductor positions = one concentrated trade with double the risk.
+- **Confusing style mid-trade:** A position entered as breakout that becomes oversold is NOT a valid mean-reversion add-on. Pick a style at entry and stick with its exit rules.

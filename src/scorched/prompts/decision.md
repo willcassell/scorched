@@ -24,14 +24,14 @@ Apply this playbook as a hard filter. If a candidate violates any prohibition he
 ### Example 1 — one buy, one rule-based exit
 ```
 {{
-  "research_summary": "Neutral macro, Tech leading. Analysis surfaced CRWD as the cleanest setup: post-earnings breakout with raised guidance. LLY exit is a 7-day time-stop trigger.",
+  "research_summary": "Neutral macro, Tech leading. Analysis surfaced CRWD as the cleanest setup: post-earnings breakout with raised guidance. LLY exit is a time-stop trigger — 30 calendar days held with no fresh catalyst.",
   "recommendations": [
     {{
       "symbol": "LLY",
       "action": "sell",
       "suggested_price": 930.62,
       "quantity": 6,
-      "reasoning": "Time-stop rule: 7 trading days held at +0.3% from entry — exit full position per strategy discipline.",
+      "reasoning": "Time-stop rule: held 30 calendar days at +0.3% from entry with no fresh catalyst — exit full position per strategy discipline.",
       "confidence": "high",
       "key_risks": "Stock may rally post-sale; accepted tradeoff for rule discipline."
     }},
@@ -40,9 +40,9 @@ Apply this playbook as a hard filter. If a candidate violates any prohibition he
       "action": "buy",
       "suggested_price": 385.20,
       "quantity": 25,
-      "reasoning": "Post-earnings breakout above $380 resistance on 3x volume. 12% EPS beat with raised FY guidance. MACD bullish crossover confirmed. Fits momentum entry with concrete catalyst.",
+      "reasoning": "Post-earnings breakout above $380 resistance on 3x volume. 12% EPS beat with raised FY guidance. MACD bullish crossover confirmed. Breakout entry with concrete catalyst. Expected hold 2–4 weeks; trailing stop at -8% from entry; re-evaluate if breakout fails back under $380 within 5 sessions.",
       "confidence": "high",
-      "key_risks": "Crowded cybersecurity trade; earnings gap could partially fill in first 2 sessions."
+      "key_risks": "Crowded cybersecurity trade; breakout could fail back into range if follow-through buying stalls."
     }}
   ]
 }}
