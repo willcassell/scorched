@@ -839,8 +839,10 @@ def _score_symbol(symbol: str, price_data: dict, news_data: dict, polygon_news: 
     score = 0.0
     data = price_data.get(symbol, {})
 
-    # Momentum: reward 3-8% weekly moves (sweet spot for strategy)
-    wk = abs(data.get("week_change_pct", 0))
+    # Momentum: reward 3-8% weekly moves in the trade direction.
+    # Down-moves get no score — strategy only enters longs, so a falling stock
+    # wastes a top-25 pre-filter slot even if its magnitude is in the sweet spot.
+    wk = data.get("week_change_pct", 0) or 0
     if 3 <= wk <= 8:
         score += 3.0
     elif wk > 1:
