@@ -48,8 +48,10 @@ class TestParseRiskReviewResponse:
         assert result[1]["verdict"] == "reject"
 
     def test_handles_malformed_json(self):
+        # parse_risk_review_response returns None on failure (fail-closed: callers treat None
+        # as "reject all buys" rather than an empty approval list)
         result = parse_risk_review_response("not json at all")
-        assert result == []
+        assert result is None
 
     def test_handles_empty_decisions(self):
         response = json.dumps({"decisions": []})

@@ -32,24 +32,19 @@ async def test_alpaca_submit_buy_success(alpaca_broker, mock_alpaca_client):
         limit_price=Decimal("150.00"),
         recommendation_id=None,
     )
-    assert result["status"] == "filled"
+    # AlpacaBroker is fire-and-forget: submit returns "submitted", fills recorded by Phase 2.5 reconciler
+    assert result["status"] == "submitted"
     assert result["order_id"] == "order-abc-123"
     mock_alpaca_client.submit_order.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_alpaca_submit_sell_success(alpaca_broker, mock_alpaca_client):
-    # First buy a position so sell has something to work with
-    mock_alpaca_client.submit_order.return_value = _make_order()
-    mock_alpaca_client.get_order_by_id.return_value = _make_order()
-    await alpaca_broker.submit_buy(
-        symbol="NVDA",
-        qty=Decimal("1"),
-        limit_price=Decimal("200.00"),
-        recommendation_id=None,
-    )
+    # Mock Alpaca position so the sell guard passes (submit_sell calls get_open_position)
+    mock_position = MagicMock()
+    mock_position.qty = "1"
+    mock_alpaca_client.get_open_position.return_value = mock_position
 
-    mock_alpaca_client.submit_order.reset_mock()
     sell_order = _make_order(symbol="NVDA", filled_qty="1", filled_avg_price="200.00")
     mock_alpaca_client.submit_order.return_value = sell_order
     mock_alpaca_client.get_order_by_id.return_value = sell_order
@@ -59,7 +54,8 @@ async def test_alpaca_submit_sell_success(alpaca_broker, mock_alpaca_client):
         limit_price=Decimal("200.00"),
         recommendation_id=None,
     )
-    assert result["status"] == "filled"
+    # AlpacaBroker is fire-and-forget: sell also returns "submitted"
+    assert result["status"] == "submitted"
     assert result["order_id"] == "order-abc-123"
 
 

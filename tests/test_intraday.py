@@ -106,14 +106,18 @@ class TestVolumeSurge:
 
 class TestCheckMarketTriggers:
     def test_returns_fired_results(self):
+        # check_market_triggers only gates on SPY drop; VIX is passed to Claude
+        # as context but intentionally excluded as a trigger (avoids repeated
+        # VIX alerts for every held position on high-vol days).
         results = check_market_triggers(
             spy_current=Decimal("487.5"),
             spy_open=Decimal("500"),
             vix_current=Decimal("35"),
             config={"spy_intraday_drop_pct": 2.0, "vix_absolute_max": 30},
         )
-        assert len(results) == 2
-        assert all(r.passed is False for r in results)
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert "SPY" in results[0].reason
 
     def test_returns_empty_when_all_pass(self):
         results = check_market_triggers(
