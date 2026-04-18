@@ -112,7 +112,7 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 
 1. **Catalyst required**: Do not recommend a buy without a specific, named, verifiable catalyst. "Strong technicals" or "sector momentum" alone is not sufficient.
 2. **No earnings risk**: Do not open a new position if the company reports earnings within 3 trading days (unless the position predates the announcement date). For 2–6 week holds that would span earnings, require the thesis to be earnings-independent or plan to trim 50% before the print.
-3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value (e.g., with 5 positions at 20% each, max 2 in same sector).
+3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value (e.g., with 5 positions at 20% each, max 2 in same sector). This is also enforced in code — buys that would breach the cap are rejected before execution.
 4. **Stop loss at -8% from entry** (widened from -5% to accommodate 2–6 week volatility). Position sizing already scales for this wider stop (max 20% of portfolio). No averaging down.
 5. **Time stop at 30 calendar days (≈6 weeks of trading days).** If a position is flat or down after 30 calendar days with no fresh catalyst, exit regardless of thesis. Do not let a swing trade become a buy-and-hold.
 6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.

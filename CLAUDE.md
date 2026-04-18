@@ -73,7 +73,7 @@ The MCP sub-app has a lifespan issue: FastAPI doesn't propagate lifespan to moun
 | `src/scorched/correlation.py` | 20-day return correlation between candidates and held positions |
 | `src/scorched/http_retry.py` | Retry wrapper for external HTTP APIs (3 attempts, 1s/3s/5s backoff) |
 | `src/scorched/circuit_breaker.py` | Pre-execution gate checks (stock gap, SPY drop, VIX spike) |
-| `src/scorched/trailing_stops.py` | ATR-based trailing stop logic — pure functions |
+| `src/scorched/trailing_stops.py` | ATR-based trailing stop logic — pure functions; HWM ratchet + `check_trailing_stop_breach()` called by intraday monitor |
 | `src/scorched/services/reflection.py` | Weekly trade reflection: reviews outcomes, extracts learnings |
 | `src/scorched/broker/pending_fills.py` | Pending fill tracking: submitted orders awaiting Alpaca fill + crash recovery |
 | `cron/tradebot_reconcile.py` | Phase 2.5 cron: reconciles pending Alpaca orders, then syncs positions against Alpaca |
@@ -120,12 +120,12 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 - Output: per-position hold/tighten/partial/exit recommendations (logged)
 
 **Call 5+ — Intraday Exit** (conditional, during market hours):
-- Triggered only when intraday monitor detects a position hitting one of 5 configurable triggers
+- Triggered only when intraday monitor detects a position hitting one of 6 configurable triggers
 - Prompt: `src/scorched/prompts/intraday_exit.md`
 - Input: triggered position data + trigger details + current market conditions
 - Output: exit/hold decision with reasoning; auto-executes sells
 - Cost: ~$0.01 per triggered position; zero LLM cost on quiet days
-- Triggers (configurable in `strategy.json` under `intraday_monitor`): position drop from entry (5%), drop from today's open (3%), SPY intraday drop (2%), VIX above threshold (30), volume surge (3x average)
+- Triggers (configurable in `strategy.json` under `intraday_monitor`): position drop from entry (5%), drop from today's open (3%), SPY intraday drop (2%), VIX above threshold (30), volume surge (3x average), trailing stop breached (ATR-based — 6th trigger, wired 2026-04-18)
 
 ## Data Sources
 
@@ -155,7 +155,7 @@ Four API calls per day. Calls 1-3 use `claude-sonnet-4-6`; EOD review and intrad
 | `min_cash_reserve_pct` | 10% | Hard floor; buys that violate this are skipped |
 | `FRED_API_KEY` | "" | Empty = FRED data skipped |
 | `ALPHA_VANTAGE_API_KEY` | "" | Empty = RSI data skipped |
-| `POLYGON_API_KEY` | "" | Empty = Polygon news skipped |
+| `POLYGON_API_KEY` | (removed) | Field dropped from config (2026-04-18); Alpaca news replaced Polygon entirely |
 | `FINNHUB_API_KEY` | "" | Empty = analyst consensus skipped |
 | `TWELVEDATA_API_KEY` | "" | Empty = Twelvedata RSI skipped (falls back to Alpha Vantage) |
 | `settings_pin` | "" | If set, PUT /api/v1/strategy requires this PIN |
@@ -221,15 +221,15 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **JSON fix-up retry** — If `parse_json_response` fails for Call 1 (analysis) or Call 2 (decision), the call is retried once with a multi-turn prompt: Claude's bad response as assistant turn + "respond with only the JSON" user turn. No extended thinking on the retry (~$0.01-0.02). Logged as `decision_retry` in API tracker. Risk review parser also upgraded to use the full 5-strategy cascade.
 - **analyst_guidance.md mount** — volume-mounted in `docker-compose.yml` (alongside `strategy.json`). Changes are reflected without rebuilding. If missing, Claude runs without hard rules — analysis quality degrades silently.
 - **Pydantic validation** — all Claude JSON outputs validated via `AnalysisOutput`, `DecisionOutput`, `RiskReviewOutput` models. Graceful fallback on validation failure.
-- **HTTP retry** — external data APIs (FRED, Polygon, Alpha Vantage, EDGAR, Finnhub) wrapped with `retry_get`/`retry_call` (3 attempts, 1s/3s/5s backoff on transient errors only).
+- **HTTP retry** — external data APIs (FRED, Alpha Vantage, EDGAR, Finnhub) wrapped with `retry_get`/`retry_call` (3 attempts, 1s/3s/5s backoff on transient errors only).
 - **Timezone-aware datetimes** — all `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`. For DB queries against `TIMESTAMP WITHOUT TIME ZONE` columns, use `.replace(tzinfo=None)` to avoid asyncpg comparison errors.
 - **Trading day timezone** — NEVER use `date.today()` or `datetime.today()` in the backend. Always use `market_today()` or `market_now()` from `src/scorched/tz.py`. These return dates/times in NYSE timezone (`America/New_York`), ensuring the trading day is consistent regardless of server timezone. The Docker container also sets `TZ=America/New_York` as a safety net. The dashboard fetches the market date from `/api/v1/system/market-date` instead of using browser-local JS dates.
-- **Trailing stops** — ATR-based trailing stops in `trailing_stops.py`. High-water mark ratchets up, stop follows at `hwm - 2*ATR` (or -5% floor). Initialized on buy in `apply_buy()`. Tracked in Position model (`trailing_stop_price`, `high_water_mark`). Checked in intraday monitor.
+- **Trailing stops** — ATR-based trailing stops in `trailing_stops.py`. High-water mark ratchets up, stop follows at `hwm - 2*ATR` (or -5% floor). Initialized on buy in `apply_buy()`. Tracked in Position model (`trailing_stop_price`, `high_water_mark`). On every 5-min intraday tick: HWM is ratcheted up if price has risen, then `check_trailing_stop_breach()` fires a `trailing_stop_breached` trigger (6th intraday trigger) if current price has dropped below the stop. Breach triggers Claude exit evaluation, same as the other 5 triggers. New endpoint `POST /api/v1/portfolio/positions/{symbol}/trailing-stop` for manual stop adjustments (ratchet-only — can only move stop up).
 - **Pre-market data** — `_fetch_premarket_prices_sync()` fetches pre-market/current prices via Alpaca snapshots (latest trade + previous daily bar close). Displayed per symbol in research context. Gap-up >5% flagged as chase risk. `check_gap_up_gate()` added to circuit breaker.
 - **Weekly reflection** — `POST /api/v1/market/weekly-reflection` reviews past week's trades vs outcomes. Claude (sonnet) extracts learnings, patterns, and strategy adjustments. Appends to playbook. Cron: Sunday 6 PM ET.
 - **Phase 0 cache location** — cache now writes to `/app/logs/` (Docker volume) instead of `/tmp` (ephemeral). Survives container restarts.
 - **Strategy coherence** — `analyst_guidance.md` hard rule #3 updated to match `strategy.json` sector limits (40% max, not "never two in same sector"). ATR and relative strength interpretation guides added.
-- **Twelvedata vs Alpha Vantage** — Twelvedata (800 calls/day) fetches RSI for ALL research symbols. Alpha Vantage (25 calls/day) only covers screener picks. Both are fetched in Phase 0; Twelvedata provides broader coverage.
+- **Twelvedata vs Alpha Vantage** — Twelvedata (800 calls/day) fetches RSI for ALL research symbols. Alpha Vantage (25 calls/day) only covers screener picks. Both are fetched in Phase 0; Twelvedata provides broader coverage. Both RSI values and the economic calendar are rendered directly into the `build_research_context()` output that Claude sees — not just fetched and discarded.
 - **Cron setup script** — `python3 scripts/setup_cron.py` auto-detects DST and installs correct UTC cron times. Re-run after each DST change instead of manually editing crontab. Supports `--check`, `--remove`, `--dry-run`.
 - **Economic calendar** — uses FRED releases API (same key). Tracks CPI, Jobs, FOMC, GDP, PPI, PCE, retail sales, housing starts, consumer confidence, industrial production. Warns Claude about same-day releases.
 - **MCP auth** — MCP mutation tools (`confirm_trade`, `reject_recommendation`, `get_recommendations`) require the `pin` parameter when `SETTINGS_PIN` is set. Read-only tools don't require a PIN. This matches REST endpoint behavior.
@@ -240,6 +240,11 @@ Thresholds are configurable in `strategy.json` under `circuit_breaker`. Sells al
 - **Claude client is AsyncAnthropic with 300s timeout** — `claude_client._client()` returns `AsyncAnthropic` so the FastAPI event loop stays responsive during long LLM calls. `retry.py` works with both sync and async clients and retries on `APIStatusError` (5xx/429/529), `APITimeoutError`, and `APIConnectionError`.
 - **Portfolio price fetch is Alpaca-first** — `_get_current_price` tries Alpaca snapshot first for equities/ETFs, yfinance only for index symbols (`^GSPC` etc.) or as fallback. Never raises — returns `Decimal("0")` on total failure.
 - **Intraday VIX has VXX fallback** — `cron/intraday_monitor.py` fetches `^VIX` from yfinance; if that fails it uses the `VXX` ETF snapshot via Alpaca as a volatility proxy so the VIX market trigger stays armed.
+- **Phase 0 gather timeout** — `asyncio.gather` over all data-source coroutines is wrapped with `asyncio.wait_for(..., timeout=PHASE0_GATHER_TIMEOUT_S)` (600s). If any source hangs past the deadline the whole gather cancels; a Telegram alert fires and Phase 0 returns whatever was collected before the hang. Prevents Phase 1 from waiting indefinitely for a Phase 0 that will never finish.
+- **Phase 3 EOD timeout** — `http_post` in `cron/tradebot_phase3.py` uses `timeout=600` (Claude's own limit is 300s; playbook update adds another call on top). On failure (any exception), a Telegram alert is sent before re-raising.
+- **`alpaca_live` boot refusal** — `main.py` checks at startup: if `BROKER_MODE=alpaca_live` and `SETTINGS_PIN` is unset or shorter than 16 chars, the process exits with a `RuntimeError`. Prevents accidentally going live with an unprotected mutation surface.
+- **Sector gate is code-enforced** — `recommender.py` calls `_sector_within_limit()` for every proposed BUY. If the buy would push any sector above `strategy.json → concentration → max_sector_pct` (default 40%), the recommendation is dropped before saving, same as the drawdown gate. `analyst_guidance.md` hard rule #3 documents this; the code enforces it independently.
+- **`total_value` uses live prices** — `portfolio.py` computes `total_value` (used by the position-size gate and drawdown gate) by fetching current prices via `_compute_portfolio_total_value()`, not cost basis. Prevents the gates from using stale book values when prices have moved significantly.
 - **Phase timing alerts** — Phase 0 flags `⚠️ SLOW` in Telegram when runtime >400s; Phase 1 flags when >420s. Phase 1's cron HTTP timeout is 900s (raised from 600s) so server-side errors surface before the client's opaque `socket.timeout`.
 
 ## Environment

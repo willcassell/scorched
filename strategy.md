@@ -13,7 +13,7 @@
 - **Position sizing:** 15–25% of portfolio per position, conviction-weighted
 - **Cash floor:** 10% of total portfolio value (hard-enforced in code)
 - **Max positions:** 5 simultaneous
-- **Max sector exposure:** 40% of portfolio
+- **Max sector exposure:** 40% of portfolio (code-enforced — buys that breach this cap are rejected in `recommender.py`)
 - **Stop loss:** -8% from entry
 - **Time stop:** 30 calendar days flat/down with no fresh catalyst
 
