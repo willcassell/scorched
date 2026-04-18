@@ -69,23 +69,13 @@ def parse_risk_review_response(raw: str) -> list[dict] | None:
     Returns list of decision dicts on success, or **None** on parse failure.
     Callers must treat None as fail-closed (reject all buys).
     """
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        # Try extracting from markdown code fences
-        match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse risk review response (even after fence extraction)")
-                return None
-        else:
-            logger.warning("Failed to parse risk review response as JSON")
-            return None
+    from .claude_client import parse_json_response, validate_llm_output, RiskReviewOutput
 
-    # Validate with Pydantic if available
-    from .claude_client import validate_llm_output, RiskReviewOutput
+    parsed = parse_json_response(raw)
+    if not parsed:
+        logger.warning("Failed to parse risk review response as JSON")
+        return None
+
     validated = validate_llm_output(parsed, RiskReviewOutput)
     if validated:
         return [d.model_dump() for d in validated.decisions]

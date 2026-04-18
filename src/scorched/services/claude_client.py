@@ -207,7 +207,43 @@ def parse_json_response(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    logger.warning("parse_json_response: could not extract JSON from response (%d chars)", len(raw))
+    # Strategy 5: brace-match from first '{' to its matching '}' (handles
+    # trailing prose that breaks raw_decode, e.g. unbalanced quotes in commentary)
+    if brace_pos >= 0:
+        depth = 0
+        in_string = False
+        escape = False
+        for i, ch in enumerate(raw[brace_pos:], start=brace_pos):
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[brace_pos:i + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, dict):
+                            return obj
+                    except json.JSONDecodeError:
+                        pass
+                    break
+
+    logger.warning(
+        "parse_json_response: could not extract JSON from response (%d chars). "
+        "First 500 chars: %s",
+        len(raw), raw[:500],
+    )
     return {}
 
 
@@ -217,6 +253,13 @@ def parse_json_response(raw: str) -> dict:
 # historically landed under 200s; give 5x headroom before giving up. This is
 # enforced at the httpx layer; retry.py catches APITimeoutError and retries.
 _CLAUDE_TIMEOUT_S = 300.0
+
+_JSON_FIXUP_PROMPT = (
+    "Your previous response could not be parsed as valid JSON. "
+    "Please respond with ONLY the JSON object — no commentary, no markdown "
+    "fences, no explanation before or after. Just the raw JSON starting with { "
+    "and ending with }."
+)
 
 
 def _client() -> anthropic.AsyncAnthropic:
@@ -254,6 +297,27 @@ async def call_analysis(strategy: str, guidance: str, user_content: str, tracker
     analysis_raw = extract_text(response.content)
     thinking_text = extract_thinking(response.content)
     parsed = parse_json_response(analysis_raw)
+
+    # Retry once on parse failure — cheap fix-up call (no extended thinking)
+    if not parsed:
+        logger.warning(
+            "Call 1 JSON parse failed (%d chars) — retrying with fix-up prompt",
+            len(analysis_raw),
+        )
+        retry_response = await claude_call_with_retry(
+            _client(), "Call 1 (analysis JSON fix)",
+            model=MODEL,
+            max_tokens=2048,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": analysis_raw},
+                {"role": "user", "content": _JSON_FIXUP_PROMPT},
+            ],
+        )
+        analysis_raw = retry_response.content[0].text
+        parsed = parse_json_response(analysis_raw)
+        logger.info("Call 1 JSON fix-up %s", "succeeded" if parsed else "also failed")
 
     validated = validate_llm_output(parsed, AnalysisOutput) if parsed else None
     if validated:
@@ -304,6 +368,30 @@ async def call_decision(
 
     decision_raw = response.content[0].text
     parsed = parse_json_response(decision_raw)
+
+    # Retry once on parse failure — sends back the bad response and asks for clean JSON
+    if not parsed:
+        logger.warning(
+            "Call 2 JSON parse failed (%d chars) — retrying with fix-up prompt",
+            len(decision_raw),
+        )
+        ctx2 = track_call(tracker, "claude", "decision_retry") if tracker else nullcontext()
+        with ctx2:
+            retry_response = await claude_call_with_retry(
+                _client(), "Call 2 (decision JSON fix)",
+                model=MODEL,
+                max_tokens=2048,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": user_content},
+                    {"role": "assistant", "content": decision_raw},
+                    {"role": "user", "content": _JSON_FIXUP_PROMPT},
+                ],
+            )
+        decision_raw = retry_response.content[0].text
+        parsed = parse_json_response(decision_raw)
+        logger.info("Call 2 JSON fix-up %s", "succeeded" if parsed else "also failed")
+
     if not parsed:
         parsed = {"research_summary": decision_raw, "recommendations": []}
     else:
