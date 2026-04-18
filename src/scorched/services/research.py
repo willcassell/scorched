@@ -902,6 +902,8 @@ def build_research_context(
     analyst_consensus: dict | None = None,
     relative_strength: dict | None = None,
     premarket_data: dict | None = None,
+    twelvedata_rsi: dict | None = None,
+    economic_calendar_context: str | None = None,
 ) -> str:
     # Pre-filter: score all symbols, keep top N + held positions
     all_symbols = list(price_data.keys())
@@ -942,6 +944,12 @@ def build_research_context(
             if key in fred_macro:
                 d = fred_macro[key]
                 lines.append(f"{label}: {d['value']} (prev {d['prev']}, chg {d['change']:+.3f})")
+        lines.append("")
+
+    # Economic calendar section (top of context so Claude sees macro events first)
+    if economic_calendar_context:
+        lines.append("=== UPCOMING ECONOMIC RELEASES ===")
+        lines.append(economic_calendar_context)
         lines.append("")
 
     # Analyst consensus section
@@ -1012,10 +1020,12 @@ def build_research_context(
             elif ia["recent_buys"] > 0 or ia["recent_sells"] > 0:
                 lines.append(f"  Insider: {ia['recent_buys']:,} shares bought, {ia['recent_sells']:,} shares sold (recent)")
 
-        # RSI from Alpha Vantage (screener picks only)
-        if av_technicals and symbol in av_technicals:
-            t = av_technicals[symbol]
-            lines.append(f"  RSI(14): {t['rsi']} [{t['signal'].upper()}]")
+        # RSI: prefer Twelvedata (full watchlist) over Alpha Vantage (screener-only, ≤20 symbols)
+        rsi_td = (twelvedata_rsi or {}).get(symbol)
+        rsi_av = (av_technicals or {}).get(symbol)
+        rsi_src = rsi_td if rsi_td is not None else rsi_av
+        if rsi_src is not None:
+            lines.append(f"  RSI(14): {rsi_src['rsi']} [{rsi_src['signal'].upper()}]")
 
         # Technical analysis (MACD, Bollinger, MA crossover, S/R, volume)
         if technicals and symbol in technicals:

@@ -368,6 +368,10 @@ async def generate_recommendations(
             drawdown_result.current_drawdown_pct, drawdown_result.threshold_pct,
         )
 
+    # Twelvedata RSI and economic calendar — from Phase 0 cache (or None on inline fallback)
+    twelvedata_rsi = cache.get("twelvedata_rsi") if cache else None
+    economic_calendar_context = cache.get("economic_calendar_context") if cache else None
+
     research_context = build_research_context(
         portfolio_dict,
         price_data,
@@ -382,6 +386,8 @@ async def generate_recommendations(
         analyst_consensus=analyst_consensus,
         relative_strength=relative_strength,
         premarket_data=premarket_data,
+        twelvedata_rsi=twelvedata_rsi,
+        economic_calendar_context=economic_calendar_context,
     )
 
     # Persist session row early so we have an ID for token_usage FK
