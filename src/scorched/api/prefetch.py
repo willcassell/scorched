@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/research", tags=["research"])
 
 CACHE_DIR = "/app/logs"
+
+# Hard cap on the parallel data-fetch block. One stuck socket (DNS, rate-limit hang,
+# regional outage) must not extend Phase 0 indefinitely.
+PHASE0_GATHER_TIMEOUT_S = 600
+
+
+async def _gather_with_timeout(tasks, timeout_s: float):
+    """asyncio.gather(..., return_exceptions=True) bounded by timeout_s.
+
+    Raises asyncio.TimeoutError on expiry; caller converts to alert + 504.
+    """
+    import asyncio
+
+    return await asyncio.wait_for(
+        asyncio.gather(*tasks, return_exceptions=True),
+        timeout=timeout_s,
+    )
 
 
 def cache_path_for_date(d: str) -> str:
@@ -101,11 +118,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         return result
 
     parallel_start = time.monotonic()
-    (
-        price_data, news_data, earnings_surprise, insider_activity,
-        market_context, fred_macro, av_technicals, twelvedata_rsi,
-        sector_returns, premarket_data, economic_calendar, detailed_news
-    ) = await asyncio.gather(
+    parallel_tasks = [
         _timed_fetch("price_data", fetch_price_data(research_symbols, tracker=tracker)),
         _timed_fetch("news", fetch_news(research_symbols, tracker=tracker)),
         _timed_fetch("earnings_surprise", fetch_earnings_surprise(research_symbols, tracker=tracker)),
@@ -118,7 +131,22 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         _timed_fetch("premarket", fetch_premarket_prices(research_symbols, tracker=tracker)),
         _timed_fetch("economic_calendar", fetch_economic_calendar(settings.fred_api_key, tracker=tracker)),
         _timed_fetch("alpaca_news", fetch_detailed_news(research_symbols, tracker=tracker)),
-    )
+    ]
+    try:
+        (
+            price_data, news_data, earnings_surprise, insider_activity,
+            market_context, fred_macro, av_technicals, twelvedata_rsi,
+            sector_returns, premarket_data, economic_calendar, detailed_news
+        ) = await _gather_with_timeout(parallel_tasks, timeout_s=PHASE0_GATHER_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        from ..services.telegram import send_telegram
+        msg = f"TRADEBOT // Phase 0 hit {PHASE0_GATHER_TIMEOUT_S}s hard timeout — one or more data sources hung"
+        logger.error(msg)
+        try:
+            await send_telegram(msg)
+        except Exception:
+            logger.exception("Phase 0: failed to send timeout alert via Telegram")
+        raise HTTPException(status_code=504, detail="Phase 0 exceeded hard timeout")
     timing["parallel_fetch_wall"] = round(time.monotonic() - parallel_start, 1)
     logger.info("Phase 0: parallel_fetch wall time %.1fs", timing["parallel_fetch_wall"])
 
