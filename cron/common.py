@@ -1,36 +1,80 @@
 """Shared utilities for cron phase scripts."""
+import datetime
 import json
 import os
 import pathlib
 import sys
+import time
 import urllib.request
 import urllib.error
-import datetime
+
 import pytz
 
 
+MAX_LOCK_AGE_S = 10 * 60  # reclaim a lock older than this (process assumed hung)
+
+
+def _lock_path_for(name: str) -> str:
+    return f"/tmp/tradebot_{name}.lock"
+
+
 def acquire_lock(name):
-    """Acquire a PID lock file. Exits if another instance is running."""
-    lock_path = f"/tmp/tradebot_{name}.lock"
+    """Acquire a PID lock. Exits 0 if another instance is actively running.
+
+    A lock file older than MAX_LOCK_AGE_S is treated as stale and reclaimed —
+    this prevents a hung process from blocking cron runs forever. Emits a
+    Telegram alert when a stale lock is evicted so the operator notices.
+    """
+    lock_path = _lock_path_for(name)
     if os.path.exists(lock_path):
+        try:
+            age = time.time() - os.path.getmtime(lock_path)
+        except FileNotFoundError:
+            age = 0
         try:
             with open(lock_path) as f:
                 old_pid = int(f.read().strip())
-            # Check if process is still running
-            os.kill(old_pid, 0)  # signal 0 = check existence
-            print(f"Another {name} instance running (PID {old_pid}), exiting")
-            sys.exit(0)
-        except (ProcessLookupError, ValueError):
-            pass  # Stale lock, remove it
+        except (OSError, ValueError):
+            old_pid = None
+
+        if old_pid is not None:
+            try:
+                os.kill(old_pid, 0)  # raises ProcessLookupError if dead
+            except ProcessLookupError:
+                pass  # dead PID — fall through to reclaim
+            else:
+                # Process exists. If the lock is old, reclaim it (hung process).
+                if age > MAX_LOCK_AGE_S:
+                    _reclaim_stale_lock(name, old_pid, age)
+                else:
+                    print(
+                        f"Another {name} instance running (PID {old_pid}, "
+                        f"age {age:.0f}s), exiting"
+                    )
+                    sys.exit(0)
+
+    # Either no lock, a dead-PID lock, or a stale-age lock → take it.
     with open(lock_path, "w") as f:
         f.write(str(os.getpid()))
 
 
+def _reclaim_stale_lock(name: str, old_pid: int, age_s: float) -> None:
+    msg = (
+        f"TRADEBOT // Stale lock reclaimed for {name}: "
+        f"PID {old_pid} alive but lock age {age_s / 60:.1f} min exceeds "
+        f"MAX_LOCK_AGE_S={MAX_LOCK_AGE_S / 60:.0f} min — evicting"
+    )
+    print(msg)
+    try:
+        send_telegram(msg)
+    except Exception as e:
+        print(f"(Telegram notify failed: {e})")
+
+
 def release_lock(name):
     """Release the PID lock file."""
-    lock_path = f"/tmp/tradebot_{name}.lock"
     try:
-        os.remove(lock_path)
+        os.remove(_lock_path_for(name))
     except FileNotFoundError:
         pass
 
