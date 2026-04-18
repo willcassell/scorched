@@ -133,8 +133,11 @@ def main():
 
     # Trigger EOD review: Claude compares morning thesis against intraday outcomes
     # and updates the playbook so tomorrow's picks benefit from today's learnings.
+    # Timeout is 600s — Claude's own deadline is 300s and the playbook update runs
+    # another call after that, so the default 60s client timeout gave up long before
+    # the server did, silently dropping the playbook refresh.
     try:
-        review = http_post(f"/api/v1/market/eod-review?date={today_str}", {})
+        review = http_post(f"/api/v1/market/eod-review?date={today_str}", {}, timeout=600)
         status = review.get("status", "unknown")
         version = review.get("playbook_version")
         if status == "completed":
@@ -142,7 +145,12 @@ def main():
         else:
             print(f"EOD review: {status} ({review.get('reason', '')})")
     except Exception as e:
-        print(f"EOD review error (non-fatal): {e}")
+        msg = f"TRADEBOT // Phase 3 EOD review failed — playbook NOT updated\n{type(e).__name__}: {str(e)[:300]}"
+        print(msg)
+        try:
+            send_telegram(msg)
+        except Exception:
+            pass
 
     print("Phase 3 complete.")
 
