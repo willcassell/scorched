@@ -92,3 +92,48 @@ def compute_trailing_stop(
         "stop_type": stop_type,
         "distance_pct": round(distance_pct, 2),
     }
+
+
+def update_trailing_stop(
+    state: dict,
+    current_price: float,
+    atr: float,
+    entry_price: float,
+) -> dict:
+    """Ratchet high_water_mark and trailing stop on a new price tick.
+
+    Wraps ``compute_trailing_stop`` with plain float I/O so the intraday
+    monitor can call it without Decimal conversions.  Always returns a new
+    dict (does not mutate *state*).
+
+    Parameters
+    ----------
+    state : dict
+        Must contain ``high_water_mark`` and ``trailing_stop_price`` keys
+        (may be ``None`` for brand-new positions).
+    current_price : float
+        Latest market price.
+    atr : float
+        14-day Average True Range in dollar terms.  Pass 0.0 if unavailable;
+        the function will fall back to the fixed-percentage floor.
+    entry_price : float
+        Original entry price (avg cost basis) for the position.
+
+    Returns
+    -------
+    dict with ``high_water_mark`` and ``trailing_stop_price`` as floats.
+    """
+    prev_hwm = state.get("high_water_mark")
+    prev_stop = state.get("trailing_stop_price")
+
+    result = compute_trailing_stop(
+        entry_price=Decimal(str(entry_price)),
+        current_price=Decimal(str(current_price)),
+        high_water_mark=Decimal(str(prev_hwm)) if prev_hwm is not None else None,
+        atr=float(atr) if atr else None,
+        previous_stop=Decimal(str(prev_stop)) if prev_stop is not None else None,
+    )
+    return {
+        "high_water_mark": float(result["high_water_mark"]),
+        "trailing_stop_price": float(result["trailing_stop_price"]),
+    }

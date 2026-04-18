@@ -29,6 +29,7 @@ load_env()
 # Add src/ to path for intraday trigger functions
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from scorched.intraday import check_intraday_triggers, check_market_triggers
+from scorched.trailing_stops import update_trailing_stop
 
 COOLDOWN_FILE = "/tmp/intraday_cooldown.json"
 
@@ -241,31 +242,73 @@ def main():
 
     # Per-position triggers
     triggered_positions = []
+    trailing_stop_updates = 0
     for pos in positions:
         symbol = pos["symbol"]
-
-        if is_on_cooldown(symbol, cooldowns, cooldown_minutes):
-            continue
 
         sym_data = data.get(symbol)
         if not sym_data:
             continue
 
+        current_price = sym_data["current_price"]
+
+        # ── Ratchet trailing stop / HWM on every tick ────────────────
+        atr = pos.get("atr") or 0.0
+        trailing_stop_price = pos.get("trailing_stop_price")
+        high_water_mark = pos.get("high_water_mark")
+
+        if atr and atr > 0:
+            new_state = update_trailing_stop(
+                state={
+                    "high_water_mark": float(high_water_mark) if high_water_mark is not None else None,
+                    "trailing_stop_price": float(trailing_stop_price) if trailing_stop_price is not None else None,
+                },
+                current_price=float(current_price),
+                atr=float(atr),
+                entry_price=float(pos["avg_cost_basis"]),
+            )
+            # Only POST to the API if something changed (new high)
+            needs_update = (
+                new_state["high_water_mark"] != (float(high_water_mark) if high_water_mark is not None else None)
+                or new_state["trailing_stop_price"] != (float(trailing_stop_price) if trailing_stop_price is not None else None)
+            )
+            if needs_update:
+                try:
+                    http_post(
+                        f"/api/v1/portfolio/positions/{symbol}/trailing-stop",
+                        {
+                            "high_water_mark": new_state["high_water_mark"],
+                            "trailing_stop_price": new_state["trailing_stop_price"],
+                        },
+                    )
+                    trailing_stop_updates += 1
+                except Exception as e:
+                    print(f"  Trailing stop persist failed for {symbol}: {e}")
+            # Use updated values for trigger check below
+            trailing_stop_price = new_state["trailing_stop_price"]
+            high_water_mark = new_state["high_water_mark"]
+        else:
+            print(f"  {symbol}: ATR unavailable — trailing stop ratchet skipped")
+
+        if is_on_cooldown(symbol, cooldowns, cooldown_minutes):
+            continue
+
         triggers = check_intraday_triggers(
-            current_price=Decimal(str(sym_data["current_price"])),
+            current_price=Decimal(str(current_price)),
             entry_price=Decimal(str(pos["avg_cost_basis"])),
             today_open=Decimal(str(sym_data["today_open"])),
             current_volume=sym_data["today_volume"],
             avg_volume_20d=sym_data["avg_volume_20d"],
             market_triggers=market_triggers,
             config=config,
+            trailing_stop_price=Decimal(str(trailing_stop_price)) if trailing_stop_price is not None else None,
         )
 
         if triggers:
             triggered_positions.append({
                 "symbol": symbol,
                 "trigger_reasons": [t.reason for t in triggers],
-                "current_price": sym_data["current_price"],
+                "current_price": current_price,
                 "entry_price": float(pos["avg_cost_basis"]),
                 "today_open": sym_data["today_open"],
                 "today_high": sym_data["today_high"],
@@ -273,8 +316,13 @@ def main():
                 "days_held": pos.get("days_held", 0),
                 "shares": float(pos["shares"]),
                 "original_reasoning": "",
+                "trailing_stop_price": float(trailing_stop_price) if trailing_stop_price is not None else None,
+                "high_water_mark": float(high_water_mark) if high_water_mark is not None else None,
             })
             cooldowns[symbol] = time.time()
+
+    if trailing_stop_updates:
+        print(f"  Updated trailing stops for {trailing_stop_updates} position(s)")
 
     if not triggered_positions:
         print("  All clear — no triggers fired")

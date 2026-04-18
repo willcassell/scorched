@@ -127,6 +127,7 @@ def check_intraday_triggers(
     avg_volume_20d: float,
     market_triggers: list[GateResult],
     config: dict,
+    trailing_stop_price: Decimal | None = None,
 ) -> list[GateResult]:
     """Run all position-level checks + include market triggers. Returns FIRED only."""
     fired: list[GateResult] = []
@@ -148,6 +149,11 @@ def check_intraday_triggers(
     )
     if not vol_result.passed:
         fired.append(vol_result)
+
+    # Trailing-stop breach — 6th trigger (position-level, ratcheted ATR-based stop)
+    ts_result = check_trailing_stop_breach(current_price, trailing_stop_price)
+    if not ts_result.passed:
+        fired.append(ts_result)
 
     fired.extend(market_triggers)
 

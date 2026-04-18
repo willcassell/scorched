@@ -9,6 +9,7 @@ from scorched.intraday import (
     check_position_drop_from_entry,
     check_position_drop_from_open,
     check_spy_intraday_drop,
+    check_trailing_stop_breach,
     check_vix_level,
     check_volume_surge,
 )
@@ -174,3 +175,77 @@ class TestCheckIntradayTriggers:
             config={},
         )
         assert results == []
+
+    def test_trailing_stop_breach_fires_when_price_below_stop(self):
+        """Price below trailing stop must produce a trailing_stop trigger reason."""
+        results = check_intraday_triggers(
+            current_price=Decimal("108"),   # below trailing stop of 110
+            entry_price=Decimal("100"),
+            today_open=Decimal("112"),
+            current_volume=1_000_000,
+            avg_volume_20d=1_000_000,
+            market_triggers=[],
+            # high thresholds so other triggers don't fire
+            config={
+                "position_drop_from_entry_pct": 20.0,
+                "position_drop_from_open_pct": 20.0,
+                "volume_surge_multiplier": 10.0,
+            },
+            trailing_stop_price=Decimal("110"),
+        )
+        assert len(results) == 1
+        assert "Trailing stop" in results[0].reason
+        assert results[0].passed is False
+
+    def test_trailing_stop_no_trigger_when_above_stop(self):
+        """Price above trailing stop must not fire."""
+        results = check_intraday_triggers(
+            current_price=Decimal("112"),   # above trailing stop of 110
+            entry_price=Decimal("100"),
+            today_open=Decimal("111"),
+            current_volume=1_000_000,
+            avg_volume_20d=1_000_000,
+            market_triggers=[],
+            config={
+                "position_drop_from_entry_pct": 20.0,
+                "position_drop_from_open_pct": 20.0,
+                "volume_surge_multiplier": 10.0,
+            },
+            trailing_stop_price=Decimal("110"),
+        )
+        assert results == []
+
+    def test_trailing_stop_none_does_not_fire(self):
+        """Omitting trailing_stop_price (None) must not produce a trigger."""
+        results = check_intraday_triggers(
+            current_price=Decimal("100"),
+            entry_price=Decimal("100"),
+            today_open=Decimal("100"),
+            current_volume=1_000_000,
+            avg_volume_20d=1_000_000,
+            market_triggers=[],
+            config={},
+            trailing_stop_price=None,
+        )
+        assert results == []
+
+
+class TestCheckTrailingStopBreach:
+    def test_fires_when_price_below_stop(self):
+        result = check_trailing_stop_breach(Decimal("94"), Decimal("95"))
+        assert result.passed is False
+        assert "94" in result.reason
+        assert "95" in result.reason
+
+    def test_passes_when_price_equals_stop(self):
+        # Exactly at stop — not yet breached (< not <=)
+        result = check_trailing_stop_breach(Decimal("95"), Decimal("95"))
+        assert result.passed is True
+
+    def test_passes_when_price_above_stop(self):
+        result = check_trailing_stop_breach(Decimal("100"), Decimal("95"))
+        assert result.passed is True
+
+    def test_passes_when_stop_is_none(self):
+        result = check_trailing_stop_breach(Decimal("50"), None)
+        assert result.passed is True

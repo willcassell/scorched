@@ -1,11 +1,18 @@
-from fastapi import APIRouter, Depends, Query
+import logging
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import TradeHistory
+from ..models import Position, TradeHistory
 from ..schemas import BenchmarkResponse, PortfolioResponse, TaxSummaryResponse, TradeHistoryItem
 from ..services import portfolio as portfolio_svc
+from .deps import require_owner_pin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -37,3 +44,66 @@ async def get_benchmarks(db: AsyncSession = Depends(get_db)):
 @router.get("/tax-summary", response_model=TaxSummaryResponse)
 async def get_tax_summary(db: AsyncSession = Depends(get_db)):
     return await portfolio_svc.get_tax_summary(db)
+
+
+class TrailingStopUpdate(BaseModel):
+    high_water_mark: float
+    trailing_stop_price: float
+
+
+class TrailingStopUpdateResponse(BaseModel):
+    symbol: str
+    high_water_mark: float
+    trailing_stop_price: float
+    updated: bool
+
+
+@router.post(
+    "/positions/{symbol}/trailing-stop",
+    response_model=TrailingStopUpdateResponse,
+    dependencies=[Depends(require_owner_pin)],
+)
+async def update_position_trailing_stop(
+    symbol: str,
+    body: TrailingStopUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the trailing stop and high-water mark for a held position.
+
+    Only raises the high_water_mark (ratchet — will not lower it).
+    The trailing_stop_price is similarly ratcheted up only.
+    Called by the intraday monitor on each 5-minute tick.
+    """
+    symbol = symbol.upper()
+    pos = (await db.execute(select(Position).where(Position.symbol == symbol))).scalars().first()
+    if pos is None:
+        raise HTTPException(status_code=404, detail=f"Position {symbol} not found")
+
+    new_hwm = Decimal(str(body.high_water_mark)).quantize(Decimal("0.0001"))
+    new_stop = Decimal(str(body.trailing_stop_price)).quantize(Decimal("0.0001"))
+
+    # Ratchet: only update if the new value is strictly higher than the stored value
+    hwm_updated = False
+    if pos.high_water_mark is None or new_hwm > pos.high_water_mark:
+        pos.high_water_mark = new_hwm
+        hwm_updated = True
+
+    stop_updated = False
+    if pos.trailing_stop_price is None or new_stop > pos.trailing_stop_price:
+        pos.trailing_stop_price = new_stop
+        stop_updated = True
+
+    if hwm_updated or stop_updated:
+        await db.commit()
+        await db.refresh(pos)
+        logger.info(
+            "Trailing stop updated for %s: HWM=%s stop=%s",
+            symbol, pos.high_water_mark, pos.trailing_stop_price,
+        )
+
+    return TrailingStopUpdateResponse(
+        symbol=symbol,
+        high_water_mark=float(pos.high_water_mark),
+        trailing_stop_price=float(pos.trailing_stop_price),
+        updated=hwm_updated or stop_updated,
+    )

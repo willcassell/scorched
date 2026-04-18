@@ -1,8 +1,9 @@
 """Tests for ATR-based trailing stop logic."""
 
+import logging
 from decimal import Decimal
 
-from scorched.trailing_stops import compute_trailing_stop
+from scorched.trailing_stops import compute_trailing_stop, update_trailing_stop
 
 
 class TestInitialStop:
@@ -212,3 +213,68 @@ class TestDistancePct:
         )
         # Stop at $95, price at $90 => distance = (90 - 95) / 90 * 100 = -5.56
         assert result["distance_pct"] < 0
+
+
+class TestUpdateTrailingStop:
+    """update_trailing_stop — float-I/O wrapper around compute_trailing_stop."""
+
+    def test_ratchets_hwm_up_on_new_high(self):
+        state = {"high_water_mark": 100.0, "trailing_stop_price": 95.0}
+        result = update_trailing_stop(state, current_price=105.0, atr=2.0, entry_price=90.0)
+        assert result["high_water_mark"] == 105.0
+        # ATR stop = 105 - 4 = 101; floor = 90*0.95 = 85.5 => uses ATR
+        assert result["trailing_stop_price"] > 95.0
+        assert result["trailing_stop_price"] >= 90.0 * 0.95
+
+    def test_hwm_unchanged_on_pullback(self):
+        state = {"high_water_mark": 105.0, "trailing_stop_price": 101.0}
+        result = update_trailing_stop(state, current_price=103.0, atr=2.0, entry_price=90.0)
+        assert result["high_water_mark"] == 105.0
+
+    def test_stop_unchanged_on_pullback(self):
+        # ATR stop for HWM=105 at atr=2 => 105-4=101; prev stop=101 => unchanged
+        state = {"high_water_mark": 105.0, "trailing_stop_price": 101.0}
+        result = update_trailing_stop(state, current_price=103.0, atr=2.0, entry_price=90.0)
+        assert result["trailing_stop_price"] == 101.0
+
+    def test_stop_monotonic_never_decreases(self):
+        # Simulate price rising then falling while ATR widens
+        state1 = {"high_water_mark": 115.0, "trailing_stop_price": 113.0}
+        # ATR widens from 1 to 5 => would-be stop = 115 - 10 = 105, but prev=113
+        result = update_trailing_stop(state1, current_price=112.0, atr=5.0, entry_price=100.0)
+        assert result["trailing_stop_price"] >= 113.0
+
+    def test_breach_detected_via_intraday_check(self):
+        """Breach: current_price <= trailing_stop_price fires the trigger."""
+        from decimal import Decimal
+        from scorched.intraday import check_trailing_stop_breach
+        # price at 108, stop at 110 => breached
+        result = check_trailing_stop_breach(Decimal("108"), Decimal("110"))
+        assert result.passed is False
+        assert "108" in result.reason
+
+    def test_no_breach_when_above_stop(self):
+        from decimal import Decimal
+        from scorched.intraday import check_trailing_stop_breach
+        result = check_trailing_stop_breach(Decimal("112"), Decimal("110"))
+        assert result.passed is True
+
+    def test_fallback_when_atr_zero_no_crash(self, caplog):
+        """ATR=0 falls back to fixed-pct stop — no exception."""
+        state = {"high_water_mark": 100.0, "trailing_stop_price": 95.0}
+        with caplog.at_level(logging.WARNING):
+            result = update_trailing_stop(state, current_price=100.0, atr=0.0, entry_price=100.0)
+        assert result["trailing_stop_price"] == 95.0  # fixed 5% floor
+
+    def test_fallback_when_atr_none_no_crash(self):
+        """ATR=None (passed as 0) falls back gracefully."""
+        state = {"high_water_mark": 100.0, "trailing_stop_price": 95.0}
+        result = update_trailing_stop(state, current_price=100.0, atr=0.0, entry_price=100.0)
+        assert result["trailing_stop_price"] is not None
+        assert result["high_water_mark"] is not None
+
+    def test_returns_new_dict_does_not_mutate(self):
+        state = {"high_water_mark": 100.0, "trailing_stop_price": 95.0}
+        result = update_trailing_stop(state, current_price=110.0, atr=2.0, entry_price=100.0)
+        assert state["high_water_mark"] == 100.0  # original unchanged
+        assert result is not state
