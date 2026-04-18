@@ -118,6 +118,7 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.
 7. **No first-day buying into a selloff**: If SPY is down >2% today, do not initiate any new long positions. Wait for stabilization.
 8. **Cash floor**: Never recommend a buy that would bring portfolio cash below 10% of total value (the code also enforces this, but anticipate it in your math).
+9. **Factor alignment**: When the FACTOR LEADERSHIP section shows a factor ETF (MTUM, SPMO, QQQ, IWM, RSP) leading SPY by ≥3 pts over the 20-day window, buys that do NOT align with that factor must cite a specific idiosyncratic catalyst strong enough to override the regime signal. "Defensive diversification" is not a catalyst; "sector rotation hedging" is not a catalyst. This rule prevents systematic underperformance from factor mismatch.
 
 ---
 

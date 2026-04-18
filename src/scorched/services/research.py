@@ -885,6 +885,135 @@ def _score_symbol(symbol: str, price_data: dict, news_data: dict, detailed_news:
 MAX_CONTEXT_SYMBOLS = 25  # top N non-held symbols to include in LLM context
 
 
+def _format_factor_leadership(factor_returns: dict[str, dict[str, float]] | None) -> list[str]:
+    """Render the FACTOR LEADERSHIP section. Returns lines (may be empty)."""
+    if not factor_returns:
+        return []
+
+    lines = ["=== FACTOR LEADERSHIP (regime signal) ==="]
+
+    def _fmt_row(horizon_key: str, label: str) -> str | None:
+        pairs = [
+            (etf, factor_returns[etf][horizon_key])
+            for etf in _FACTOR_ETFS
+            if etf in factor_returns and horizon_key in factor_returns[etf]
+        ]
+        if not pairs:
+            return None
+        pairs.sort(key=lambda p: p[1], reverse=True)
+        body = " | ".join(f"{etf} {ret:+.2f}%" for etf, ret in pairs)
+        return f"{label}: {body}"
+
+    row_5 = _fmt_row("5d", "5-day")
+    row_20 = _fmt_row("20d", "20-day")
+    if row_5:
+        lines.append(row_5)
+    if row_20:
+        lines.append(row_20)
+
+    # Leadership verdict based on 20d (falls back to 5d if 20d missing)
+    horizon = "20d" if any("20d" in v for v in factor_returns.values()) else "5d"
+    spy = factor_returns.get("SPY", {}).get(horizon)
+    if spy is not None:
+        leaders = [
+            (etf, r[horizon] - spy)
+            for etf, r in factor_returns.items()
+            if etf != "SPY" and horizon in r
+        ]
+        if leaders:
+            leaders.sort(key=lambda p: p[1], reverse=True)
+            top_etf, top_gap = leaders[0]
+            if top_gap >= 3.0:
+                regime = {
+                    "MTUM": "MOMENTUM-LED (growth names leading)",
+                    "SPMO": "MOMENTUM-LED (large-cap momentum leading)",
+                    "QQQ": "TECH/GROWTH-LED",
+                    "IWM": "SMALL-CAP RISK-ON",
+                    "RSP": "BROAD/EQUAL-WEIGHT LEADERSHIP",
+                }.get(top_etf, f"{top_etf}-LED")
+                lines.append(
+                    f"Leading: {top_etf} ({top_gap:+.2f} pts vs SPY over {horizon}) — regime: {regime}"
+                )
+                lines.append(
+                    f"Directive: prefer picks aligned with {top_etf} factor. "
+                    f"Defensive/value picks must cite a specific idiosyncratic catalyst."
+                )
+            elif top_gap <= -3.0:
+                lines.append(
+                    f"Trailing: {top_etf} is {top_gap:+.2f} pts vs SPY over {horizon} — "
+                    f"mixed or defensive regime"
+                )
+            else:
+                lines.append(f"Regime: MIXED (no factor leads SPY by >3 pts over {horizon})")
+    lines.append("")
+    return lines
+
+
+def _format_performance_snapshot(snapshot: dict | None) -> list[str]:
+    """Render the PERFORMANCE vs BENCHMARKS section. Returns lines (may be empty)."""
+    if not snapshot:
+        return []
+
+    lines = ["=== PERFORMANCE vs BENCHMARKS (your track record) ==="]
+    port = snapshot.get("portfolio_return_pct")
+    since = snapshot.get("since_date")
+    if port is not None:
+        since_str = f" since {since}" if since else ""
+        lines.append(f"Portfolio: {port:+.2f}%{since_str}")
+
+    benchmarks = snapshot.get("benchmarks") or []
+    if port is not None and benchmarks:
+        gaps = []
+        for b in benchmarks:
+            sym = b.get("symbol")
+            ret = b.get("return_pct")
+            if sym is None or ret is None:
+                continue
+            gap = port - ret
+            status = "beating" if gap > 0 else "trailing"
+            gaps.append((sym, ret, gap, status))
+        for sym, ret, gap, status in gaps:
+            lines.append(f"  vs {sym}: benchmark {ret:+.2f}% | gap {gap:+.2f} pts ({status})")
+
+    tm = snapshot.get("trade_metrics") or {}
+    if tm:
+        win_rate = tm.get("win_rate")
+        pf = tm.get("profit_factor")
+        avg_win = tm.get("avg_win")
+        avg_loss = tm.get("avg_loss")
+        exp = tm.get("expectancy")
+        avg_hold = tm.get("avg_holding_days")
+        total = tm.get("total_closed")
+        line_parts = []
+        if total is not None:
+            line_parts.append(f"trades closed: {total}")
+        if win_rate is not None:
+            line_parts.append(f"win rate: {win_rate}%")
+        if pf is not None:
+            line_parts.append(f"profit factor: {pf}")
+        if avg_win is not None and avg_loss is not None:
+            line_parts.append(f"avg win ${avg_win} / avg loss ${avg_loss}")
+        if exp is not None:
+            line_parts.append(f"expectancy ${exp}/trade")
+        if avg_hold is not None:
+            line_parts.append(f"avg hold {avg_hold}d")
+        if line_parts:
+            lines.append("Track record: " + " | ".join(line_parts))
+
+    # Directive — only if we have enough signal to issue one
+    if port is not None and benchmarks:
+        leading = max(benchmarks, key=lambda b: b.get("return_pct") or 0)
+        lead_ret = leading.get("return_pct")
+        if lead_ret is not None and (lead_ret - port) >= 3.0:
+            lines.append(
+                f"Directive: portfolio trails leading benchmark ({leading['symbol']}) by "
+                f"{lead_ret - port:+.2f} pts. Picks that don't align with the leading factor "
+                f"require explicit justification in reasoning."
+            )
+    lines.append("")
+    return lines
+
+
 def build_research_context(
     portfolio_dict: dict,
     price_data: dict,
@@ -902,6 +1031,8 @@ def build_research_context(
     premarket_data: dict | None = None,
     twelvedata_rsi: dict | None = None,
     economic_calendar_context: str | None = None,
+    factor_returns: dict[str, dict[str, float]] | None = None,
+    performance_snapshot: dict | None = None,
 ) -> str:
     # Merge legacy polygon_news kwarg into detailed_news (prefer detailed_news if both given)
     detailed_news = detailed_news or polygon_news
@@ -924,6 +1055,11 @@ def build_research_context(
                 len(all_symbols), len(filtered_symbols), len(held_set), len(top_non_held))
 
     lines = []
+
+    # Factor leadership + performance snapshot — emitted first so Claude's
+    # framing is set before any per-stock data is read.
+    lines.extend(_format_factor_leadership(factor_returns))
+    lines.extend(_format_performance_snapshot(performance_snapshot))
 
     # FRED macro section
     if fred_macro:
@@ -1177,6 +1313,40 @@ def _fetch_sector_returns_sync(tracker=None) -> dict[str, float]:
     return result
 
 
+# Factor/benchmark ETFs tracked for regime detection and benchmark comparison.
+# SPY = broad market, QQQ = Nasdaq-100, MTUM = momentum factor, SPMO = S&P
+# momentum, RSP = equal weight (breadth proxy), IWM = small caps.
+_FACTOR_ETFS = ["SPY", "QQQ", "MTUM", "SPMO", "RSP", "IWM"]
+
+
+def _fetch_factor_returns_sync(tracker=None) -> dict[str, dict[str, float]]:
+    """Fetch 5-day and 20-day returns for factor/benchmark ETFs using Alpaca bars.
+
+    Returns {etf: {"5d": pct, "20d": pct}}. Missing ETFs are omitted.
+    """
+    from .alpaca_data import fetch_bars_sync
+
+    result: dict[str, dict[str, float]] = {}
+    try:
+        # 30 calendar days of bars to comfortably cover a 20-trading-day window
+        bars_data = fetch_bars_sync(_FACTOR_ETFS, days=30, tracker=tracker)
+        for etf in _FACTOR_ETFS:
+            bars = bars_data.get(etf, [])
+            if len(bars) < 6:
+                continue
+            current = bars[-1]["close"]
+            entry: dict[str, float] = {}
+            if len(bars) >= 6:
+                entry["5d"] = round((current - bars[-6]["close"]) / bars[-6]["close"] * 100, 2)
+            if len(bars) >= 21:
+                entry["20d"] = round((current - bars[-21]["close"]) / bars[-21]["close"] * 100, 2)
+            if entry:
+                result[etf] = entry
+    except Exception:
+        logger.warning("Factor ETF fetch failed", exc_info=True)
+    return result
+
+
 def compute_relative_strength(price_data: dict, sector_returns: dict) -> dict[str, float | None]:
     """Compute relative strength: stock 5d return minus sector ETF 5d return.
 
@@ -1257,6 +1427,11 @@ async def fetch_twelvedata_rsi(symbols: list[str], api_key: str, tracker=None) -
 async def fetch_momentum_screener(n: int = 20, tracker=None) -> list[str]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: _fetch_momentum_screener_sync(n, tracker=tracker))
+
+
+async def fetch_factor_returns(tracker=None) -> dict[str, dict[str, float]]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _fetch_factor_returns_sync(tracker=tracker))
 
 
 async def fetch_sector_returns(tracker=None) -> dict[str, float]:

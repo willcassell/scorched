@@ -33,6 +33,7 @@ from .research import (
     fetch_av_technicals,
     fetch_earnings_surprise,
     fetch_edgar_insider,
+    fetch_factor_returns,
     fetch_fred_macro,
     fetch_market_context,
     fetch_momentum_screener,
@@ -354,6 +355,7 @@ async def generate_recommendations(
         screener_symbols = cache["screener_symbols"]
         relative_strength = cache.get("relative_strength", {})
         premarket_data = cache.get("premarket_data", {})
+        factor_returns = cache.get("factor_returns", {})
     else:
         logger.info("Phase 0 cache MISS — fetching data inline")
 
@@ -395,9 +397,10 @@ async def generate_recommendations(
         technicals = compute_technicals(price_data)
         logger.info("Computed technicals for %d symbols", len(technicals))
 
-        # Sector relative strength
+        # Sector relative strength + factor leadership
         sector_returns = await fetch_sector_returns(tracker=tracker)
         relative_strength = compute_relative_strength(price_data, sector_returns)
+        factor_returns = await fetch_factor_returns(tracker=tracker)
         premarket_data = await fetch_premarket_prices(research_symbols, tracker=tracker)
 
         # Finnhub analyst consensus (sync SDK, run in executor)
@@ -451,6 +454,25 @@ async def generate_recommendations(
     twelvedata_rsi = cache.get("twelvedata_rsi") if cache else None
     economic_calendar_context = cache.get("economic_calendar_context") if cache else None
 
+    # Performance snapshot — portfolio return vs benchmarks + trade metrics.
+    # Injected at the top of research context so Claude calibrates its risk
+    # appetite to its own track record. Best-effort: failure is non-fatal.
+    performance_snapshot: dict | None = None
+    try:
+        from .portfolio import get_benchmark_comparison
+        bench = await get_benchmark_comparison(db)
+        performance_snapshot = {
+            "portfolio_return_pct": bench.portfolio_return_pct,
+            "since_date": bench.since_date.isoformat() if bench.since_date else None,
+            "benchmarks": [
+                {"symbol": b.symbol, "name": b.name, "return_pct": b.return_pct}
+                for b in bench.benchmarks
+            ],
+            "trade_metrics": bench.trade_metrics or {},
+        }
+    except Exception:  # noqa: BLE001 — snapshot is best-effort
+        logger.warning("Failed to build performance snapshot — context will omit it", exc_info=True)
+
     research_context = build_research_context(
         portfolio_dict,
         price_data,
@@ -467,6 +489,8 @@ async def generate_recommendations(
         premarket_data=premarket_data,
         twelvedata_rsi=twelvedata_rsi,
         economic_calendar_context=economic_calendar_context,
+        factor_returns=factor_returns,
+        performance_snapshot=performance_snapshot,
     )
 
     # Persist session row early so we have an ID for token_usage FK

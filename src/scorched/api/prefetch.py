@@ -25,6 +25,7 @@ from ..services.research import (
     fetch_detailed_news,
     fetch_earnings_surprise,
     fetch_edgar_insider,
+    fetch_factor_returns,
     fetch_fred_macro,
     fetch_market_context,
     fetch_momentum_screener,
@@ -128,6 +129,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         _timed_fetch("av_technicals", fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker)),
         _timed_fetch("twelvedata_rsi", fetch_twelvedata_rsi(research_symbols, settings.twelvedata_api_key, tracker=tracker)),
         _timed_fetch("sector_returns", fetch_sector_returns(tracker=tracker)),
+        _timed_fetch("factor_returns", fetch_factor_returns(tracker=tracker)),
         _timed_fetch("premarket", fetch_premarket_prices(research_symbols, tracker=tracker)),
         _timed_fetch("economic_calendar", fetch_economic_calendar(settings.fred_api_key, tracker=tracker)),
         _timed_fetch("alpaca_news", fetch_detailed_news(research_symbols, tracker=tracker)),
@@ -136,7 +138,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         (
             price_data, news_data, earnings_surprise, insider_activity,
             market_context, fred_macro, av_technicals, twelvedata_rsi,
-            sector_returns, premarket_data, economic_calendar, detailed_news
+            sector_returns, factor_returns, premarket_data, economic_calendar, detailed_news
         ) = await _gather_with_timeout(parallel_tasks, timeout_s=PHASE0_GATHER_TIMEOUT_S)
     except asyncio.TimeoutError:
         from ..services.telegram import send_telegram
@@ -212,6 +214,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "analyst_consensus": analyst_consensus,
         "analyst_context": analyst_context,
         "sector_returns": sector_returns,
+        "factor_returns": factor_returns,
         "relative_strength": relative_strength,
         "premarket_data": premarket_data,
         "economic_calendar": economic_calendar,
