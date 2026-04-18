@@ -29,8 +29,16 @@ async def update_strategy(body: dict):
     pin = body.pop("_pin", "")
     if settings.settings_pin and pin != settings.settings_pin:
         raise HTTPException(status_code=403, detail="Incorrect PIN")
+    # Merge incoming form payload into existing strategy.json rather than
+    # overwriting. The dashboard form only surfaces a subset of keys; a full
+    # overwrite silently wipes safety sections the form doesn't render
+    # (circuit_breaker, intraday_monitor, drawdown_gate). Shallow merge is
+    # correct — form fields always include all subkeys of any section they
+    # own, so a top-level replace of a form-owned key is the right semantics.
     try:
-        save_strategy_json(body)
+        merged = load_strategy_json()
+        merged.update(body)
+        save_strategy_json(merged)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to write strategy file: {e}")
     return StrategyResponse(
