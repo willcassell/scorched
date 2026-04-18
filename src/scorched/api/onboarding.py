@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..config import settings
 from ..services.strategy import save_strategy_json
+from .deps import require_owner_pin
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,7 @@ _VALIDATORS = {
 }
 
 
-@router.post("/validate-key")
+@router.post("/validate-key", dependencies=[Depends(require_owner_pin)])
 async def validate_key(req: ValidateKeyRequest):
     validator = _VALIDATORS.get(req.service)
     if not validator:
@@ -267,7 +268,7 @@ def _write_env(data: dict[str, str]) -> None:
         pass  # Docker volume may not allow chmod
 
 
-@router.post("/save")
+@router.post("/save", dependencies=[Depends(require_owner_pin)])
 async def save_config(req: SaveRequest):
     # Safety: require explicit confirmation for live trading
     broker_mode = req.env.get("BROKER_MODE", "paper")
@@ -276,12 +277,6 @@ async def save_config(req: SaveRequest):
             400,
             "Live trading requires explicit confirmation. Set confirm_live: true.",
         )
-
-    # PIN check if configured
-    if settings.settings_pin:
-        pin = req.env.get("SETTINGS_PIN", "")
-        if pin != settings.settings_pin:
-            raise HTTPException(403, "Invalid settings PIN")
 
     # Filter env keys to whitelist
     filtered_env = {k: v for k, v in req.env.items() if k in _ALLOWED_ENV_KEYS}
@@ -312,7 +307,7 @@ async def save_config(req: SaveRequest):
 # ── Status check ──────────────────────────────────────────────────────────────
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_owner_pin)])
 async def onboarding_status():
     return {
         "configured_keys": {
