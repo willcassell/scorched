@@ -184,6 +184,18 @@ def _is_market_open(session_date: date) -> bool:
     return len(schedule) > 0
 
 
+def _compute_portfolio_total_value(
+    cash: Decimal, positions, price_data: dict
+) -> Decimal:
+    """Cash + sum of (live_price * shares), falling back to avg_cost_basis if no live price."""
+    total = cash
+    for pos in positions:
+        live = (price_data or {}).get(pos.symbol, {}).get("current_price")
+        price = Decimal(str(live)) if live else Decimal(str(pos.avg_cost_basis))
+        total += price * Decimal(str(pos.shares))
+    return total
+
+
 async def generate_recommendations(
     db: AsyncSession,
     session_date: date | None = None,
@@ -318,8 +330,8 @@ async def generate_recommendations(
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     portfolio_dict = {
         "cash_balance": float(portfolio.cash_balance),
-        "total_value": float(portfolio.cash_balance + sum(
-            p.avg_cost_basis * p.shares for p in current_positions
+        "total_value": float(_compute_portfolio_total_value(
+            Decimal(str(portfolio.cash_balance)), current_positions, price_data
         )),
         "positions": [
             {
