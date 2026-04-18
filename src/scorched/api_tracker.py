@@ -1,6 +1,7 @@
 """API call tracker — records external service calls and computes health."""
 from __future__ import annotations
 
+import re
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,39 @@ from typing import Any
 
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# URL-embedded secret patterns: apikey/api_key/apiKey, token, and Telegram's
+# bot<token>/ path form. Case-insensitive on the key name only.
+_SECRET_PATTERNS = [
+    re.compile(r"(?i)(apikey|api_key)\s*=\s*[^\s&#]+"),
+    re.compile(r"(?i)token\s*=\s*[^\s&#]+"),
+    re.compile(r"/bot\d+:[A-Za-z0-9_-]+/"),
+]
+
+
+def _mask(m: "re.Match[str]") -> str:
+    fragment = m.group(0)
+    if fragment.startswith("/bot"):
+        return "/bot***/"
+    if "=" in fragment:
+        key, _, _val = fragment.partition("=")
+        return f"{key}=REDACTED"
+    return "REDACTED"
+
+
+def _redact_secrets(text):
+    """Strip common API-key and token patterns from a string.
+
+    Returns the input unchanged when no patterns match. Idempotent — redacted
+    output contains "REDACTED" / "***" literals that the patterns do not match.
+    Accepts None (returns "") for safety at boundary calls.
+    """
+    if not text:
+        return text if text is None else ""
+    out = text
+    for pat in _SECRET_PATTERNS:
+        out = pat.sub(_mask, out)
+    return out
 
 SERVICES = [
     "alpaca_data",
@@ -75,7 +109,7 @@ def track_call(
         yield
     except TimeoutError as exc:
         status = "timeout"
-        error_message = str(exc)[:500]
+        error_message = _redact_secrets(str(exc))[:500]
         raise
     except Exception as exc:
         exc_str = str(exc)
@@ -83,7 +117,7 @@ def track_call(
             status = "rate_limited"
         else:
             status = "error"
-        error_message = exc_str[:500]
+        error_message = _redact_secrets(exc_str)[:500]
         raise
     finally:
         elapsed_ms = int((time.monotonic() - start) * 1000)
