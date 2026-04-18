@@ -38,7 +38,7 @@ from .research import (
     fetch_momentum_screener,
     fetch_news,
     fetch_options_data,
-    fetch_polygon_news,
+    fetch_detailed_news,
     fetch_premarket_prices,
     fetch_price_data,
     fetch_sector_returns,
@@ -267,7 +267,7 @@ async def generate_recommendations(
         insider_activity = cache["insider_activity"]
         market_context = cache["market_context"]
         fred_macro = cache["fred_macro"]
-        polygon_news = cache["polygon_news"]
+        detailed_news = cache.get("detailed_news") or cache.get("polygon_news", {})
         av_technicals = cache["av_technicals"]
         technicals = cache["technicals"]
         analyst_consensus = cache["analyst_consensus"]
@@ -294,7 +294,7 @@ async def generate_recommendations(
         try:
             (
                 price_data, news_data, earnings_surprise, insider_activity,
-                market_context, fred_macro, polygon_news, av_technicals
+                market_context, fred_macro, detailed_news, av_technicals
             ) = await asyncio.wait_for(
                 asyncio.gather(
                     fetch_price_data(research_symbols, tracker=tracker),
@@ -303,7 +303,7 @@ async def generate_recommendations(
                     fetch_edgar_insider(research_symbols, tracker=tracker),
                     fetch_market_context(session_date, research_symbols, tracker=tracker),
                     fetch_fred_macro(settings.fred_api_key, tracker=tracker),
-                    fetch_polygon_news(research_symbols, settings.polygon_api_key, tracker=tracker),
+                    fetch_detailed_news(research_symbols, tracker=tracker),
                     fetch_av_technicals(screener_symbols, settings.alpha_vantage_api_key, tracker=tracker),
                 ),
                 timeout=600,
@@ -380,7 +380,7 @@ async def generate_recommendations(
         earnings_surprise=earnings_surprise,
         insider_activity=insider_activity,
         fred_macro=fred_macro,
-        polygon_news=polygon_news,
+        detailed_news=detailed_news,
         av_technicals=av_technicals,
         technicals=technicals,
         analyst_consensus=analyst_consensus,

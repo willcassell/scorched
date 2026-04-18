@@ -275,22 +275,19 @@ def _fetch_edgar_insider_sync(symbols: list[str], days_back: int = 30, tracker=N
     return result
 
 
-def _fetch_polygon_news_sync(symbols: list[str], api_key: str, limit_per_symbol: int = 5, tracker=None) -> dict:
-    """Fetch news from Alpaca Data API (replaces Polygon).
+def _fetch_detailed_news_sync(symbols: list[str], limit_per_symbol: int = 5, tracker=None) -> dict:
+    """Fetch detailed news from Alpaca Data API.
 
     Returns {symbol: [{"title": ..., "description": ...}, ...]}
-    Maintains the same return format so build_research_context() doesn't change.
     Falls back to empty on any error.
     """
     from .alpaca_data import fetch_news_sync as _alpaca_news
 
-    # Use Alpaca news regardless of Polygon API key — it's free with Alpaca account
     if not settings.alpaca_api_key:
         return {}
 
     alpaca_result = _alpaca_news(symbols, limit_per_symbol=limit_per_symbol, tracker=tracker)
 
-    # Convert Alpaca format to existing Polygon format for compatibility
     result = {}
     for symbol, articles in alpaca_result.items():
         result[symbol] = [
@@ -832,7 +829,7 @@ _FRED_EXTRA_LABELS = {
 }
 
 
-def _score_symbol(symbol: str, price_data: dict, news_data: dict, polygon_news: dict | None,
+def _score_symbol(symbol: str, price_data: dict, news_data: dict, detailed_news: dict | None,
                    technicals: dict | None, insider_activity: dict | None,
                    relative_strength: dict | None) -> float:
     """Score a symbol for relevance. Higher = more interesting for LLM review."""
@@ -849,7 +846,7 @@ def _score_symbol(symbol: str, price_data: dict, news_data: dict, polygon_news: 
         score += 1.0
 
     # News catalyst: symbols with news get a boost
-    poly = (polygon_news or {}).get(symbol, [])
+    poly = (detailed_news or {}).get(symbol, [])
     yf_news = news_data.get(symbol, [])
     if poly:
         score += 2.0
@@ -896,7 +893,8 @@ def build_research_context(
     earnings_surprise: dict | None = None,
     insider_activity: dict | None = None,
     fred_macro: dict | None = None,
-    polygon_news: dict | None = None,
+    detailed_news: dict | None = None,
+    polygon_news: dict | None = None,  # legacy alias — use detailed_news instead
     av_technicals: dict | None = None,
     technicals: dict | None = None,
     analyst_consensus: dict | None = None,
@@ -905,12 +903,15 @@ def build_research_context(
     twelvedata_rsi: dict | None = None,
     economic_calendar_context: str | None = None,
 ) -> str:
+    # Merge legacy polygon_news kwarg into detailed_news (prefer detailed_news if both given)
+    detailed_news = detailed_news or polygon_news
+
     # Pre-filter: score all symbols, keep top N + held positions
     all_symbols = list(price_data.keys())
     held_set = set(current_symbols)
     non_held = [s for s in all_symbols if s not in held_set]
 
-    scores = {s: _score_symbol(s, price_data, news_data, polygon_news,
+    scores = {s: _score_symbol(s, price_data, news_data, detailed_news,
                                 technicals, insider_activity, relative_strength)
               for s in non_held}
     top_non_held = sorted(scores, key=scores.get, reverse=True)[:MAX_CONTEXT_SYMBOLS]
@@ -1052,12 +1053,12 @@ def build_research_context(
             if ta_parts:
                 lines.append(f"  Technicals: {' | '.join(ta_parts)}")
 
-        # News — prefer Polygon (with descriptions if available); fall back to yfinance
-        poly_articles = (polygon_news or {}).get(symbol, [])
+        # News — prefer detailed Alpaca news (headline + summary); fall back to yfinance headlines
+        detail_articles = (detailed_news or {}).get(symbol, [])
         yf_headlines = news_data.get(symbol, [])
-        if poly_articles:
+        if detail_articles:
             lines.append("  News:")
-            for a in poly_articles[:3]:
+            for a in detail_articles[:3]:
                 if isinstance(a, dict):
                     title = a.get("title", "")
                     desc = a.get("description", "")
@@ -1076,7 +1077,7 @@ def build_research_context(
     missing = []
     if not price_data: missing.append("price data")
     if not news_data: missing.append("news")
-    if not polygon_news: missing.append("detailed news (Alpaca)")
+    if not detailed_news: missing.append("detailed news (Alpaca)")
     if not analyst_consensus: missing.append("analyst consensus")
     if not fred_macro: missing.append("FRED macro")
     if not av_technicals: missing.append("Alpha Vantage technicals")
@@ -1234,9 +1235,13 @@ async def fetch_edgar_insider(symbols: list[str], days_back: int = 30, tracker=N
     return await loop.run_in_executor(None, lambda: _fetch_edgar_insider_sync(symbols, days_back, tracker=tracker))
 
 
-async def fetch_polygon_news(symbols: list[str], api_key: str, tracker=None) -> dict:
+async def fetch_detailed_news(symbols: list[str], tracker=None) -> dict:
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: _fetch_polygon_news_sync(symbols, api_key, tracker=tracker))
+    return await loop.run_in_executor(None, lambda: _fetch_detailed_news_sync(symbols, tracker=tracker))
+
+
+# Backwards-compat alias; remove after all callers are migrated
+fetch_polygon_news = fetch_detailed_news
 
 
 async def fetch_av_technicals(symbols: list[str], api_key: str, tracker=None) -> dict:

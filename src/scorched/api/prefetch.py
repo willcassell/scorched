@@ -22,6 +22,7 @@ from ..services.research import (
     compute_relative_strength,
     fetch_av_technicals,
     fetch_twelvedata_rsi,
+    fetch_detailed_news,
     fetch_earnings_surprise,
     fetch_edgar_insider,
     fetch_fred_macro,
@@ -103,7 +104,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     (
         price_data, news_data, earnings_surprise, insider_activity,
         market_context, fred_macro, av_technicals, twelvedata_rsi,
-        sector_returns, premarket_data, economic_calendar
+        sector_returns, premarket_data, economic_calendar, detailed_news
     ) = await asyncio.gather(
         _timed_fetch("price_data", fetch_price_data(research_symbols, tracker=tracker)),
         _timed_fetch("news", fetch_news(research_symbols, tracker=tracker)),
@@ -116,10 +117,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         _timed_fetch("sector_returns", fetch_sector_returns(tracker=tracker)),
         _timed_fetch("premarket", fetch_premarket_prices(research_symbols, tracker=tracker)),
         _timed_fetch("economic_calendar", fetch_economic_calendar(settings.fred_api_key, tracker=tracker)),
+        _timed_fetch("alpaca_news", fetch_detailed_news(research_symbols, tracker=tracker)),
     )
-    # Polygon news removed — Alpaca news via fetch_news covers this. Was the sole
-    # Phase 0 bottleneck (1010s of 1209s total). yfinance headlines remain as news source.
-    polygon_news = {}
     timing["parallel_fetch_wall"] = round(time.monotonic() - parallel_start, 1)
     logger.info("Phase 0: parallel_fetch wall time %.1fs", timing["parallel_fetch_wall"])
 
@@ -177,7 +176,8 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "earnings_surprise": earnings_surprise,
         "insider_activity": insider_activity,
         "fred_macro": fred_macro,
-        "polygon_news": polygon_news,
+        "detailed_news": detailed_news,
+        "polygon_news": detailed_news,  # legacy key for backward compat
         "av_technicals": av_technicals,
         "twelvedata_rsi": twelvedata_rsi,
         "technicals": technicals,

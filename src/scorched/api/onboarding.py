@@ -313,7 +313,6 @@ async def onboarding_status():
         "configured_keys": {
             "anthropic": bool(settings.anthropic_api_key),
             "fred": bool(settings.fred_api_key),
-            "polygon": bool(settings.polygon_api_key),
             "alpha_vantage": bool(settings.alpha_vantage_api_key),
             "twelvedata": bool(settings.twelvedata_api_key),
             "finnhub": bool(settings.finnhub_api_key),
