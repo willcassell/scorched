@@ -1,5 +1,6 @@
 """Playbook service: reads and updates the bot's living strategy document."""
 import logging
+import re
 from datetime import date
 
 import anthropic
@@ -8,13 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Playbook, TradeHistory, TradeRecommendation
 from .claude_client import call_playbook_update as _call_playbook_update
+from .strategy import load_analyst_guidance, load_strategy
+from .telegram import send_telegram
 
 logger = logging.getLogger(__name__)
 
 INITIAL_PLAYBOOK = """# Trading Playbook
 
 ## Strategy Overview
-No trades have been made yet. Starting fresh with $100k simulated capital.
+No trades have been made yet. The declared strategy (from strategy.json + analyst_guidance.md) governs all rules — this playbook records observed outcomes only, not new rules.
 
 ## What Has Worked
 (No data yet)
@@ -22,22 +25,56 @@ No trades have been made yet. Starting fresh with $100k simulated capital.
 ## What Has Not Worked
 (No data yet)
 
-## Current Biases to Watch
-(No data yet)
-
-## Position Sizing Rules Learned
-- Default: size positions at ~15-20% of portfolio per trade
-- No single position should exceed 25% of total portfolio value
-
 ## Sectors / Themes to Favor
 (No data yet)
 
 ## Sectors / Themes to Avoid
 (No data yet)
 
+## Recurring Mistakes
+(No data yet)
+
 ## Notes
-This playbook is updated each morning before recommendations are generated.
+This playbook records *learnings from outcomes*. Non-negotiable rules (holding period, stop loss, partial-sell thresholds, cash floor, concentration) live in strategy.json and analyst_guidance.md. The playbook must not install competing numeric rules.
 """
+
+
+# Drift detection — these patterns catch the common ways a playbook update
+# can smuggle in a competing rule system that contradicts strategy.json.
+# If any fire, we refuse the update and keep the prior playbook.
+_DRIFT_PATTERNS: list[tuple[str, str]] = [
+    (r"\b10[-\s]?day (ceiling|hard|maximum|time stop|rule)\b", "10-day time ceiling"),
+    (r"\bday\s*10\b[^.\n]{0,80}\b(exit|sell|close)\b", "hard day-10 exit rule"),
+    (r"\b3[-\s]?(to[-\s]?)?10\s+(trading|calendar)?\s*days?\b", "3-10 day holding window"),
+    (r"\btier\s*1\b[^.\n]{0,80}\b-?3\s*%", "-3% Tier 1 stop rule"),
+    (r"\btier\s*2\b[^.\n]{0,80}\b-?5\s*%", "-5% Tier 2 stop rule"),
+    (r"\bpartial[-\s]sell[^.\n]{0,40}\+?\s*8\s*%", "+8% partial-sell rule"),
+    (r"\+8\s*%\s+gain\b[^.\n]{0,40}\b(sell|partial|trim)", "+8% partial-sell rule"),
+    (r"\b7[-\s]?day flat\b", "7-day flat-position rule"),
+]
+
+
+def _check_playbook_drift(new_content: str) -> list[str]:
+    """Return a list of detected drift patterns. Empty list = clean."""
+    findings: list[str] = []
+    for pattern, desc in _DRIFT_PATTERNS:
+        if re.search(pattern, new_content, re.IGNORECASE):
+            findings.append(desc)
+    return findings
+
+
+def _extract_hard_rules(analyst_guidance: str) -> str:
+    """Pull the 'Hard Rules' section out of analyst_guidance.md for the prompt."""
+    if not analyst_guidance:
+        return ""
+    # Grab from "## Hard Rules" to the next "---" or next top-level "##" section.
+    m = re.search(
+        r"(##\s*Hard Rules[^\n]*\n.*?)(?=\n---|\n##\s|\Z)",
+        analyst_guidance,
+        re.DOTALL | re.IGNORECASE,
+    )
+    return m.group(1).strip() if m else ""
+
 
 async def get_playbook(db: AsyncSession) -> Playbook:
     """Get the current playbook, creating it if it doesn't exist."""
@@ -76,7 +113,6 @@ async def _get_recent_closed_trades(db: AsyncSession, limit: int = 20) -> list[d
             if rec:
                 rec_reasoning = rec.reasoning
 
-        # Also try to find the original buy recommendation for context
         results.append({
             "symbol": sell.symbol,
             "sell_date": sell.executed_at.date().isoformat(),
@@ -118,6 +154,12 @@ async def update_playbook(db: AsyncSession, today: date) -> Playbook:
     """
     Read recent closed trade outcomes, ask Claude to update the playbook,
     and persist the new version. Returns the updated playbook.
+
+    The update prompt injects the declared strategy + analyst-guidance hard rules
+    and marks them immutable. After Claude responds, a drift check scans the
+    output for known rule-level contradictions (e.g., "10-day ceiling", "+8%
+    partial sell"). If drift is detected, the update is rejected and a Telegram
+    alert is sent — the prior playbook is preserved.
     """
     playbook = await get_playbook(db)
     closed_trades = await _get_recent_closed_trades(db)
@@ -127,16 +169,37 @@ async def update_playbook(db: AsyncSession, today: date) -> Playbook:
         return playbook
 
     closed_trades_text = _format_closed_trades_for_prompt(closed_trades)
+    strategy_text = load_strategy()
+    hard_rules = _extract_hard_rules(load_analyst_guidance())
+
+    strategy_block = (
+        strategy_text
+        + ("\n\n## Hard Rules (from analyst_guidance.md)\n" + hard_rules if hard_rules else "")
+    )
 
     user_content = f"""Today's date: {today}
+
+---
+
+## DECLARED STRATEGY — IMMUTABLE
+The following rules are set by the user in strategy.json and analyst_guidance.md.
+You MUST NOT contradict them, replace them with tighter numbers, or install competing numeric rules (e.g., "10-day ceiling", "-3% Tier 1", "+8% partial sell", "3-10 day holding"). If recent trades suggest the strategy itself should change, add a "Suggested Strategy Changes (for human review)" section at the end — do not apply changes yourself.
+
+{strategy_block}
+
+---
 
 ## Current Playbook
 {playbook.content}
 
+---
+
 ## Recent Closed Trades (most recent first)
 {closed_trades_text}
 
-Review these outcomes against the playbook and produce an updated version that reflects what we've learned."""
+---
+
+Review these outcomes against the playbook and produce an updated version that records what we learned about *specific trades, sectors, and behavioral patterns*. Do not restate or rewrite the declared strategy — reference it. Return ONLY the full updated playbook text."""
 
     try:
         response, updated_content = await _call_playbook_update(user_content)
@@ -144,10 +207,26 @@ Review these outcomes against the playbook and produce an updated version that r
         logger.error("Playbook update failed after all retries (%s) — using stale playbook", type(e).__name__)
         return playbook
 
+    drift = _check_playbook_drift(updated_content)
+    if drift:
+        logger.error(
+            "Playbook update REJECTED — drift detected: %s. Keeping prior playbook v%d.",
+            ", ".join(drift), playbook.version,
+        )
+        try:
+            await send_telegram(
+                "⚠️ Playbook update rejected — strategy drift detected:\n"
+                + "\n".join(f"  • {d}" for d in drift)
+                + f"\n\nKept playbook v{playbook.version}. Review prompt or current playbook."
+            )
+        except Exception as e:  # noqa: BLE001 — Telegram is best-effort
+            logger.warning("Failed to send drift-alert Telegram: %s", e)
+        return playbook
+
     playbook.content = updated_content
     playbook.version += 1
     await db.commit()
     await db.refresh(playbook)
 
-    logger.info("Playbook updated to version %d", playbook.version)
+    logger.info("Playbook updated to version %d (no drift)", playbook.version)
     return playbook
