@@ -28,5 +28,26 @@
   "execution": {
     "buy_limit_buffer_pct": 0.3,
     "sell_limit_buffer_pct": 0.3
+  },
+  "circuit_breaker": {
+    "enabled": true,
+    "stock_gap_down_pct": 2.0,
+    "stock_price_drift_pct": 1.5,
+    "spy_gap_down_pct": 1.0,
+    "vix_absolute_max": 30,
+    "vix_spike_pct": 20,
+    "stock_gap_up_pct": 5.0
+  },
+  "intraday_monitor": {
+    "enabled": true,
+    "position_drop_from_entry_pct": 5.0,
+    "position_drop_from_open_pct": 3.0,
+    "spy_intraday_drop_pct": 2.0,
+    "volume_surge_multiplier": 3.0,
+    "hard_stop_pct": 5.0
+  },
+  "drawdown_gate": {
+    "enabled": true,
+    "max_drawdown_pct": 8.0
   }
 }

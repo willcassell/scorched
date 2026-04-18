@@ -155,10 +155,33 @@ DEFAULT_JSON = {
 }
 
 
+# Anchor for relative paths like "strategy.json" and "analyst_guidance.md".
+#
+# When imported from the source tree (tests, cron scripts that prepend src/ to
+# sys.path), three levels up from this file lands on the repo root:
+#   src/scorched/services/strategy.py  →  parents[3] = repo root
+#
+# Inside the Docker container, the package is pip-installed into site-packages,
+# so parents[3] resolves to /usr/local/lib/python3.11/ — not useful. In that
+# case, fall back to the Docker WORKDIR (/app) where strategy.json and
+# analyst_guidance.md are volume-mounted by docker-compose.yml.
+def _pick_repo_root() -> Path:
+    candidate = Path(__file__).resolve().parents[3]
+    if (candidate / "strategy.json").exists() or (candidate / "analyst_guidance.md").exists():
+        return candidate
+    docker_workdir = Path("/app")
+    if (docker_workdir / "strategy.json").exists() or (docker_workdir / "analyst_guidance.md").exists():
+        return docker_workdir
+    return candidate
+
+
+_REPO_ROOT = _pick_repo_root()
+
+
 def _resolve_path() -> Path:
     path: Path = settings.strategy_file
     if not path.is_absolute():
-        path = Path.cwd() / path
+        path = _REPO_ROOT / path
     return path
 
 
@@ -186,7 +209,7 @@ def save_strategy_json(data: dict) -> None:
 
 def load_analyst_guidance() -> str:
     """Return the analyst_guidance.md content for injection into Claude prompts."""
-    path = Path.cwd() / "analyst_guidance.md"
+    path = _REPO_ROOT / "analyst_guidance.md"
     if not path.exists():
         logger.warning("analyst_guidance.md not found at %s — skipping guidance injection", path)
         return ""
