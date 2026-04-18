@@ -29,7 +29,7 @@ For each ticker in the research data, apply the guidance above to decide: qualif
 Select up to 5 qualifying names. Fewer is better when conviction is thin. Each must have a specific, named, verifiable catalyst.
 
 ### Step 5 — POSITION REVIEW
-For each currently held position, check the exit-signal priority table in the guidance and decide: hold, exit, trim, or monitor. Name the rule that fires (e.g., `time_stop_7d`, `+8%_partial`, `stop_loss_5pct`, `catalyst_invalidated`, or `none` for hold).
+For each currently held position, check the exit-signal priority table in the guidance and decide: hold, exit, trim, or monitor. Name the rule that fires (e.g., `time_stop_30d`, `+15%_partial`, `stop_loss_8pct`, `catalyst_invalidated`, or `none` for hold).
 
 ### Step 6 — OUTPUT
 Synthesize into the JSON schema below. Be honest: empty `candidates` is a valid and often correct result. Do not force trades.
@@ -52,7 +52,7 @@ Synthesize into the JSON schema below. Be honest: empty `candidates` is a valid 
     {{
       "symbol": "TICKER",
       "action": "hold | exit | trim | monitor",
-      "rule": "time_stop_7d | stop_loss_5pct | +8%_partial | +15%_full | catalyst_invalidated | earnings_proximity | none",
+      "rule": "time_stop_30d | stop_loss_8pct | +15%_partial | +25%_full | catalyst_invalidated | earnings_proximity | none",
       "reasoning": "One or two sentences grounded in the data (days held, % from entry, relevant metric)."
     }}
   ]
