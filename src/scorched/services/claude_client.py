@@ -106,6 +106,7 @@ class DecisionOutput(BaseModel):
 
 class RiskDecisionEntry(BaseModel):
     symbol: str
+    action: str  # "buy" or "sell" — needed so recommender can filter rejected buys
     verdict: str
     reason: str
 
@@ -114,10 +115,15 @@ class RiskDecisionEntry(BaseModel):
     def uppercase_symbol(cls, v: str) -> str:
         return v.upper()
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def lowercase_action(cls, v: str) -> str:
+        return (v or "").lower()
+
     @field_validator("verdict", mode="before")
     @classmethod
     def lowercase_verdict(cls, v: str) -> str:
-        return v.lower()
+        return (v or "").lower()
 
 
 class RiskReviewOutput(BaseModel):

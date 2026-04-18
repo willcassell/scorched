@@ -98,3 +98,24 @@ class TestCallWrappersUseRetry:
         response, text = await call_intraday_exit("test prompt")
         mock_retry.assert_called_once()
         assert text == '{"action": "hold"}'
+
+
+def test_risk_decision_entry_captures_action():
+    """RiskDecisionEntry must preserve the action field from Claude's output."""
+    from scorched.services.claude_client import RiskDecisionEntry, RiskReviewOutput
+
+    raw = {
+        "decisions": [
+            {"symbol": "aapl", "action": "BUY", "verdict": "reject", "reason": "too extended"},
+            {"symbol": "MSFT", "action": "sell", "verdict": "APPROVE", "reason": "fine"},
+        ]
+    }
+    validated = RiskReviewOutput.model_validate(raw)
+    dumped = [d.model_dump() for d in validated.decisions]
+
+    # action is lowercased, symbol is uppercased (existing validator), verdict lowercased
+    assert dumped[0]["symbol"] == "AAPL"
+    assert dumped[0]["action"] == "buy"
+    assert dumped[0]["verdict"] == "reject"
+    assert dumped[1]["action"] == "sell"
+    assert dumped[1]["verdict"] == "approve"

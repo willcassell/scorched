@@ -55,3 +55,22 @@ class TestParseRiskReviewResponse:
         response = json.dumps({"decisions": []})
         result = parse_risk_review_response(response)
         assert result == []
+
+
+def test_parse_risk_review_preserves_action():
+    """Risk review parser must preserve action so recommender can filter rejected buys."""
+    from scorched.services.risk_review import parse_risk_review_response
+
+    raw = """{
+        "review_summary": "test",
+        "decisions": [
+            {"symbol": "AAPL", "action": "buy", "verdict": "reject", "reason": "extended"},
+            {"symbol": "MSFT", "action": "sell", "verdict": "approve", "reason": "ok"}
+        ]
+    }"""
+    decisions = parse_risk_review_response(raw)
+    assert decisions is not None
+    assert len(decisions) == 2
+    assert decisions[0]["action"] == "buy"
+    assert decisions[0]["verdict"] == "reject"
+    assert decisions[1]["action"] == "sell"
