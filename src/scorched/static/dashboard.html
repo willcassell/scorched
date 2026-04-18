@@ -1475,19 +1475,42 @@
       return;
     }
 
-    if (recon.has_mismatches) {
-      var n = recon.mismatches.length;
+    var cashDrift = recon.cash && recon.cash.status === 'DRIFT';
+    var posMismatches = recon.mismatches || [];
+
+    if (posMismatches.length > 0 || cashDrift) {
+      var parts = [];
+      if (posMismatches.length > 0) parts.push(posMismatches.length + ' POS');
+      if (cashDrift) parts.push('CASH');
       dot.className = 'dot red';
       label.className = 'recon-label red';
-      label.textContent = n + ' MISMATCH' + (n > 1 ? 'ES' : '');
+      label.textContent = parts.join(' + ') + ' DRIFT';
 
       panel.textContent = '';
       var hdr = document.createElement('div');
       hdr.className = 'recon-detail-header';
-      hdr.textContent = 'POSITION MISMATCHES \u2014 LOCAL DB vs BROKER';
+      hdr.textContent = 'BROKER RECONCILIATION \u2014 LOCAL DB vs ALPACA';
       panel.appendChild(hdr);
 
-      recon.mismatches.forEach(function(m) {
+      if (cashDrift) {
+        var cashRow = document.createElement('div');
+        cashRow.className = 'recon-detail-row';
+        var cashLabel = document.createElement('span');
+        cashLabel.style.cssText = 'font-weight:600;color:var(--text-hi)';
+        cashLabel.textContent = 'CASH';
+        var cashVals = document.createElement('span');
+        var diff = recon.cash.diff;
+        var sign = diff > 0 ? '+' : '';
+        cashVals.textContent =
+          'Local: $' + recon.cash.local.toFixed(2) +
+          ' / Alpaca: $' + recon.cash.broker.toFixed(2) +
+          ' (' + sign + '$' + diff.toFixed(2) + ')';
+        cashRow.appendChild(cashLabel);
+        cashRow.appendChild(cashVals);
+        panel.appendChild(cashRow);
+      }
+
+      posMismatches.forEach(function(m) {
         var row = document.createElement('div');
         row.className = 'recon-detail-row';
         var symSpan = document.createElement('span');

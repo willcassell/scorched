@@ -1,4 +1,12 @@
-"""Shared position reconciliation logic — local DB vs broker."""
+"""Shared position + cash reconciliation logic — local DB vs broker.
+
+Alpaca is the source of truth for BOTH positions AND cash. Position sync fixes
+qty/cost-basis mismatches without touching cash; a separate cash reconciliation
+step reads Alpaca's actual `account.cash` and replaces `Portfolio.cash_balance`
+if drift exceeds the threshold. This avoids the prior bug where the position-
+sync loop synthesized cash adjustments from cost basis (which is wrong whenever
+the market price differs from cost basis).
+"""
 import logging
 import time
 from datetime import datetime, timezone
@@ -13,6 +21,10 @@ from ..models import ApiCallLog, Portfolio, Position
 
 logger = logging.getLogger(__name__)
 
+# Anything smaller is rounding noise (sub-dollar). Drifts at or above this
+# threshold are reported as DRIFT on /broker/status and corrected by sync.
+CASH_DRIFT_THRESHOLD = Decimal("1.00")
+
 
 def _record_sync_call(db: AsyncSession, endpoint: str, status: str,
                       response_time_ms: int, error_message: str | None = None):
@@ -26,19 +38,60 @@ def _record_sync_call(db: AsyncSession, endpoint: str, status: str,
     ))
 
 
+async def _compute_cash_info(db: AsyncSession, broker) -> dict:
+    """Read Alpaca account.cash and compare to local Portfolio.cash_balance.
+
+    Returns a dict safe to embed in API responses; on error returns an
+    ERROR-status entry so the caller can still render the position section.
+    """
+    portfolio = (await db.execute(select(Portfolio))).scalars().first()
+    local_cash = portfolio.cash_balance if portfolio else Decimal("0")
+    try:
+        account = await broker.get_account()
+        alpaca_cash = Decimal(str(account["cash"])).quantize(Decimal("0.01"))
+        cash_diff = (alpaca_cash - local_cash).quantize(Decimal("0.01"))
+        cash_diff_pct = (
+            float((cash_diff / local_cash * 100).quantize(Decimal("0.01")))
+            if local_cash and local_cash != 0 else 0.0
+        )
+        cash_status = "OK" if abs(cash_diff) < CASH_DRIFT_THRESHOLD else "DRIFT"
+        return {
+            "local": float(local_cash),
+            "broker": float(alpaca_cash),
+            "diff": float(cash_diff),
+            "diff_pct": cash_diff_pct,
+            "status": cash_status,
+        }
+    except Exception:
+        logger.warning("Cash reconciliation check failed", exc_info=True)
+        return {
+            "local": float(local_cash),
+            "broker": None,
+            "diff": None,
+            "diff_pct": None,
+            "status": "ERROR",
+        }
+
+
 async def check_reconciliation(db: AsyncSession) -> dict:
-    """Compare local DB positions against broker holdings.
+    """Compare local DB positions AND cash against broker.
 
     Returns:
         {
-            "positions": [{"symbol": ..., "broker_qty": ..., "local_qty": ..., "status": "OK"|"MISMATCH"}, ...],
-            "has_mismatches": bool,
-            "mismatches": [{"symbol": ..., "broker_qty": ..., "local_qty": ...}, ...],
+            "positions": [{"symbol", "broker_qty", "local_qty", "status"}, ...],
+            "has_mismatches": bool,   # true if any position OR cash drift
+            "mismatches": [...],       # position mismatches only
+            "cash": {"local", "broker", "diff", "diff_pct", "status"},
         }
-    Returns {"positions": [], "has_mismatches": False, "mismatches": []} for paper mode.
+    Returns an empty skeleton for paper mode.
     """
     if settings.broker_mode not in ("alpaca_paper", "alpaca_live"):
-        return {"positions": [], "has_mismatches": False, "mismatches": []}
+        return {
+            "positions": [],
+            "has_mismatches": False,
+            "mismatches": [],
+            "cash": {"local": 0, "broker": 0, "diff": 0, "diff_pct": 0, "status": "N/A"},
+        }
 
     broker = get_broker(db)
     broker_positions = await broker.get_positions()
@@ -68,22 +121,27 @@ async def check_reconciliation(db: AsyncSession) -> dict:
         if status == "MISMATCH":
             mismatches.append(entry)
 
+    cash_info = await _compute_cash_info(db, broker)
+    cash_drift = cash_info["status"] == "DRIFT"
+
     return {
         "positions": diffs,
-        "has_mismatches": len(mismatches) > 0,
+        "has_mismatches": len(mismatches) > 0 or cash_drift,
         "mismatches": mismatches,
+        "cash": cash_info,
     }
 
 
 async def sync_positions(db: AsyncSession) -> dict:
-    """Sync local DB positions to match Alpaca (source of truth).
+    """Sync local DB to match Alpaca (source of truth for positions AND cash).
 
-    Handles three mismatch types:
-    1. Alpaca has position, local doesn't → create local position
-    2. Local has position, Alpaca doesn't → remove local position
-    3. Both have position but qty/cost differs → update local to match
+    Two-phase:
+      1. Position loop — add/remove/adjust qty and cost basis only. Cash is
+         NOT touched here (previous cost-basis math caused drift).
+      2. Cash reconciliation — read Alpaca account.cash and replace
+         Portfolio.cash_balance if drift exceeds CASH_DRIFT_THRESHOLD.
 
-    Returns summary of corrections made.
+    Returns a summary of corrections made.
     """
     if settings.broker_mode not in ("alpaca_paper", "alpaca_live"):
         return {"status": "skipped", "reason": "paper mode", "corrections": []}
@@ -97,9 +155,8 @@ async def sync_positions(db: AsyncSession) -> dict:
     local_map = {p.symbol: p for p in local_positions}
 
     all_symbols = set(broker_map.keys()) | set(local_map.keys())
-    corrections = []
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    today = now.date()
+    corrections: list[dict] = []
+    today = datetime.now(timezone.utc).replace(tzinfo=None).date()
 
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
 
@@ -108,6 +165,7 @@ async def sync_positions(db: AsyncSession) -> dict:
     DB_QTY_PRECISION = Decimal("0.000001")   # Numeric(15,6)
     DB_PRICE_PRECISION = Decimal("0.0001")   # Numeric(15,4)
 
+    # ── Position loop — fix qty/cost only, DO NOT touch cash here ─────────
     for sym in sorted(all_symbols):
         b = broker_map.get(sym)
         local = local_map.get(sym)
@@ -140,57 +198,76 @@ async def sync_positions(db: AsyncSession) -> dict:
                 trailing_stop_price=initial_stop,
             )
             db.add(pos)
-            # Deduct from cash (position value was on Alpaca, not tracked locally)
-            cost = (broker_qty * broker_avg).quantize(Decimal("0.01"))
-            portfolio.cash_balance -= cost
             corrections.append({
                 "symbol": sym,
                 "action": "added",
-                "detail": f"{broker_qty}sh @ ${broker_avg} (cost ${cost})",
+                "detail": f"{broker_qty}sh @ ${broker_avg}",
             })
             logger.info("Sync: added %s — %s shares @ $%s", sym, broker_qty, broker_avg)
 
         elif broker_qty == 0 and local_qty > 0:
-            # Local has it, Alpaca doesn't — position was sold/closed on Alpaca
-            proceeds = (local_qty * local.avg_cost_basis).quantize(Decimal("0.01"))
-            portfolio.cash_balance += proceeds
+            # Local has it, Alpaca doesn't — drop local position.
+            # No cash adjustment here — the cash reconciliation step below
+            # uses Alpaca's actual cash balance, so any proceeds already
+            # credited on Alpaca will show up there.
             await db.delete(local)
             corrections.append({
                 "symbol": sym,
                 "action": "removed",
-                "detail": f"removed {local_qty}sh (returned ${proceeds} to cash at cost basis)",
+                "detail": f"removed {local_qty}sh (Alpaca no longer holds)",
             })
             logger.info("Sync: removed %s — %s shares (no Alpaca position)", sym, local_qty)
 
         else:
             # Both have it but qty differs — adjust local to match Alpaca
-            qty_diff = broker_qty - local_qty
             old_qty = local_qty
             local.shares = broker_qty
             local.avg_cost_basis = broker_avg
-            # Adjust cash for the quantity difference
-            cash_adj = (qty_diff * broker_avg).quantize(Decimal("0.01"))
-            portfolio.cash_balance -= cash_adj
             corrections.append({
                 "symbol": sym,
                 "action": "adjusted_qty",
-                "detail": f"{old_qty} → {broker_qty} shares (avg ${broker_avg}, cash adj ${cash_adj})",
+                "detail": f"{old_qty} → {broker_qty} shares (avg ${broker_avg})",
             })
             logger.info("Sync: %s qty %s → %s", sym, old_qty, broker_qty)
+
+    # ── Cash reconciliation — Alpaca is source of truth ───────────────────
+    # Runs AFTER position sync so position corrections don't confuse the diff.
+    cash_correction_detail: dict | None = None
+    try:
+        account = await broker.get_account()
+        alpaca_cash = Decimal(str(account["cash"])).quantize(Decimal("0.01"))
+        local_cash = portfolio.cash_balance
+        cash_diff = (alpaca_cash - local_cash).quantize(Decimal("0.01"))
+
+        if abs(cash_diff) >= CASH_DRIFT_THRESHOLD:
+            portfolio.cash_balance = alpaca_cash
+            cash_correction_detail = {
+                "local_before": float(local_cash),
+                "alpaca": float(alpaca_cash),
+                "diff": float(cash_diff),
+            }
+            corrections.append({
+                "symbol": "CASH",
+                "action": "cash_reconciled",
+                "detail": f"${local_cash} → ${alpaca_cash} (diff ${cash_diff:+.2f})",
+            })
+            logger.warning(
+                "Sync: cash drift corrected — local $%s → Alpaca $%s (diff $%+.2f)",
+                local_cash, alpaca_cash, cash_diff,
+            )
+    except Exception:
+        logger.exception("Sync: cash reconciliation step failed — positions synced, cash unchanged")
 
     # Record the sync call in api_call_log
     sync_status = "synced" if corrections else "in_sync"
     elapsed_ms = int((time.monotonic() - sync_start) * 1000)
     _record_sync_call(db, "sync_positions", "success", elapsed_ms)
 
-    if corrections:
-        await db.commit()
-    else:
-        # Still commit the api_call_log record even when no corrections
-        await db.commit()
+    await db.commit()
 
     return {
         "status": sync_status,
         "corrections": corrections,
         "position_count": len([s for s in all_symbols if broker_map.get(s)]),
+        "cash_correction": cash_correction_detail,
     }

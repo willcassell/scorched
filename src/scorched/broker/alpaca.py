@@ -178,6 +178,20 @@ class AlpacaBroker(BrokerAdapter):
             logger.warning(
                 "Sell rejected for %s: no position held on Alpaca (would create short)", symbol
             )
+            # Silent paper-fallback sells cause cumulative cash drift vs Alpaca
+            # (local DB records the trade; Alpaca never saw the position). Make
+            # these loud so the operator can see them in real time.
+            try:
+                from ..services.telegram import send_telegram
+                await send_telegram(
+                    "⚠️ Paper-fallback sell\n"
+                    f"Symbol: {symbol} (qty {qty} @ ${limit_price})\n"
+                    "Position exists in local DB but NOT on Alpaca.\n"
+                    "Selling via PaperBroker — Alpaca will not see this trade.\n"
+                    "This WILL drift local cash vs Alpaca until next reconcile."
+                )
+            except Exception:  # noqa: BLE001 — Telegram is best-effort
+                logger.exception("Failed to send paper-fallback Telegram alert")
             # Fall back to paper broker for DB-only sell of legacy positions
             from .paper import PaperBroker
             paper = PaperBroker(self.db)
