@@ -166,10 +166,19 @@ def now_et():
 
 
 def check_expected_hour(expected_hour, script_name):
-    """Warn if the script is running at an unexpected ET hour (DST drift)."""
+    """Warn if the script is running at an unexpected ET hour (DST drift).
+
+    `expected_hour` may be an int or an iterable of ints (for scripts that run
+    more than once per session, e.g. the 10:45 + 14:00 reconcile).
+    """
     now_est_time, _ = now_et()
     actual_hour = now_est_time.hour
-    if actual_hour != expected_hour:
-        msg = f"TRADEBOT // TIMING WARNING: {script_name} ran at {now_est_time.strftime('%H:%M %Z')} instead of expected {expected_hour}:xx"
+    expected = {expected_hour} if isinstance(expected_hour, int) else set(expected_hour)
+    if actual_hour not in expected:
+        msg = (
+            f"TRADEBOT // TIMING WARNING: {script_name} ran at "
+            f"{now_est_time.strftime('%H:%M %Z')} instead of expected "
+            f"{sorted(expected)}:xx"
+        )
         print(msg)
         send_telegram(msg)

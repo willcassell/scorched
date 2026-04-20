@@ -120,6 +120,52 @@ async def _get_existing_session(db: AsyncSession, session_date: date) -> Recomme
     ).scalars().first()
 
 
+async def _collect_failed_exits(
+    db: AsyncSession, session_date: date, held_set: set[str]
+) -> list[dict]:
+    """Return prior-session SELL recs that didn't fill and whose symbol is still held.
+
+    Walks back up to 5 prior sessions (one trading week) so a Friday expiry is
+    still visible on Monday. Returns rows ordered most-recent-first.
+    """
+    recent_sessions = (await db.execute(
+        select(RecommendationSession)
+        .where(RecommendationSession.session_date < session_date)
+        .order_by(RecommendationSession.session_date.desc())
+        .limit(5)
+    )).scalars().all()
+    if not recent_sessions:
+        return []
+
+    session_ids = [s.id for s in recent_sessions]
+    recs = (await db.execute(
+        select(TradeRecommendation)
+        .where(
+            TradeRecommendation.session_id.in_(session_ids),
+            TradeRecommendation.action == "sell",
+            TradeRecommendation.status == "rejected",
+        )
+    )).scalars().all()
+
+    sessions_by_id = {s.id: s for s in recent_sessions}
+    # Most recent failed attempt per symbol only — older ones add noise.
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in sorted(recs, key=lambda x: sessions_by_id[x.session_id].session_date, reverse=True):
+        if r.symbol in seen or r.symbol not in held_set:
+            continue
+        seen.add(r.symbol)
+        out.append({
+            "symbol": r.symbol,
+            "attempted_date": sessions_by_id[r.session_id].session_date.isoformat(),
+            "intended_qty": float(r.quantity),
+            "intended_price": float(r.suggested_price),
+            "reasoning": r.reasoning,
+            "key_risks": r.key_risks or "",
+        })
+    return out
+
+
 async def list_sessions(
     db: AsyncSession,
     session_date: date | None = None,
@@ -475,6 +521,22 @@ async def generate_recommendations(
     except Exception:  # noqa: BLE001 — snapshot is best-effort
         logger.warning("Failed to build performance snapshot — context will omit it", exc_info=True)
 
+    # Failed-exit retry signal: SELL recs from the prior session whose symbol
+    # is still held. Without this, if a sell limit expires unfilled the analyst
+    # has no signal on the next session — today's LRCX/GEV earnings-risk exits
+    # could drift straight into earnings because Phase 1 doesn't know they
+    # were attempted yesterday.
+    failed_exits: list[dict] | None = None
+    try:
+        failed_exits = await _collect_failed_exits(db, session_date, held_set=set(current_symbols))
+        if failed_exits:
+            logger.info(
+                "Failed-exit retry signal: %d prior SELLs still held (%s)",
+                len(failed_exits), ", ".join(f["symbol"] for f in failed_exits),
+            )
+    except Exception:  # noqa: BLE001 — best-effort
+        logger.warning("Failed to collect failed-exit signals", exc_info=True)
+
     research_context = build_research_context(
         portfolio_dict,
         price_data,
@@ -493,6 +555,7 @@ async def generate_recommendations(
         economic_calendar_context=economic_calendar_context,
         factor_returns=factor_returns,
         performance_snapshot=performance_snapshot,
+        failed_exits=failed_exits,
     )
 
     # Persist session row early so we have an ID for token_usage FK

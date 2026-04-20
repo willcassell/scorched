@@ -47,8 +47,10 @@ def main():
     except Exception as e:
         elapsed = time.monotonic() - t0
         msg = (
-            f"TRADEBOT // {today_str} - Phase 1 failed after {elapsed:.0f}s\n"
-            f"Error: {e}"
+            f"TRADEBOT // {today_str} - 🚨 Phase 1 ERRORED after {elapsed:.0f}s\n"
+            f"Exception: {type(e).__name__}: {str(e)[:300]}\n"
+            f"This is NOT a 'no trades today' signal — Claude never responded. "
+            f"Check docker logs for a traceback."
         )
         send_telegram(msg)
         print(f"Error: {e}")
@@ -68,9 +70,28 @@ def main():
         return
 
     recs = session.get("recommendations", [])
+    summary = (session.get("research_summary") or "").strip()
     if not recs:
-        send_telegram(f"TRADEBOT // {today_str} - No action taken. Analysis complete, no trades met criteria.")
-        print("No recommendations.")
+        # Two very different empty paths: (a) Claude evaluated and rejected
+        # all setups — research_summary has substance; (b) something failed
+        # internally and the server returned an empty shell. Collapsing them
+        # to one message loses the second signal.
+        if len(summary) >= 80:
+            msg = (
+                f"TRADEBOT // {today_str} - No action taken.\n"
+                f"Claude evaluated and no trades met criteria.\n\n"
+                f"Summary: {summary[:400]}"
+            )
+        else:
+            msg = (
+                f"TRADEBOT // {today_str} - ⚠️ Empty recommendations with no analysis\n"
+                f"Claude returned no picks AND no meaningful summary "
+                f"({len(summary)} chars). This is unusual — treat as a likely "
+                f"internal failure (JSON parse, validation, gate rejection). "
+                f"Check docker logs before assuming it was a deliberate hold day."
+            )
+        send_telegram(msg)
+        print("No recommendations." if summary else "No recs and no summary — suspicious.")
         return
 
     # Fetch portfolio for current balance

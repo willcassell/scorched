@@ -1033,6 +1033,7 @@ def build_research_context(
     economic_calendar_context: str | None = None,
     factor_returns: dict[str, dict[str, float]] | None = None,
     performance_snapshot: dict | None = None,
+    failed_exits: list[dict] | None = None,
 ) -> str:
     # Merge legacy polygon_news kwarg into detailed_news (prefer detailed_news if both given)
     detailed_news = detailed_news or polygon_news
@@ -1055,6 +1056,31 @@ def build_research_context(
                 len(all_symbols), len(filtered_symbols), len(held_set), len(top_non_held))
 
     lines = []
+
+    # Failed-exit retry signal — emitted BEFORE everything else so Claude
+    # cannot miss it. Without this section Phase 1 has no memory of yesterday's
+    # unfilled sells and can drift a position into earnings after a failed
+    # exit attempt.
+    if failed_exits:
+        lines.append("=== PRIOR FAILED EXITS (still held) ===")
+        lines.append(
+            "These positions had a SELL recommendation in a recent session "
+            "that expired unfilled. The risk that prompted the exit likely "
+            "still applies — reconsider exit urgency, especially near "
+            "earnings or other time-bound catalysts."
+        )
+        for fe in failed_exits:
+            lines.append(
+                f"  {fe['symbol']}: intended SELL {fe['intended_qty']:.0f}sh "
+                f"@ ~${fe['intended_price']:.2f} on {fe['attempted_date']} — EXPIRED"
+            )
+            reason = (fe.get("reasoning") or "").strip().replace("\n", " ")
+            if reason:
+                lines.append(f"    Prior thesis: {reason[:280]}")
+            risks = (fe.get("key_risks") or "").strip().replace("\n", " ")
+            if risks:
+                lines.append(f"    Prior risks:  {risks[:220]}")
+        lines.append("")
 
     # Factor leadership + performance snapshot — emitted first so Claude's
     # framing is set before any per-stock data is read.

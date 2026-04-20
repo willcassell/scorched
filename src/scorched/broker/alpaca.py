@@ -12,6 +12,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
+from ..models import TradeHistory
 from ..services.portfolio import apply_buy, apply_sell
 from .base import BrokerAdapter
 from .pending_fills import (
@@ -383,6 +384,35 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
             if status == "filled":
                 filled_qty = Decimal(str(order.filled_qty))
                 filled_price = Decimal(str(order.filled_avg_price))
+
+                # Idempotency guard: if a prior reconcile already wrote the
+                # trade (commit succeeded on apply_*, but remove_pending_fill
+                # lost the race), skip the re-apply and just clean up the
+                # orphaned pending_fill. Without this, the unique constraint
+                # on trade_history.recommendation_id keeps throwing on every
+                # reconcile.
+                if recommendation_id is not None:
+                    existing = (await db.execute(
+                        select(TradeHistory).where(
+                            TradeHistory.recommendation_id == recommendation_id
+                        )
+                    )).scalars().first()
+                    if existing is not None:
+                        logger.info(
+                            "Trade already recorded for rec %d (%s %s) — "
+                            "cleaning up orphan pending_fill",
+                            recommendation_id, action, symbol,
+                        )
+                        await remove_pending_fill(db, order_id)
+                        await db.commit()
+                        results.append({
+                            "symbol": symbol, "action": action,
+                            "status": "already_recorded",
+                            "filled_qty": str(existing.shares),
+                            "filled_price": str(existing.execution_price),
+                            "trade_id": existing.id,
+                        })
+                        continue
 
                 if action == "buy":
                     result = await apply_buy(

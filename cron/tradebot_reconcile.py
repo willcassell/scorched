@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Order Reconciliation + Position Sync — runs ~30 min after Phase 2 (10:45 AM ET, Mon-Fri)
+Order Reconciliation + Position Sync — runs twice per session:
+  10:45 AM ET (Phase 2.5) — 30 min after Phase 2 submission
+  2:00 PM ET (Phase 2.75) — catches fills that happened after the first check
+                            and alerts if anything is still open going into
+                            the last 2 hours of the session
 
 Two steps:
 1. Reconcile: Check pending Alpaca orders for fills and record them in the local DB.
@@ -21,11 +25,15 @@ load_env()
 
 def main():
     now_est, today_str = now_et()
-    check_expected_hour(10, "Reconcile")
+    check_expected_hour((10, 14), "Reconcile")
+    is_afternoon = now_est.hour >= 13
+    label = "Phase 2.75 (afternoon)" if is_afternoon else "Phase 2.5 (morning)"
 
-    print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Reconciling pending orders for {today_str}")
+    print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] {label} — reconciling pending orders for {today_str}")
 
     # Step 1: Reconcile pending fills
+    filled = []
+    stuck = []
     try:
         result = http_post("/api/v1/trades/reconcile", {})
         count = result.get("reconciled", 0)
@@ -40,12 +48,27 @@ def main():
                 action = r.get("action", "???").upper()
                 if status == "filled":
                     print(f"  {action} {symbol}: FILLED {r.get('filled_qty')}sh @ ${r.get('filled_price')}")
+                    filled.append(r)
                 else:
                     print(f"  {action} {symbol}: {status}")
+                    if status.startswith("still_open"):
+                        stuck.append(r)
             print(f"Reconciliation complete — {count} orders checked.")
 
+        # The afternoon run is the last automated chance to notice an exit
+        # that hasn't happened. Alert loudly on stuck sells — a swing-trader
+        # who meant to be flat before earnings needs to see this before 4pm.
+        if is_afternoon and stuck:
+            lines = [f"  {r['action'].upper()} {r['symbol']} — {r['status']}" for r in stuck]
+            send_telegram(
+                "TRADEBOT // ⚠️ Orders still open at 2pm ET\n"
+                "These limits have not filled and will expire at close:\n"
+                + "\n".join(lines)
+                + "\nConsider manual intervention if the exit is time-sensitive (earnings, thesis break)."
+            )
+
     except Exception as e:
-        msg = f"TRADEBOT // Reconciliation FAILED\n{type(e).__name__}: {str(e)[:300]}"
+        msg = f"TRADEBOT // Reconciliation FAILED ({label})\n{type(e).__name__}: {str(e)[:300]}"
         print(msg)
         send_telegram(msg)
         raise

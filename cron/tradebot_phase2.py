@@ -119,11 +119,20 @@ def main():
             except Exception as e:
                 print(f"Pre-trade reconciliation check failed: {e}")
 
-        # Fetch opening prices (base for BUY limits) and current snapshot prices
-        # (base for SELL limits). SELL uses current because Phase 2 fires 45 min
-        # after open — if a stock opens at its high and trades down (today: LRCX,
-        # GEV), a sell limit priced off the open sits above market all day and
-        # never fills.
+        # Phase 2 fires 45 min after open, so the 9:30 open is stale. Price
+        # every limit off the live snapshot: buy at current * (1 + buffer),
+        # sell at current * (1 - buffer). That guarantees buy limits end up
+        # above market and sell limits below market — symmetric to today's
+        # LRCX/GEV failure where open-based sells sat above market all day.
+        # Opening price is still fetched as a fallback if the snapshot fails.
+        try:
+            qs = urllib.parse.urlencode({"symbols": ",".join(symbols)})
+            cur_resp = http_get(f"/api/v1/market/current-prices?{qs}")
+            current_prices = cur_resp.get("current_prices", {})
+        except Exception as e:
+            print(f"Current prices fetch failed: {e}")
+            current_prices = {}
+
         try:
             qs = urllib.parse.urlencode({"symbols": ",".join(symbols), "date": today_str})
             prices_resp = http_get(f"/api/v1/market/opening-prices?{qs}")
@@ -132,16 +141,6 @@ def main():
             print(f"Opening prices fetch failed: {e}")
             opening_prices = {}
 
-        sell_symbols = [r["symbol"] for r in pending if r["action"].upper() == "SELL"]
-        current_prices = {}
-        if sell_symbols:
-            try:
-                qs = urllib.parse.urlencode({"symbols": ",".join(sell_symbols)})
-                cur_resp = http_get(f"/api/v1/market/current-prices?{qs}")
-                current_prices = cur_resp.get("current_prices", {})
-            except Exception as e:
-                print(f"Current prices fetch failed: {e}")
-
         trades_detail = ""
         for r in pending:
             rec_id = r["id"]
@@ -149,18 +148,37 @@ def main():
             action = r["action"].upper()
             qty = float(r["quantity"])
             suggested = float(r["suggested_price"])
-            # Apply slippage buffer: buy slightly above open, sell slightly below current.
+            current = current_prices.get(symbol)
+            # Base price: prefer live snapshot, then opening auction, then
+            # Claude's suggested price. The first two are real market quotes;
+            # the last is a stale Claude guess used only when everything else
+            # failed.
+            base_price = current or opening_prices.get(symbol) or suggested
             if action == "BUY":
-                base_price = opening_prices.get(symbol) or suggested
                 fill_price = round(base_price * (1 + buy_buffer_pct), 2)
             else:
-                # Sell: use live snapshot; fall back to open, then to suggested.
-                base_price = (
-                    current_prices.get(symbol)
-                    or opening_prices.get(symbol)
-                    or suggested
-                )
                 fill_price = round(base_price * (1 - sell_buffer_pct), 2)
+
+            # Wrong-side-of-market guard. A buy limit below current or sell
+            # limit above current almost never fills, so drop the trade loudly
+            # instead of silently wasting the session.
+            if current is not None:
+                if action == "BUY" and fill_price < current:
+                    msg = (
+                        f"limit ${fill_price:.2f} below current ${current:.2f} — "
+                        f"would never fill"
+                    )
+                    print(f"  skipping {symbol}: {msg}")
+                    trades_detail += f"  BUY {symbol} - BLOCKED: {msg}\n"
+                    continue
+                if action == "SELL" and fill_price > current:
+                    msg = (
+                        f"limit ${fill_price:.2f} above current ${current:.2f} — "
+                        f"would never fill"
+                    )
+                    print(f"  skipping {symbol}: {msg}")
+                    trades_detail += f"  SELL {symbol} - BLOCKED: {msg}\n"
+                    continue
 
             try:
                 result = http_post("/api/v1/trades/confirm", {
