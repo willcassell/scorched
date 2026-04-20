@@ -80,14 +80,20 @@ def release_lock(name):
 
 
 def load_env():
-    """Load .env file from project root into os.environ."""
+    """Load .env from project root into os.environ.
+
+    .env OVERRIDES any pre-existing env values. `.env` is the single source of
+    truth for tradebot config — if cron's BASH_ENV file has stale duplicates
+    (e.g., an old SETTINGS_PIN from before a rotate), the server and cron would
+    silently diverge and every mutation would 403. Overriding prevents that.
+    """
     env_file = pathlib.Path(__file__).resolve().parent.parent / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, value = line.partition("=")
-                os.environ.setdefault(key.strip(), value.strip())
+                os.environ[key.strip()] = value.strip()
 
 
 def get_base_url():
@@ -110,8 +116,19 @@ def http_post(path, payload, timeout=60):
     if pin:
         headers["X-Owner-Pin"] = pin
     req = urllib.request.Request(f"{get_base_url()}{path}", data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            # Make this failure mode self-diagnosing. 403 on a cron POST is
+            # almost always a PIN mismatch between cron env and the server.
+            raise urllib.error.HTTPError(
+                e.url, e.code,
+                f"{e.reason} — PIN mismatch? cron PIN len={len(pin)}; verify SETTINGS_PIN in /home/ubuntu/tradebot/.env matches the server's",
+                e.headers, e.fp,
+            ) from None
+        raise
 
 
 def send_telegram(text):
