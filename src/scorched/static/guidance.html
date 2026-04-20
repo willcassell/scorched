@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guidance & Hard Rules · Tradebot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0c0f;
+      --surface: #0f1217;
+      --surface-2: #131820;
+      --border: #253040;
+      --border2: #344558;
+      --text: #b8cce0;
+      --text-dim: #6a8099;
+      --text-hi: #e8f2fc;
+      --amber: #e8a030;
+      --amber-dim: #7a5018;
+      --amber-glow: rgba(232, 160, 48, 0.08);
+      --amber-subtle: rgba(232, 160, 48, 0.12);
+      --green: #2ec87a;
+      --green-dim: #134d30;
+      --green-glow: rgba(46, 200, 122, 0.08);
+      --red: #e84040;
+      --red-dim: #5a1818;
+      --red-glow: rgba(232, 64, 64, 0.08);
+      --mono: 'IBM Plex Mono', monospace;
+      --sans: 'IBM Plex Sans', sans-serif;
+      --radius: 8px;
+      --radius-sm: 5px;
+      --header-h: 60px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .header {
+      position: sticky; top: 0; z-index: 100;
+      height: var(--header-h);
+      background: rgba(10, 12, 15, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px; gap: 16px;
+    }
+    .header-back {
+      display: flex; align-items: center; gap: 6px;
+      color: var(--text-dim); text-decoration: none;
+      font-family: var(--mono); font-size: 12px;
+      letter-spacing: 0.04em; transition: color 0.15s;
+      white-space: nowrap;
+    }
+    .header-back:hover { color: var(--amber); }
+    .header-back svg { opacity: 0.6; transition: opacity 0.15s, transform 0.15s; }
+    .header-back:hover svg { opacity: 1; transform: translateX(-2px); }
+    .header-center { flex: 1; display: flex; align-items: center; gap: 16px; overflow: hidden; }
+    .header-title {
+      font-family: var(--mono); font-size: 14px; font-weight: 500;
+      color: var(--text-hi); letter-spacing: 0.04em;
+    }
+    .header-title span { color: var(--text-dim); font-weight: 400; }
+    .git-badge {
+      font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+      padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px;
+      white-space: nowrap;
+    }
+    .git-badge b { color: var(--text); }
+
+    .page { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .page-intro { margin-bottom: 20px; }
+    .page-intro h1 {
+      font-family: var(--mono); font-size: 18px; font-weight: 500;
+      color: var(--text-hi); letter-spacing: 0.04em; margin-bottom: 8px;
+    }
+    .page-intro p { color: var(--text-dim); font-size: 13px; max-width: 760px; }
+
+    .banners { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
+    .banner {
+      flex: 1; min-width: 220px;
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 12px; color: var(--text);
+    }
+    .banner.ok    { border-color: var(--green-dim); background: var(--green-glow); }
+    .banner.warn  { border-color: var(--amber-dim); background: var(--amber-glow); }
+    .banner.err   { border-color: var(--red-dim); background: var(--red-glow); }
+    .banner .icon { font-family: var(--mono); font-size: 14px; font-weight: 600; }
+    .banner.ok .icon { color: var(--green); }
+    .banner.warn .icon { color: var(--amber); }
+    .banner.err .icon { color: var(--red); }
+    .banner .label { color: var(--text-dim); font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .banner .value { color: var(--text-hi); font-weight: 500; }
+
+    .section {
+      margin-bottom: 26px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .section-head {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      cursor: pointer;
+      background: var(--surface);
+      transition: background 0.15s;
+    }
+    .section-head:hover { background: var(--surface-2); }
+    .section-head.static { cursor: default; }
+    .section-head.static:hover { background: var(--surface); }
+    .section-head h2 {
+      font-family: var(--mono); font-size: 13px; letter-spacing: 0.06em;
+      color: var(--text-hi); font-weight: 500; text-transform: uppercase;
+    }
+    .section-head .chev {
+      color: var(--text-dim); transition: transform 0.15s;
+      font-family: var(--mono); font-size: 13px;
+    }
+    .section.collapsed .chev { transform: rotate(-90deg); }
+    .section.collapsed .section-body { display: none; }
+    .section-body { padding: 16px 20px; }
+
+    .rule {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .rule-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      gap: 10px; flex-wrap: wrap;
+    }
+    .rule-num { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--amber); margin-right: 6px; }
+    .rule-title { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--text-hi); letter-spacing: 0.03em; }
+    .rule-left { display: flex; align-items: baseline; gap: 4px; flex: 1; min-width: 0; }
+    .prov-tag {
+      font-family: var(--mono); font-size: 10px;
+      padding: 3px 8px; border-radius: 3px;
+      letter-spacing: 0.05em; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .prov-tag[data-prov="prompt-only"] { color: var(--text-dim); border: 1px solid var(--border); }
+    .prov-tag[data-prov="code-enforced"] { color: var(--green); border: 1px solid var(--green-dim); background: var(--green-glow); }
+    .prov-tag[data-prov="both"] { color: var(--amber); border: 1px solid var(--amber-dim); background: var(--amber-glow); }
+
+    .rule-body { padding: 12px 16px; color: var(--text); font-size: 13.5px; line-height: 1.65; }
+    .rule-body strong { color: var(--text-hi); font-weight: 600; }
+    .rule-body code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 4px; border-radius: 3px; color: var(--text-hi); }
+
+    .fired {
+      border-top: 1px dashed var(--border);
+      padding: 10px 16px;
+      background: var(--amber-glow);
+    }
+    .fired-head { font-family: var(--mono); font-size: 11px; color: var(--amber); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 6px; }
+    .fired-row {
+      display: grid;
+      grid-template-columns: 70px 110px 1fr 90px;
+      gap: 10px; align-items: center;
+      padding: 4px 0;
+      font-family: var(--mono); font-size: 12px;
+    }
+    .fired-row .sym { color: var(--text-hi); font-weight: 600; }
+    .fired-row .act { color: var(--amber); text-transform: uppercase; font-size: 11px; }
+    .fired-row .cost { color: var(--text-dim); text-align: right; }
+    .fired-row .excerpt { color: var(--text-dim); font-family: var(--sans); font-size: 12px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fired-row:hover .excerpt { white-space: normal; color: var(--text); }
+
+    .overrides { border-top: 1px dashed var(--border); padding: 12px 16px; background: var(--surface); }
+    .overrides-head { font-family: var(--mono); font-size: 11px; color: var(--text-dim); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .ov-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 6px 0; font-size: 12.5px; }
+    .ov-row label { color: var(--text); font-family: var(--sans); display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+    .ov-row label input[type="checkbox"] { accent-color: var(--amber); }
+    .ov-row input[type="number"] { width: 70px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: var(--mono); font-size: 12px; }
+    .ov-row input:focus { outline: none; border-color: var(--amber); }
+    .ov-row select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
+    .ov-save { padding: 6px 14px; background: var(--amber-subtle); border: 1px solid var(--amber); border-radius: 4px; color: var(--amber); font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em; cursor: pointer; transition: all 0.15s; }
+    .ov-save:hover { background: var(--amber); color: var(--bg); }
+    .ov-save:disabled { opacity: 0.3; cursor: not-allowed; }
+    .ov-save[data-state="saved"] { background: var(--green-glow); border-color: var(--green-dim); color: var(--green); }
+    .ov-pin { margin-left: 8px; padding: 4px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: var(--mono); font-size: 12px; width: 100px; }
+    .ov-disabled-hint { color: var(--text-dim); font-size: 11px; font-style: italic; }
+
+    .rule.disabled .rule-body { opacity: 0.45; text-decoration: line-through; text-decoration-color: var(--text-dim); }
+    .rule.disabled .rule-title { opacity: 0.6; }
+
+    .lint-row {
+      display: grid;
+      grid-template-columns: 50px 60px 150px 1fr 200px;
+      gap: 10px; align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12.5px;
+    }
+    .lint-row:last-child { border-bottom: none; }
+    .lint-tag { font-family: var(--mono); font-size: 10px; padding: 3px 6px; border-radius: 3px; letter-spacing: 0.05em; font-weight: 600; text-align: center; }
+    .lint-tag.ok { color: var(--green); background: var(--green-glow); border: 1px solid var(--green-dim); }
+    .lint-tag.info { color: var(--text-dim); border: 1px solid var(--border); }
+    .lint-tag.warning { color: var(--amber); background: var(--amber-glow); border: 1px solid var(--amber-dim); }
+    .lint-tag.error { color: var(--red); background: var(--red-glow); border: 1px solid var(--red-dim); }
+    .lint-rule { font-family: var(--mono); color: var(--amber); }
+    .lint-check { font-family: var(--mono); color: var(--text-hi); font-size: 11.5px; }
+    .lint-msg { color: var(--text); }
+    .lint-vals { font-family: var(--mono); font-size: 11px; color: var(--text-dim); text-align: right; }
+    .lint-vals b { color: var(--text); font-weight: 500; }
+
+    .hist-row {
+      display: grid;
+      grid-template-columns: 85px 90px 150px 1fr 70px;
+      gap: 10px; align-items: baseline;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono); font-size: 11.5px;
+    }
+    .hist-row:last-child { border-bottom: none; }
+    .hist-sha { color: var(--amber); }
+    .hist-date { color: var(--text-dim); }
+    .hist-author { color: var(--text); }
+    .hist-subj { color: var(--text-hi); font-family: var(--sans); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hist-diff { color: var(--text-dim); text-align: right; }
+    .hist-diff .plus { color: var(--green); }
+    .hist-diff .minus { color: var(--red); }
+
+    .md-content { font-size: 13.5px; line-height: 1.7; color: var(--text); max-width: 780px; }
+    .md-content h2 { font-family: var(--mono); font-size: 14px; color: var(--text-hi); letter-spacing: 0.04em; text-transform: uppercase; margin: 24px 0 10px; }
+    .md-content h3 { font-family: var(--mono); font-size: 13px; color: var(--amber); margin: 16px 0 6px; }
+    .md-content h4 { font-size: 13px; color: var(--text-hi); margin: 10px 0 4px; }
+    .md-content p { margin-bottom: 10px; }
+    .md-content ul, .md-content ol { margin: 8px 0 12px 22px; }
+    .md-content li { margin-bottom: 4px; }
+    .md-content strong { color: var(--text-hi); }
+    .md-content code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 4px; border-radius: 3px; color: var(--text-hi); }
+    .md-content table { border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
+    .md-content th, .md-content td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+    .md-content th { background: var(--surface-2); color: var(--text-hi); font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .md-content hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+
+    pre.raw { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; font-family: var(--mono); font-size: 12px; color: var(--text); overflow-x: auto; max-height: 600px; overflow-y: auto; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+
+    .empty { color: var(--text-dim); font-style: italic; padding: 10px 0; font-size: 12.5px; }
+
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(16px);
+      background: var(--surface-2); border: 1px solid var(--border);
+      padding: 10px 16px; border-radius: var(--radius-sm);
+      font-family: var(--mono); font-size: 12px; color: var(--text);
+      opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+      z-index: 200;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.err { border-color: var(--red-dim); color: var(--red); }
+    .toast.ok { border-color: var(--green-dim); color: var(--green); }
+
+    @media (max-width: 700px) {
+      .page { padding: 16px; }
+      .rule-head { flex-direction: column; align-items: flex-start; }
+      .fired-row { grid-template-columns: 60px 80px 1fr; }
+      .fired-row .cost { display: none; }
+      .hist-row { grid-template-columns: 70px 80px 1fr 60px; }
+      .hist-row .hist-author { display: none; }
+      .lint-row { grid-template-columns: 40px 50px 1fr; }
+      .lint-row .lint-check, .lint-row .lint-vals { display: none; }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="header">
+    <a href="/" class="header-back">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Dashboard</span>
+    </a>
+    <div class="header-center">
+      <div class="header-title">GUIDANCE <span>// HARD RULES</span></div>
+      <div class="git-badge" id="gitBadge">loading&hellip;</div>
+    </div>
+    <a href="/strategy" class="header-back">
+      <span>Strategy</span>
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M5 2L10 7L5 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
+  </header>
+
+  <div class="toast" id="toast"></div>
+
+  <main class="page">
+    <div class="page-intro">
+      <h1>Guidance &amp; Hard Rules</h1>
+      <p>This is the qualitative framework the bot reads into every morning's analysis prompt &mdash; rendered from <code>analyst_guidance.md</code>. Numeric thresholds come from <code>strategy.json</code> (editable on <a href="/strategy" style="color:var(--amber)">/strategy</a>). Edit the guidance file in git; toggle overrides below.</p>
+    </div>
+
+    <div class="banners" id="banners"></div>
+
+    <div class="section" id="secRules">
+      <div class="section-head static"><h2>Hard Rules &mdash; Live in Prompt</h2></div>
+      <div class="section-body" id="rulesBody"><div class="empty">loading&hellip;</div></div>
+    </div>
+
+    <div class="section" id="secLint">
+      <div class="section-head" onclick="toggleSection('secLint')">
+        <h2>Conflict Linter</h2>
+        <span class="chev">&#9662;</span>
+      </div>
+      <div class="section-body" id="lintBody"><div class="empty">loading&hellip;</div></div>
+    </div>
+
+    <div class="section" id="secHist">
+      <div class="section-head" onclick="toggleSection('secHist')">
+        <h2>Edit History</h2>
+        <span class="chev">&#9662;</span>
+      </div>
+      <div class="section-body" id="histBody"><div class="empty">loading&hellip;</div></div>
+    </div>
+
+    <div class="section collapsed" id="secInterp">
+      <div class="section-head" onclick="toggleSection('secInterp')">
+        <h2>Signal Interpretation (full text, Hard Rules excluded)</h2>
+        <span class="chev">&#9662;</span>
+      </div>
+      <div class="section-body">
+        <div class="md-content" id="interpBody"><div class="empty">loading&hellip;</div></div>
+      </div>
+    </div>
+
+    <div class="section collapsed" id="secRaw">
+      <div class="section-head" onclick="toggleSection('secRaw')">
+        <h2>Raw Markdown (analyst_guidance.md)</h2>
+        <span class="chev">&#9662;</span>
+      </div>
+      <div class="section-body">
+        <pre class="raw" id="rawBody">loading&hellip;</pre>
+      </div>
+    </div>
+
+    <p style="color:var(--text-dim); font-size:11.5px; margin-top:26px; text-align:center; font-family:var(--mono);">
+      To edit rule wording, modify <code>analyst_guidance.md</code> in the repo and redeploy. To change a number, use the override toggles above.
+    </p>
+  </main>
+
+  <script>
+    // ─── Escape helpers ──
+    // esc() hard-escapes any string before it touches innerHTML. Every value
+    // coming out of the guidance/strategy/firings endpoints goes through this.
+    // mdInline() escapes first, THEN layers in a very small markdown subset
+    // (bold, italic, inline code) — safe because the escape happens up front.
+    const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    function esc(v) {
+      if (v === null || v === undefined) return '';
+      return String(v).replace(/[&<>"']/g, ch => _ESC_MAP[ch]);
+    }
+    function mdInline(s) {
+      // Order matters: escape first so later regex-inserted tags aren't
+      // themselves re-escaped. Markdown tokens operate on already-escaped
+      // text — they only match ASCII delimiters which escape() leaves alone.
+      if (s === null || s === undefined) return '';
+      return esc(s)
+        .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+        .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+    }
+
+    // ─── Small block-level markdown (signal interpretation section) ──
+    function mdBlock(s) {
+      const lines = String(s || '').split(/\r?\n/);
+      let html = '';
+      let inTable = false, tableRows = [];
+      let inList = false, listType = null;
+      const flushList = () => { if (inList) { html += '</' + listType + '>'; inList = false; listType = null; } };
+      const flushTable = () => {
+        if (!inTable) return;
+        html += '<table>';
+        tableRows.forEach((cells, i) => {
+          const tag = i === 0 ? 'th' : 'td';
+          html += '<tr>' + cells.map(c => '<' + tag + '>' + mdInline(c.trim()) + '</' + tag + '>').join('') + '</tr>';
+        });
+        html += '</table>';
+        inTable = false; tableRows = [];
+      };
+      for (const raw of lines) {
+        const line = raw.replace(/\t/g, '    ');
+        if (/^\s*$/.test(line)) { flushList(); flushTable(); continue; }
+        if (/^---\s*$/.test(line)) { flushList(); flushTable(); html += '<hr>'; continue; }
+        if (/^\|.+\|$/.test(line)) {
+          flushList();
+          if (/^\|[-|\s:]+\|$/.test(line)) continue;
+          inTable = true;
+          const cells = line.replace(/^\||\|$/g, '').split('|');
+          tableRows.push(cells);
+          continue;
+        }
+        flushTable();
+        const h = line.match(/^(#+)\s+(.+)$/);
+        if (h) { flushList(); const lvl = Math.min(h[1].length, 4); html += '<h' + lvl + '>' + mdInline(h[2]) + '</h' + lvl + '>'; continue; }
+        const ul = line.match(/^\s*[-*]\s+(.+)$/);
+        if (ul) {
+          if (!inList || listType !== 'ul') { flushList(); html += '<ul>'; inList = true; listType = 'ul'; }
+          html += '<li>' + mdInline(ul[1]) + '</li>'; continue;
+        }
+        const ol = line.match(/^\s*(\d+)\.\s+(.+)$/);
+        if (ol) {
+          if (!inList || listType !== 'ol') { flushList(); html += '<ol>'; inList = true; listType = 'ol'; }
+          html += '<li>' + mdInline(ol[2]) + '</li>'; continue;
+        }
+        flushList();
+        html += '<p>' + mdInline(line) + '</p>';
+      }
+      flushList(); flushTable();
+      return html;
+    }
+
+    // ─── Helpers ──
+    const DATE_TODAY = new Date().toISOString().slice(0, 10);
+    function toggleSection(id) { document.getElementById(id).classList.toggle('collapsed'); }
+    function toast(msg, kind) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show ' + (kind || '');
+      clearTimeout(toast._tm);
+      toast._tm = setTimeout(() => { t.className = 'toast ' + (kind || ''); }, 2800);
+    }
+    function fmtMoney(s) {
+      if (!s) return '';
+      const n = parseFloat(s);
+      if (!isFinite(n)) return esc(s);
+      return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function fmtRel(iso) {
+      if (!iso) return '';
+      const d = new Date(iso.length <= 10 ? iso + 'T00:00:00' : iso);
+      const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+      if (days <= 0) return 'today';
+      if (days === 1) return 'yesterday';
+      if (days < 30) return days + 'd ago';
+      return Math.floor(days / 30) + 'mo ago';
+    }
+
+    // ─── Data load ──
+    async function loadAll() {
+      try {
+        const [fileR, rulesR, histR, lintR, firesR, stratR] = await Promise.all([
+          fetch('/api/v1/guidance/file').then(r => r.json()),
+          fetch('/api/v1/guidance/rules').then(r => r.json()),
+          fetch('/api/v1/guidance/history?limit=20').then(r => r.json()),
+          fetch('/api/v1/guidance/lint').then(r => r.json()),
+          fetch('/api/v1/guidance/firings?date=' + encodeURIComponent(DATE_TODAY)).then(r => r.json()),
+          fetch('/api/v1/strategy').then(r => r.json()),
+        ]);
+
+        renderHeader(fileR);
+        renderBanners(fileR, lintR, firesR);
+        renderRules(rulesR.rules || [], firesR.firings || [], stratR);
+        renderLint(lintR);
+        renderHistory(histR.entries || []);
+        renderInterp(fileR.content || '');
+        document.getElementById('rawBody').textContent = fileR.content || '(file not found)';
+      } catch (e) {
+        console.error(e);
+        toast('Failed to load guidance', 'err');
+      }
+    }
+
+    function renderHeader(meta) {
+      const badge = document.getElementById('gitBadge');
+      if (!meta.last_commit_sha) {
+        badge.textContent = 'no git metadata';
+        return;
+      }
+      // Build with createElement — safer than innerHTML for header pieces.
+      badge.textContent = '';
+      const sha = document.createElement('b');
+      sha.textContent = meta.last_commit_sha;
+      badge.appendChild(sha);
+      const rest = document.createTextNode(
+        ' · ' + (meta.last_commit_date ? String(meta.last_commit_date).slice(0, 10) : '')
+      );
+      badge.appendChild(rest);
+      badge.title = meta.last_commit_subject || '';
+    }
+
+    function renderBanners(meta, lint, fires) {
+      const wrap = document.getElementById('banners');
+      wrap.textContent = '';
+      const add = (kind, icon, label, value) => {
+        const div = document.createElement('div');
+        div.className = 'banner ' + kind;
+        const iconEl = document.createElement('span');
+        iconEl.className = 'icon';
+        iconEl.textContent = icon;
+        div.appendChild(iconEl);
+        const box = document.createElement('div');
+        const lab = document.createElement('div'); lab.className = 'label'; lab.textContent = label;
+        const val = document.createElement('div'); val.className = 'value'; val.textContent = value;
+        box.appendChild(lab); box.appendChild(val);
+        div.appendChild(box);
+        wrap.appendChild(div);
+      };
+
+      if (meta.last_commit_date) {
+        const d = new Date(meta.last_commit_date);
+        const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+        const kind = days <= 3 ? 'warn' : 'ok';
+        add(kind, kind === 'warn' ? '⚠' : '✓', 'File state',
+          days <= 3 ? 'CHANGED ' + fmtRel(meta.last_commit_date) : 'STABLE');
+      }
+
+      const c = (lint && lint.counts) || {};
+      const lintKind = c.error ? 'err' : (c.warning ? 'warn' : 'ok');
+      const lintIcon = lintKind === 'err' ? '✗' : (lintKind === 'warn' ? '⚠' : '✓');
+      const lintText = c.error ? (c.error + ' error(s)')
+                     : c.warning ? (c.warning + ' warning(s)')
+                     : ((c.ok || 0) + '/' + ((c.ok||0) + (c.info||0) + (c.warning||0) + (c.error||0)) + ' in sync');
+      add(lintKind, lintIcon, 'Linter', lintText);
+
+      const firedCount = (fires && fires.count) || 0;
+      const firedKind = firedCount > 0 ? 'warn' : 'ok';
+      add(firedKind, firedCount > 0 ? 'ℹ' : '·',
+          'Activity · ' + DATE_TODAY,
+          firedCount > 0 ? (firedCount + ' rule firing(s) in today\u2019s recs') : 'No rules fired today');
+    }
+
+    function renderRules(rules, firings, stratResp) {
+      const body = document.getElementById('rulesBody');
+      body.textContent = '';
+      if (!rules.length) { body.innerHTML = '<div class="empty">No rules parsed &mdash; analyst_guidance.md may be missing or malformed.</div>'; return; }
+
+      const byRule = {};
+      for (const f of firings) { (byRule[f.rule_number] = byRule[f.rule_number] || []).push(f); }
+      const pin = !!stratResp.pin_required;
+
+      for (const r of rules) {
+        const fires = byRule[r.number] || [];
+        const ov = r.overrides;
+        const disabled = !!(ov && ov.enabled === false);
+
+        const card = document.createElement('div');
+        card.className = 'rule' + (disabled ? ' disabled' : '');
+        card.dataset.rule = String(r.number);
+
+        // Header
+        const head = document.createElement('div'); head.className = 'rule-head';
+        const left = document.createElement('div'); left.className = 'rule-left';
+        const num = document.createElement('span'); num.className = 'rule-num'; num.textContent = '#' + r.number;
+        const title = document.createElement('span'); title.className = 'rule-title';
+        // Title may contain markdown emphasis; render via mdInline which escapes.
+        title.innerHTML = mdInline(r.title);
+        left.appendChild(num); left.appendChild(title);
+        head.appendChild(left);
+        const prov = document.createElement('span');
+        prov.className = 'prov-tag'; prov.dataset.prov = r.provenance;
+        prov.textContent = String(r.provenance).replace('-', ' ');
+        head.appendChild(prov);
+        card.appendChild(head);
+
+        // Body
+        const bod = document.createElement('div'); bod.className = 'rule-body';
+        bod.innerHTML = mdInline(r.body);
+        card.appendChild(bod);
+
+        // Fired today
+        if (fires.length) {
+          const fired = document.createElement('div'); fired.className = 'fired';
+          const fh = document.createElement('div'); fh.className = 'fired-head';
+          fh.textContent = 'Fired today (' + fires.length + ')';
+          fired.appendChild(fh);
+          for (const f of fires) {
+            const row = document.createElement('div'); row.className = 'fired-row';
+            row.title = f.reasoning_excerpt || '';
+            const sym = document.createElement('span'); sym.className = 'sym'; sym.textContent = f.symbol || '';
+            const act = document.createElement('span'); act.className = 'act';
+            act.textContent = (f.action || '') + ' ' + (f.quantity || '') + 'sh';
+            const ex = document.createElement('span'); ex.className = 'excerpt';
+            ex.textContent = f.reasoning_excerpt || '';
+            const cost = document.createElement('span'); cost.className = 'cost';
+            cost.textContent = fmtMoney(f.estimated_cost);
+            row.appendChild(sym); row.appendChild(act); row.appendChild(ex); row.appendChild(cost);
+            fired.appendChild(row);
+          }
+          card.appendChild(fired);
+        }
+
+        // Overrides (rules 2, 6, 7 only)
+        const ovDom = buildOverrideBlock(r, ov || {}, pin);
+        if (ovDom) card.appendChild(ovDom);
+
+        body.appendChild(card);
+      }
+
+      // Wire save buttons
+      body.querySelectorAll('.ov-save').forEach(btn => {
+        btn.addEventListener('click', () => saveOverride(btn.dataset.ovSave, pin));
+      });
+      body.querySelectorAll('.ov-row input, .ov-row select').forEach(el => {
+        el.addEventListener('input', () => {
+          const ruleNum = el.closest('.rule').dataset.rule;
+          const btn = body.querySelector('[data-ov-save="' + ruleNum + '"]');
+          if (btn) { btn.textContent = 'Save'; btn.dataset.state = 'dirty'; }
+        });
+      });
+    }
+
+    // ─── Override UIs (DOM-constructed) ──
+    function buildOverrideBlock(rule, ov, pinRequired) {
+      const builders = { 2: buildOv2, 6: buildOv6, 7: buildOv7 };
+      if (!builders[rule.number]) return null;
+
+      const wrap = document.createElement('div'); wrap.className = 'overrides';
+      wrap.appendChild(builders[rule.number](ov));
+
+      const row = document.createElement('div'); row.className = 'ov-row';
+      row.style.marginTop = '10px';
+      const btn = document.createElement('button');
+      btn.className = 'ov-save'; btn.dataset.ovSave = String(rule.number);
+      btn.dataset.state = 'clean'; btn.textContent = 'Saved';
+      row.appendChild(btn);
+      if (pinRequired) {
+        const pinIn = document.createElement('input');
+        pinIn.type = 'password'; pinIn.className = 'ov-pin';
+        pinIn.placeholder = 'PIN'; pinIn.id = 'ov' + rule.number + '-pin';
+        row.appendChild(pinIn);
+      }
+      const hint = document.createElement('span'); hint.className = 'ov-disabled-hint';
+      hint.textContent = 'Changes apply to the next recommendation run.';
+      row.appendChild(hint);
+      wrap.appendChild(row);
+      return wrap;
+    }
+
+    function buildOv2(ov) {
+      const frag = document.createElement('div');
+      const head = document.createElement('div'); head.className = 'overrides-head';
+      head.textContent = 'Overrides · rule_overrides.earnings_blackout';
+      frag.appendChild(head);
+      const row = document.createElement('div'); row.className = 'ov-row';
+
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'ov2-enabled';
+      cb.checked = ov.enabled !== false;
+      lbl.appendChild(cb); lbl.appendChild(document.createTextNode(' Enabled'));
+      row.appendChild(lbl);
+
+      const daysWrap = document.createElement('span');
+      daysWrap.appendChild(document.createTextNode('Blackout window: '));
+      const daysIn = document.createElement('input');
+      daysIn.type = 'number'; daysIn.id = 'ov2-days';
+      daysIn.min = '0'; daysIn.max = '14';
+      daysIn.value = String(ov.days != null ? ov.days : 3);
+      daysWrap.appendChild(daysIn);
+      daysWrap.appendChild(document.createTextNode(' trading days'));
+      row.appendChild(daysWrap);
+
+      const actWrap = document.createElement('span');
+      actWrap.appendChild(document.createTextNode('Existing position: '));
+      const sel = document.createElement('select'); sel.id = 'ov2-action';
+      [['exit','full exit'], ['trim_50pct','trim 50%'], ['review','review only']].forEach(([v, lab]) => {
+        const o = document.createElement('option'); o.value = v; o.textContent = lab;
+        if ((ov.existing_position_action || 'trim_50pct') === v) o.selected = true;
+        sel.appendChild(o);
+      });
+      actWrap.appendChild(sel);
+      row.appendChild(actWrap);
+
+      frag.appendChild(row);
+      return frag;
+    }
+    function buildOv6(ov) {
+      const frag = document.createElement('div');
+      const head = document.createElement('div'); head.className = 'overrides-head';
+      head.textContent = 'Overrides · rule_overrides.gain_trigger';
+      frag.appendChild(head);
+      const row = document.createElement('div'); row.className = 'ov-row';
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'ov6-enabled';
+      cb.checked = ov.enabled !== false;
+      lbl.appendChild(cb); lbl.appendChild(document.createTextNode(' Enabled'));
+      row.appendChild(lbl);
+      const wrap = document.createElement('span');
+      wrap.appendChild(document.createTextNode('Threshold: '));
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.id = 'ov6-threshold';
+      inp.min = '10'; inp.max = '1000'; inp.step = '5';
+      inp.value = String(ov.threshold_pct != null ? ov.threshold_pct : 100);
+      wrap.appendChild(inp);
+      wrap.appendChild(document.createTextNode('%'));
+      row.appendChild(wrap);
+      frag.appendChild(row);
+      return frag;
+    }
+    function buildOv7(ov) {
+      const frag = document.createElement('div');
+      const head = document.createElement('div'); head.className = 'overrides-head';
+      head.textContent = 'Overrides · rule_overrides.selloff_threshold';
+      frag.appendChild(head);
+      const row = document.createElement('div'); row.className = 'ov-row';
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'ov7-enabled';
+      cb.checked = ov.enabled !== false;
+      lbl.appendChild(cb); lbl.appendChild(document.createTextNode(' Enabled'));
+      row.appendChild(lbl);
+      const wrap = document.createElement('span');
+      wrap.appendChild(document.createTextNode('SPY drop threshold: '));
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.id = 'ov7-pct';
+      inp.min = '0'; inp.max = '20'; inp.step = '0.25';
+      inp.value = String(ov.spy_drop_pct != null ? ov.spy_drop_pct : 2.0);
+      wrap.appendChild(inp);
+      wrap.appendChild(document.createTextNode('%'));
+      row.appendChild(wrap);
+      frag.appendChild(row);
+      return frag;
+    }
+
+    async function saveOverride(ruleNum, pinRequired) {
+      const btn = document.querySelector('[data-ov-save="' + ruleNum + '"]');
+      btn.disabled = true;
+      const pinEl = document.getElementById('ov' + ruleNum + '-pin');
+      const pin = pinEl ? pinEl.value : '';
+
+      let patch;
+      if (ruleNum === '2') {
+        patch = { earnings_blackout: {
+          enabled: document.getElementById('ov2-enabled').checked,
+          days: parseInt(document.getElementById('ov2-days').value, 10) || 3,
+          existing_position_action: document.getElementById('ov2-action').value,
+        }};
+      } else if (ruleNum === '6') {
+        patch = { gain_trigger: {
+          enabled: document.getElementById('ov6-enabled').checked,
+          threshold_pct: parseInt(document.getElementById('ov6-threshold').value, 10) || 100,
+        }};
+      } else if (ruleNum === '7') {
+        patch = { selloff_threshold: {
+          enabled: document.getElementById('ov7-enabled').checked,
+          spy_drop_pct: parseFloat(document.getElementById('ov7-pct').value) || 2.0,
+        }};
+      }
+
+      try {
+        const cur = await (await fetch('/api/v1/strategy')).json();
+        const existing = (cur.data && cur.data.rule_overrides) || {};
+        const merged = Object.assign({}, existing, patch);
+        const body = Object.assign({}, cur.data, { rule_overrides: merged });
+        if (pinRequired) body._pin = pin;
+        const r = await fetch('/api/v1/strategy', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          const errTxt = await r.text();
+          throw new Error(r.status + ': ' + errTxt);
+        }
+        btn.textContent = 'Saved';
+        btn.dataset.state = 'saved';
+        toast('Override saved — applies on next recommendation', 'ok');
+        await loadAll();
+      } catch (e) {
+        toast('Save failed: ' + e.message, 'err');
+        btn.textContent = 'Save';
+        btn.dataset.state = 'dirty';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderLint(data) {
+      const body = document.getElementById('lintBody');
+      body.textContent = '';
+      const findings = (data && data.findings) || [];
+      if (!findings.length) {
+        const empty = document.createElement('div'); empty.className = 'empty';
+        empty.textContent = 'No linter findings.'; body.appendChild(empty); return;
+      }
+      for (const f of findings) {
+        const row = document.createElement('div'); row.className = 'lint-row';
+        const tag = document.createElement('span'); tag.className = 'lint-tag ' + f.severity;
+        tag.textContent = String(f.severity).toUpperCase();
+        const rule = document.createElement('span'); rule.className = 'lint-rule';
+        rule.textContent = f.rule_number ? '#' + f.rule_number : '—';
+        const check = document.createElement('span'); check.className = 'lint-check';
+        check.textContent = f.check;
+        const msg = document.createElement('span'); msg.className = 'lint-msg';
+        msg.textContent = f.message;
+        const vals = document.createElement('span'); vals.className = 'lint-vals';
+        // Build the strategy/guidance pair via DOM for safety
+        if (f.strategy_value) {
+          const s = document.createElement('b'); s.textContent = 'strategy:'; vals.appendChild(s);
+          vals.appendChild(document.createTextNode(' ' + f.strategy_value));
+        }
+        if (f.strategy_value && f.guidance_value) vals.appendChild(document.createTextNode(' · '));
+        if (f.guidance_value) {
+          const g = document.createElement('b'); g.textContent = 'guidance:'; vals.appendChild(g);
+          vals.appendChild(document.createTextNode(' ' + f.guidance_value));
+        }
+        row.appendChild(tag); row.appendChild(rule); row.appendChild(check); row.appendChild(msg); row.appendChild(vals);
+        body.appendChild(row);
+      }
+    }
+
+    function renderHistory(entries) {
+      const body = document.getElementById('histBody');
+      body.textContent = '';
+      if (!entries.length) {
+        const empty = document.createElement('div'); empty.className = 'empty';
+        empty.textContent = 'No git history (file not tracked or .git not available).';
+        body.appendChild(empty); return;
+      }
+      for (const e of entries) {
+        const row = document.createElement('div'); row.className = 'hist-row';
+        const sha = document.createElement('span'); sha.className = 'hist-sha'; sha.textContent = e.sha;
+        const date = document.createElement('span'); date.className = 'hist-date'; date.textContent = e.date;
+        const auth = document.createElement('span'); auth.className = 'hist-author'; auth.textContent = e.author;
+        const subj = document.createElement('span'); subj.className = 'hist-subj'; subj.textContent = e.subject; subj.title = e.subject;
+        const diff = document.createElement('span'); diff.className = 'hist-diff';
+        const plus = document.createElement('span'); plus.className = 'plus'; plus.textContent = '+' + e.insertions;
+        const minus = document.createElement('span'); minus.className = 'minus'; minus.textContent = '-' + e.deletions;
+        diff.appendChild(plus); diff.appendChild(document.createTextNode(' ')); diff.appendChild(minus);
+        row.appendChild(sha); row.appendChild(date); row.appendChild(auth); row.appendChild(subj); row.appendChild(diff);
+        body.appendChild(row);
+      }
+    }
+
+    function renderInterp(fullContent) {
+      const body = document.getElementById('interpBody');
+      if (!fullContent) { body.textContent = ''; const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'File not available.'; body.appendChild(e); return; }
+      // Strip the "## Hard Rules" section — rendered above as cards.
+      const stripped = fullContent.replace(/##\s*Hard Rules[^\n]*\n[\s\S]*?(?=\n---|\n##\s|\Z)/i, '');
+      // mdBlock returns a heavily-sanitized HTML string (all user content goes
+      // through esc()). Safe to assign to innerHTML here.
+      body.innerHTML = mdBlock(stripped);
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>

@@ -171,10 +171,16 @@ async def update_playbook(db: AsyncSession, today: date) -> Playbook:
     closed_trades_text = _format_closed_trades_for_prompt(closed_trades)
     strategy_text = load_strategy()
     hard_rules = _extract_hard_rules(load_analyst_guidance())
+    # Mirror the recommender: append rule_overrides addendum so EOD learning
+    # sees the same effective rules the morning analysis saw.
+    from .guidance import render_rule_overrides_addendum
+    from .strategy import load_strategy_json
+    overrides_addendum = render_rule_overrides_addendum(load_strategy_json())
 
     strategy_block = (
         strategy_text
         + ("\n\n## Hard Rules (from analyst_guidance.md)\n" + hard_rules if hard_rules else "")
+        + overrides_addendum
     )
 
     user_content = f"""Today's date: {today}

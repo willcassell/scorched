@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from .api import broker_status, costs, intraday, market, onboarding, playbook, portfolio, prefetch, recommendations, strategy, system, trades
+from .api import broker_status, costs, guidance, intraday, market, onboarding, playbook, portfolio, prefetch, recommendations, strategy, system, trades
 from .broker.pending_fills import get_pending_fills
 from .config import settings
 from .database import AsyncSessionLocal
@@ -128,6 +128,7 @@ app.include_router(recommendations.router, prefix="/api/v1")
 app.include_router(trades.router, prefix="/api/v1")
 app.include_router(playbook.router, prefix="/api/v1")
 app.include_router(strategy.router, prefix="/api/v1")
+app.include_router(guidance.router, prefix="/api/v1")
 app.include_router(costs.router, prefix="/api/v1")
 app.include_router(market.router, prefix="/api/v1")
 app.include_router(broker_status.router, prefix="/api/v1")
@@ -146,6 +147,11 @@ async def dashboard():
 @app.get("/strategy")
 async def strategy_settings():
     return FileResponse(STATIC_DIR / "strategy.html")
+
+
+@app.get("/guidance")
+async def guidance_page():
+    return FileResponse(STATIC_DIR / "guidance.html")
 
 
 @app.get("/system")
