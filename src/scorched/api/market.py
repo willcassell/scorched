@@ -26,6 +26,27 @@ async def opening_prices(
     return {"date": trade_date.isoformat(), "opening_prices": prices}
 
 
+@router.get("/current-prices")
+async def current_prices(
+    symbols: str = Query(..., description="Comma-separated ticker symbols, e.g. AAPL,NVDA"),
+):
+    """Live snapshot prices (latest trade) for a list of symbols.
+
+    Used by Phase 2 to price sell limits off the current quote instead of the
+    9:30 open — stocks that open at the high and sell off otherwise leave their
+    limits unreachable for the rest of the session.
+    """
+    from ..services.alpaca_data import alpaca_snapshots
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    snaps = await alpaca_snapshots(symbol_list)
+    prices = {
+        sym: round(float(data["current_price"]), 2)
+        for sym, data in snaps.items()
+        if data.get("current_price")
+    }
+    return {"current_prices": prices}
+
+
 @router.get("/eod-summary")
 async def eod_summary(
     date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD). Defaults to today."),

@@ -119,7 +119,11 @@ def main():
             except Exception as e:
                 print(f"Pre-trade reconciliation check failed: {e}")
 
-        # Fetch opening prices (used as limit price for broker orders)
+        # Fetch opening prices (base for BUY limits) and current snapshot prices
+        # (base for SELL limits). SELL uses current because Phase 2 fires 45 min
+        # after open — if a stock opens at its high and trades down (today: LRCX,
+        # GEV), a sell limit priced off the open sits above market all day and
+        # never fills.
         try:
             qs = urllib.parse.urlencode({"symbols": ",".join(symbols), "date": today_str})
             prices_resp = http_get(f"/api/v1/market/opening-prices?{qs}")
@@ -128,6 +132,16 @@ def main():
             print(f"Opening prices fetch failed: {e}")
             opening_prices = {}
 
+        sell_symbols = [r["symbol"] for r in pending if r["action"].upper() == "SELL"]
+        current_prices = {}
+        if sell_symbols:
+            try:
+                qs = urllib.parse.urlencode({"symbols": ",".join(sell_symbols)})
+                cur_resp = http_get(f"/api/v1/market/current-prices?{qs}")
+                current_prices = cur_resp.get("current_prices", {})
+            except Exception as e:
+                print(f"Current prices fetch failed: {e}")
+
         trades_detail = ""
         for r in pending:
             rec_id = r["id"]
@@ -135,12 +149,17 @@ def main():
             action = r["action"].upper()
             qty = float(r["quantity"])
             suggested = float(r["suggested_price"])
-            open_price = opening_prices.get(symbol)
-            base_price = open_price if open_price is not None else suggested
-            # Apply slippage buffer: buy slightly above, sell slightly below
+            # Apply slippage buffer: buy slightly above open, sell slightly below current.
             if action == "BUY":
+                base_price = opening_prices.get(symbol) or suggested
                 fill_price = round(base_price * (1 + buy_buffer_pct), 2)
             else:
+                # Sell: use live snapshot; fall back to open, then to suggested.
+                base_price = (
+                    current_prices.get(symbol)
+                    or opening_prices.get(symbol)
+                    or suggested
+                )
                 fill_price = round(base_price * (1 - sell_buffer_pct), 2)
 
             try:
