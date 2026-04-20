@@ -19,8 +19,8 @@ from .claude_client import MODEL, call_analysis, call_decision, call_risk_review
 from .playbook import get_playbook, update_playbook
 from .risk_review import build_risk_review_prompt, parse_risk_review_response
 from .portfolio import get_portfolio_summary
-from .guidance import render_rule_overrides_addendum
-from .strategy import load_analyst_guidance, load_strategy, load_strategy_json
+from .guidance import load_effective_guidance
+from .strategy import load_strategy, load_strategy_json
 from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from ..drawdown_gate import update_peak_and_check
@@ -322,17 +322,10 @@ async def generate_recommendations(
     # Playbook update happens before Call 1 so analysis is informed by learnings
     playbook = await update_playbook(db, session_date)
 
-    # Load the user's declared strategy and analyst signal guidance
+    # Load the user's declared strategy and analyst signal guidance. The
+    # guidance helper bakes in any strategy.json.rule_overrides toggles.
     strategy = load_strategy()
-    guidance = load_analyst_guidance()
-    # If strategy.json.rule_overrides has any non-default toggles, append an
-    # explicit "LIVE RULE OVERRIDES" block to the guidance text. Silent when
-    # every toggle is at default — baseline behavior is unchanged.
-    overrides_addendum = render_rule_overrides_addendum(load_strategy_json())
-    if overrides_addendum:
-        guidance = guidance + overrides_addendum
-        logger.info("rule_overrides present — appended overrides addendum (%d chars) to guidance",
-                    len(overrides_addendum))
+    guidance = load_effective_guidance()
 
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]

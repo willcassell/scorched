@@ -292,6 +292,43 @@ def load_rule_firings(for_date: date | None = None) -> list[RuleFiring]:
     return firings
 
 
+def build_overrides_addendum() -> str:
+    """Return the addendum string based on current strategy.json, or "".
+
+    Thin convenience wrapper over render_rule_overrides_addendum() so callers
+    that already have the raw guidance don't have to re-load strategy.json
+    themselves. Used by playbook.py where Hard Rules are extracted from raw
+    guidance and the addendum must be appended separately (the extractor's
+    regex terminates on "## LIVE RULE OVERRIDES").
+    """
+    from .strategy import load_strategy_json
+    return render_rule_overrides_addendum(load_strategy_json())
+
+
+def load_effective_guidance() -> str:
+    """Return the exact guidance string the bot should inject into prompts.
+
+    Equals `analyst_guidance.md` text, plus a "LIVE RULE OVERRIDES" addendum
+    iff any rule_override in strategy.json deviates from its default. When
+    no overrides are set, returns the raw guidance unchanged — baseline
+    behavior is preserved byte-for-byte.
+
+    This is the single point recommender.py (morning analysis) calls to
+    get effective rules. Tests cover this helper directly so the addendum
+    path is verifiable without running the full Claude flow.
+    """
+    from .strategy import load_analyst_guidance
+    guidance = load_analyst_guidance()
+    addendum = build_overrides_addendum()
+    if addendum:
+        logger.info(
+            "rule_overrides present — appended overrides addendum (%d chars)",
+            len(addendum),
+        )
+        return guidance + addendum
+    return guidance
+
+
 def render_rule_overrides_addendum(strategy_json: dict) -> str:
     """Produce the "LIVE RULE OVERRIDES" block to append to guidance in prompts.
 
