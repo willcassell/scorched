@@ -104,14 +104,35 @@ def main():
             broker_mode = "paper"
             broker_info = {}
 
-        # Pre-trade reconciliation check
+        # Flush any stale pending Alpaca fills BEFORE reading broker state.
+        # Fire-and-forget orders submitted in prior sessions can sit on
+        # `pending_fills.json` until Phase 2.5 reconciles them — if they
+        # fill overnight or between sessions, the next Phase 2 sees
+        # local_qty > broker_qty and fires a scary "pre-trade drift" warning
+        # that is actually just un-recorded fills. Running /trades/reconcile
+        # here is idempotent (already-reconciled orders are skipped) and
+        # ensures the subsequent /broker/status reflects post-flush truth.
+        if broker_mode in ("alpaca_paper", "alpaca_live"):
+            try:
+                flush_result = http_post("/api/v1/trades/reconcile", {})
+                flush_count = flush_result.get("reconciled", 0)
+                if flush_count > 0:
+                    print(f"Pre-trade flush: reconciled {flush_count} stale pending order(s)")
+                    try:
+                        broker_info = http_get("/api/v1/broker/status")
+                    except Exception as e:
+                        print(f"Post-flush broker/status refresh failed: {e}")
+            except Exception as e:
+                print(f"Pre-trade flush failed (continuing): {e}")
+
+        # Pre-trade reconciliation check (post-flush; any mismatch now is real drift)
         pre_recon_warning = ""
         if broker_mode in ("alpaca_paper", "alpaca_live"):
             try:
                 recon = broker_info.get("reconciliation", {})
                 if recon.get("has_mismatches"):
                     pre_recon_warning = "--- PRE-TRADE RECONCILIATION WARNING ---\n"
-                    pre_recon_warning += "Position mismatches detected BEFORE trading:\n"
+                    pre_recon_warning += "Real position drift detected (not stale pending orders):\n"
                     for m in recon.get("mismatches", []):
                         pre_recon_warning += f"  {m['symbol']}: local={m['local_qty']}, broker={m['broker_qty']}\n"
                     pre_recon_warning += "Proceeding with trades anyway.\n\n"
