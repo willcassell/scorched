@@ -56,12 +56,25 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
     alpaca_bars = fetch_bars_sync(symbols, days=365, tracker=tracker)
     alpaca_snaps = fetch_snapshots_sync(symbols, tracker=tracker)
 
+    today_iso = market_today().isoformat()
     for symbol in symbols:
         try:
             bars = alpaca_bars.get(symbol, [])
             snap = alpaca_snaps.get(symbol)
             if not bars:
                 logger.warning("No Alpaca bars for %s — skipping", symbol)
+                continue
+
+            # If Alpaca returned today's in-progress daily bar, slice it off
+            # so technicals (MACD/BB/MA/volume/ATR) and lookback returns are
+            # computed on completed sessions only. The live price still comes
+            # from the snapshot. Before this fix, technicals ran on a mix of
+            # settled history plus a 15-min partial, which made volume profile
+            # read rel=0.0x at 9:45 ET and blocked Claude's breakout checks.
+            if bars[-1]["date"] == today_iso:
+                bars = bars[:-1]
+            if not bars:
+                logger.warning("No completed bars for %s — skipping", symbol)
                 continue
 
             closes = [b["close"] for b in bars]
@@ -637,6 +650,44 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tr
     return "\n".join(lines)
 
 
+# Russell 2000 / mid-cap candidate pool. Exists so the momentum screener has
+# something to surface when hard rule #9 (factor alignment) demands small-cap
+# picks — i.e., when IWM leads SPY by ≥3 pts over 20 days. Without this pool
+# the screener draws only from _SP500_POOL, so every small-cap-risk-on regime
+# produced "no qualifying candidates" and Claude passed on the day.
+# Liquid names only (avg vol > 1M/day, enforced by the screener filter).
+# Deduped against _SP500_POOL and WATCHLIST at screen time.
+_IWM_POOL = [
+    # Fintech / consumer finance
+    "AFRM", "SOFI", "UPST", "NU", "LC", "LMND", "OPEN", "BILL", "DAVE",
+    # Software / SaaS growth
+    "APP", "CFLT", "MDB", "ESTC", "S", "BBAI", "AI", "SOUN", "IONQ",
+    "RGTI", "QBTS", "DOCN", "PATH", "FROG", "GTLB", "HUBS", "TEAM",
+    "TWLO", "NTNX", "ZI", "ZS", "OKTA", "ZM", "DBX",
+    # EV / clean energy
+    "RIVN", "LCID", "NIO", "XPEV", "LI", "CHPT", "EVGO", "BLNK", "QS",
+    "RUN", "SEDG", "ARRY", "STEM", "PLUG", "FCEL",
+    # Consumer / retail
+    "CELH", "FUBO", "BROS", "CVNA", "CHWY", "BYND", "PTON", "GME", "AMC",
+    "AEO", "URBN",
+    # Crypto / digital assets
+    "MSTR", "RIOT", "MARA", "CLSK", "BITF", "HUT", "IREN", "HIVE", "WULF",
+    # Media / gaming
+    "ROKU", "DKNG", "RBLX", "PENN", "BILI", "U",
+    # Biotech
+    "CRSP", "NTLA", "EDIT", "BEAM", "MRNA", "BNTX", "NVAX", "EXAS", "GH",
+    "VKTX", "MDGL", "RXRX", "INSM",
+    # Space / defense
+    "RKLB", "ASTS", "LUNR", "AVAV", "KTOS", "ACHR", "JOBY",
+    # Cannabis
+    "CGC", "TLRY", "ACB", "SNDL",
+    # Travel / consumer tech
+    "ABNB", "DASH", "TOST", "ONON",
+    # Industrials / materials
+    "AA", "ATI", "X", "CLF", "MP",
+]
+
+
 # S&P 500 members not already in WATCHLIST — used as the screener candidate pool.
 # Update periodically as index composition changes. Excludes all 40 WATCHLIST symbols.
 _SP500_POOL = [
@@ -700,7 +751,14 @@ def _fetch_momentum_screener_sync(n: int = 20, tracker=None) -> list[str]:
     Returns [] on total failure so the pipeline continues with just the
     static watchlist.
     """
-    screen_symbols = [s for s in _SP500_POOL if s not in WATCHLIST]
+    # Merge S&P 500 and Russell 2000 pools so the screener surfaces both
+    # large-caps and small/mid-caps in the top-N. When the factor regime is
+    # small-cap risk-on (IWM leading SPY), the Russell pool provides picks
+    # that can clear hard rule #9; when large-caps lead, they rank highest
+    # by momentum and dominate naturally. dict.fromkeys preserves order
+    # while deduping overlaps (e.g., tickers already in _SP500_POOL).
+    combined_pool = list(dict.fromkeys(_SP500_POOL + _IWM_POOL))
+    screen_symbols = [s for s in combined_pool if s not in WATCHLIST]
     if not screen_symbols:
         return []
 

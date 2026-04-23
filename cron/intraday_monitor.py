@@ -81,6 +81,7 @@ def fetch_position_data(symbols: list[str]) -> dict:
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from scorched.services.alpaca_data import fetch_snapshots_sync, fetch_bars_sync
+        from scorched.services.technicals import calc_atr
 
         snaps = fetch_snapshots_sync(all_symbols)
         bars_data = fetch_bars_sync(all_symbols, days=30)
@@ -90,10 +91,23 @@ def fetch_position_data(symbols: list[str]) -> dict:
             if not snap:
                 continue
             bars = bars_data.get(sym, [])
+            # Completed sessions only — exclude today's in-progress bar so
+            # avg volume and ATR reflect settled data, not a 15-min sliver.
+            completed = bars[:-1] if bars else []
             avg_volume_20d = 0.0
-            if len(bars) >= 2:
-                vol_bars = bars[:-1][-20:]  # exclude today, last 20 days
-                avg_volume_20d = sum(b["volume"] for b in vol_bars) / len(vol_bars) if vol_bars else 0
+            if completed:
+                vol_bars = completed[-20:]
+                avg_volume_20d = sum(b["volume"] for b in vol_bars) / len(vol_bars)
+
+            atr_value = 0.0
+            if len(completed) >= 15:
+                atr_result = calc_atr(
+                    highs=[b["high"] for b in completed],
+                    lows=[b["low"] for b in completed],
+                    closes=[b["close"] for b in completed],
+                )
+                if atr_result:
+                    atr_value = atr_result["atr"]
 
             data[sym] = {
                 "current_price": snap["current_price"],
@@ -102,6 +116,7 @@ def fetch_position_data(symbols: list[str]) -> dict:
                 "today_low": snap.get("daily_low", 0),
                 "today_volume": snap.get("daily_volume", 0),
                 "avg_volume_20d": avg_volume_20d,
+                "atr": atr_value,
             }
     except Exception as e:
         print(f"  Alpaca fetch failed, falling back to yfinance: {e}")
@@ -114,8 +129,19 @@ def fetch_position_data(symbols: list[str]) -> dict:
                 if hist_1d.empty:
                     continue
                 avg_volume_20d = 0.0
+                atr_value = 0.0
                 if not hist_1mo.empty and len(hist_1mo) >= 2:
-                    avg_volume_20d = float(hist_1mo["Volume"].iloc[:-1].tail(20).mean())
+                    completed_df = hist_1mo.iloc[:-1]
+                    avg_volume_20d = float(completed_df["Volume"].tail(20).mean())
+                    if len(completed_df) >= 15:
+                        from scorched.services.technicals import calc_atr
+                        atr_result = calc_atr(
+                            highs=[float(x) for x in completed_df["High"].tolist()],
+                            lows=[float(x) for x in completed_df["Low"].tolist()],
+                            closes=[float(x) for x in completed_df["Close"].tolist()],
+                        )
+                        if atr_result:
+                            atr_value = atr_result["atr"]
                 data[sym] = {
                     "current_price": float(hist_1d["Close"].iloc[-1]),
                     "today_open": float(hist_1d["Open"].iloc[-1]),
@@ -123,6 +149,7 @@ def fetch_position_data(symbols: list[str]) -> dict:
                     "today_low": float(hist_1d["Low"].iloc[-1]),
                     "today_volume": float(hist_1d["Volume"].iloc[-1]),
                     "avg_volume_20d": avg_volume_20d,
+                    "atr": atr_value,
                 }
             except Exception as e2:
                 print(f"  Fetch failed for {sym}: {e2}")
@@ -253,7 +280,10 @@ def main():
         current_price = sym_data["current_price"]
 
         # ── Ratchet trailing stop / HWM on every tick ────────────────
-        atr = pos.get("atr") or 0.0
+        # ATR is computed per-tick in fetch_position_data from completed bars;
+        # the portfolio endpoint doesn't expose ATR, so pulling from sym_data
+        # is the path that actually has the value.
+        atr = sym_data.get("atr") or 0.0
         trailing_stop_price = pos.get("trailing_stop_price")
         high_water_mark = pos.get("high_water_mark")
 
