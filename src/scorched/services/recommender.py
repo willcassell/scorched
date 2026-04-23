@@ -673,8 +673,25 @@ async def generate_recommendations(
 
     session_row.claude_response = decision_raw
 
+    # DIAG: log a truncated slice of Call 2's raw response so diagnoses survive
+    # the session delete that happens on zero-rec runs.
+    logger.info("Call 2 raw response (first 2000 chars):\n%s", (decision_raw or "")[:2000])
+
     research_summary = parsed.get("research_summary", "")
     raw_recs = parsed.get("recommendations", [])[:3]
+
+    # DIAG: dump every rec Call 2 returned so silent drops downstream are visible.
+    logger.info("Call 2 parsed %d recommendations:", len(raw_recs))
+    for i, r in enumerate(raw_recs):
+        logger.info(
+            "  [%d] action=%s symbol=%s qty=%s price=%s confidence=%s",
+            i,
+            r.get("action"),
+            r.get("symbol"),
+            r.get("quantity"),
+            r.get("suggested_price"),
+            r.get("confidence"),
+        )
 
     # ── Drawdown gate: filter buys if portfolio drawdown exceeds threshold ──
     if drawdown_blocked:
@@ -711,6 +728,9 @@ async def generate_recommendations(
         )
 
         call3_response, risk_raw = await call_risk_review(risk_prompt, tracker=tracker)
+
+        # DIAG: log risk committee's raw verdict so rejections are inspectable.
+        logger.info("Call 3 raw response (first 2000 chars):\n%s", (risk_raw or "")[:2000])
 
         usage3 = call3_response.usage
         await record_usage(
@@ -777,8 +797,13 @@ async def generate_recommendations(
         quantity = Decimal(str(rec.get("quantity", 0)))
 
         if action not in ("buy", "sell"):
+            logger.info("Dropping rec (action=%r not buy/sell): %s", action, symbol)
             continue
         if quantity <= 0 or suggested_price <= 0:
+            logger.info(
+                "Dropping %s %s — invalid qty/price (qty=%s price=%s)",
+                action, symbol, quantity, suggested_price,
+            )
             continue
 
         # Override suggested_price with the live price we actually fetched —

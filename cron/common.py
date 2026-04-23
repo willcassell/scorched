@@ -132,24 +132,43 @@ def http_post(path, payload, timeout=60):
 
 
 def send_telegram(text):
-    """Send a message via Telegram if credentials are configured."""
+    """Send a message via Telegram if credentials are configured.
+
+    Messages over Telegram's 4096-char hard cap are split into multiple parts
+    at line boundaries so nothing is silently dropped (or rejected with a 400).
+    """
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         print("Telegram env vars not set — skipping notification")
         return
-    payload = {"chat_id": chat_id, "text": text}
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"Telegram sent: {resp.read().decode()[:120]}")
-    except Exception as e:
-        print(f"Telegram error: {e}")
+
+    MAX_LEN = 4000  # safety cushion under Telegram's 4096 cap
+    parts = []
+    remaining = text or ""
+    while len(remaining) > MAX_LEN:
+        split = remaining.rfind("\n", 0, MAX_LEN)
+        if split <= 0:
+            split = MAX_LEN
+        parts.append(remaining[:split])
+        remaining = remaining[split:].lstrip("\n")
+    parts.append(remaining)
+
+    total = len(parts)
+    for idx, part in enumerate(parts, 1):
+        body = part if total == 1 else f"[{idx}/{total}]\n{part}"
+        payload = {"chat_id": chat_id, "text": body}
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                print(f"Telegram sent: {resp.read().decode()[:120]}")
+        except Exception as e:
+            print(f"Telegram error: {e}")
 
 
 def fmt_pct(val):

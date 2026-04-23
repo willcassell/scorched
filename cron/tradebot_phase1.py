@@ -80,7 +80,7 @@ def main():
             msg = (
                 f"TRADEBOT // {today_str} - No action taken.\n"
                 f"Claude evaluated and no trades met criteria.\n\n"
-                f"Summary: {summary[:400]}"
+                f"Summary: {summary[:3500]}"
             )
         else:
             msg = (
@@ -116,7 +116,10 @@ def main():
 
     summary = session.get("research_summary", "")
     if summary:
-        msg += f"\n{summary[:300]}"
+        # Use whatever budget is left under Telegram's 4096 char limit,
+        # keeping a 64 char cushion for formatting and any trailing lines.
+        budget = max(0, 4096 - len(msg) - 64)
+        msg += f"\n{summary[:budget]}"
 
     send_telegram(msg)
 
