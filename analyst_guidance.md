@@ -10,7 +10,7 @@ The declared trading style is swing / position trading with a 2–6 week holding
 ## How to Read Each Data Signal
 
 ### Price Data
-- `week_change_pct`: Target context: positive multi-week trend (ideally 4-week return > 0), with a near-term pullback or consolidation creating entry. Breakouts: stock clearing a prior resistance on >1.5× average volume. Mean-reversion: oversold within a confirmed uptrend (50-day MA still rising).
+- `week_change_pct`: Target context: positive multi-week trend (ideally 4-week return > 0), with a near-term pullback or consolidation creating entry. Breakouts: stock clearing a prior resistance with volume expansion — required multiple depends on catalyst tier (see Relative Volume + Catalyst Tiers below). Mean-reversion: oversold within a confirmed uptrend (50-day MA still rising).
 - `month_change_pct` (>+20%): May be parabolic — require a very strong catalyst to enter, and prefer a pullback-entry over chasing.
 - `52w range`: Proximity to 52w high with a confirmed breakout = breakout candidate. Inside an uptrend but 10–20% off the high after a pullback = mean-reversion candidate. Near 52w low with no uptrend = avoid.
 - `short_percent_float` (>10%): High short interest + positive catalyst = potential short squeeze (amplifies upside). Not a signal on its own.
@@ -55,8 +55,11 @@ RSI interpretation depends on entry style:
 - Price near resistance: Breakout candidate if volume confirms, otherwise expect rejection.
 
 **Relative Volume:**
-- HIGH_VOLUME (>1.5x average): Institutional interest — confirms moves. Bullish if price is up, bearish if price is down.
-- LOW_VOLUME (<0.5x average): Lack of conviction — moves are less reliable.
+- HIGH_VOLUME (>1.5× average): Institutional interest — unconditionally confirms a breakout. Bullish if price is up, bearish if price is down.
+- MODERATE_VOLUME (1.0–1.5× average): Sufficient to confirm a breakout **only when the catalyst is tier-1** (see "Catalyst Tiers" below). On its own, 1.0–1.5× is neutral — proceed only if catalyst quality compensates.
+- LOW_VOLUME (<0.5× average): Lack of conviction — moves are less reliable, breakout thesis fails regardless of catalyst.
+
+Mean-reversion entries do not require volume confirmation — the RSI 25–40 + %B ≤ 0 + rising-50-day-MA combination is the setup confirmation.
 
 ### Analyst Consensus (Finnhub)
 - >80% bullish (Buy + Strong Buy): Wall Street is overwhelmingly positive — supports buy thesis but watch for crowded trade risk.
@@ -77,6 +80,8 @@ RSI interpretation depends on entry style:
 | Core PCE | <2.5% | 2.5–3% | >3% |
 
 **Overall macro read**: If 3+ indicators are bearish, reduce new position sizes by at least half. If VIX >30 or SPY down >2% today, do not initiate new buys.
+
+**Macro event windows (FOMC, CPI, PCE, Jobs, GDP releases)** elevate intraday volatility but are NOT automatic disqualifiers. The VIX >30 and SPY –2% cutoffs above are the only macro pass-throughs. If a setup is otherwise high-conviction with a strong tier-1 named catalyst, an upcoming macro print is a **sizing adjustment** — reduce to 10–15% position size instead of 15–25% — not a reason to pass. Only decline the entry entirely when (a) the catalyst is itself the macro event (e.g., opening a bank position ahead of FOMC), (b) the setup is borderline and the event would materially reshape the thesis, or (c) the hard VIX/SPY cutoffs fire. "Macro caution ahead of PCE" alone is not sufficient grounds to reject an otherwise-qualified tier-1 setup.
 
 ### Options Data (candidates only)
 - `put_call_ratio` <0.7: Bullish options sentiment. 0.7–1.2: Neutral. >1.2: Bearish or heavy hedging (note as risk).
@@ -103,6 +108,31 @@ RSI interpretation depends on entry style:
 - CFO or CEO sudden departure
 - Earnings miss + guidance cut (double negative)
 
+### Catalyst Tiers (for volume-confirmation logic)
+
+**Tier 1** — one or more of these, verifiable today, with price reaction in the expected direction:
+- Earnings beat + raised forward guidance (same day)
+- Major contract, partnership, acquisition, or 13D activist filing
+- FDA approval / PDUFA positive outcome
+- Cluster of ≥3 analyst price-target raises on the same day
+- Clear regulatory tailwind (approved M&A, tariff relief, subsidy win)
+
+**Tier 2** — supportive but individually weaker:
+- Single analyst upgrade or price-target raise
+- Product launch or announcement
+- Favorable sector rotation with no stock-specific news
+- Accumulation pattern (2–3 consecutive higher closes near 52-week highs on normal volume)
+
+**Volume × catalyst interaction for breakout entries:**
+
+| Catalyst tier | Required volume | Max confidence |
+|---|---|---|
+| Tier 1 | 1.0–1.5× acceptable; 1.5×+ confirmed | medium at 1.0–1.5×, high at 1.5×+ |
+| Tier 2 | 1.3×+ required | medium |
+| No named catalyst | reject regardless of volume | — |
+
+A tier-1 catalyst without a same-day price reaction (e.g., stock flat despite an earnings beat) is downgraded to tier-2 — the market is telling you the catalyst is already priced in.
+
 ### Momentum Screener Picks
 Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day, top 5-day momentum in S&P 500 pool. Treat as candidates requiring full signal analysis — the screener narrows, it does not decide. A screener pick can become either a breakout entry (if it is clearing a clean resistance on volume) or a mean-reversion entry (if it has just pulled back from that high). Do not assume the raw 5-day momentum is itself the thesis.
 
@@ -119,6 +149,8 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 7. **No first-day buying into a selloff**: If SPY is down >2% today, do not initiate any new long positions. Wait for stabilization.
 8. **Cash floor**: Never recommend a buy that would bring portfolio cash below 10% of total value (the code also enforces this, but anticipate it in your math).
 9. **Factor alignment**: When the FACTOR LEADERSHIP section shows a factor ETF (MTUM, SPMO, QQQ, IWM, RSP) leading SPY by ≥3 pts over the 20-day window, buys that do NOT align with that factor must cite a specific idiosyncratic catalyst strong enough to override the regime signal. "Defensive diversification" is not a catalyst; "sector rotation hedging" is not a catalyst. This rule prevents systematic underperformance from factor mismatch.
+
+   **This rule compares each pick to the FACTOR ETFs only (MTUM, SPMO, QQQ, IWM, RSP) — not to sector ETFs (XLK, XLF, XLI, XLE, etc.).** A pick in a lagging sector can still be factor-aligned if the pick itself has momentum characteristics (e.g., an Industrials stock near its 52-week high with a rising 5-day return *is* MTUM-aligned even when XLI lags). Use the FACTOR LEADERSHIP section to apply this rule, not the SECTOR SCAN. Sector leadership is a separate, softer signal — it informs conviction, not rule #9 pass/fail.
 
 ---
 
