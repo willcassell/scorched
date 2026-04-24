@@ -28,6 +28,7 @@ from ..services.research import (
     fetch_factor_returns,
     fetch_fred_macro,
     fetch_market_context,
+    fetch_mean_reversion_screener,
     fetch_momentum_screener,
     fetch_news,
     fetch_premarket_prices,
@@ -101,12 +102,30 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]
 
-    # 1. Momentum screener — scans all SP500, returns top 20
-    with _timed("momentum_screener", timing):
-        screener_symbols = await fetch_momentum_screener(n=20, tracker=tracker)
-    logger.info("Phase 0: screener returned %d symbols: %s", len(screener_symbols), screener_symbols)
+    # 1. Screeners — momentum (top 5-day gainers) and mean-reversion
+    # (pullbacks inside uptrends). Run in parallel; they hit the same Alpaca
+    # bars endpoint but with independent filter logic, so there's no shared
+    # state to coordinate. Mean-reversion excludes momentum picks to avoid
+    # double-surfacing (in practice they rarely overlap — momentum picks have
+    # RSI > 55, mean-reversion requires RSI ≤ 40 — but defensive dedup is cheap).
+    with _timed("screeners", timing):
+        screener_symbols, mean_reversion_symbols = await asyncio.gather(
+            fetch_momentum_screener(n=20, tracker=tracker),
+            fetch_mean_reversion_screener(n=10, tracker=tracker),
+        )
+    # Dedup mean-reversion against momentum in case both surfaced the same
+    # ticker on an RSI-boundary day.
+    mean_reversion_symbols = [s for s in mean_reversion_symbols if s not in set(screener_symbols)]
+    logger.info(
+        "Phase 0: momentum screener returned %d symbols: %s",
+        len(screener_symbols), screener_symbols,
+    )
+    logger.info(
+        "Phase 0: mean-reversion screener returned %d symbols: %s",
+        len(mean_reversion_symbols), mean_reversion_symbols,
+    )
 
-    research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
+    research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols + mean_reversion_symbols))
     logger.info("Phase 0: research universe = %d symbols", len(research_symbols))
 
     # 2. Parallel data fetch — each source timed individually
@@ -199,6 +218,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "timing": timing,
         "research_symbols": research_symbols,
         "screener_symbols": screener_symbols,
+        "mean_reversion_symbols": mean_reversion_symbols,
         "current_positions": current_symbols,
         "market_context": market_context,
         "price_data": price_data_cache,
@@ -249,6 +269,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "date": date_str,
         "research_symbols": len(research_symbols),
         "screener_symbols": screener_symbols,
+        "mean_reversion_symbols": mean_reversion_symbols,
         "timing": timing,
         "cache_path": out_path,
     }

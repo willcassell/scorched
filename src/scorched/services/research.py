@@ -845,6 +845,158 @@ def _fetch_momentum_screener_sync(n: int = 20, tracker=None) -> list[str]:
     return [sym for sym, _ in candidates[:n]]
 
 
+def _rsi_wilder(closes: list[float], period: int = 14) -> float | None:
+    """Wilder's RSI(14) — returns None if we don't have enough history.
+
+    Kept local to the screener because the Phase 0 Twelvedata fetch only runs
+    on research_symbols (built AFTER this screener), so there's no way to
+    reuse an already-fetched RSI at screener time.
+    """
+    if len(closes) < period + 1:
+        return None
+    gains = 0.0
+    losses = 0.0
+    # Seed with the simple average of the first `period` deltas.
+    for i in range(1, period + 1):
+        delta = closes[i] - closes[i - 1]
+        if delta >= 0:
+            gains += delta
+        else:
+            losses -= delta
+    avg_gain = gains / period
+    avg_loss = losses / period
+    # Apply Wilder's smoothing on the remainder.
+    for i in range(period + 1, len(closes)):
+        delta = closes[i] - closes[i - 1]
+        gain = max(delta, 0.0)
+        loss = max(-delta, 0.0)
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _fetch_mean_reversion_screener_sync(
+    n: int = 10,
+    exclude: list[str] | None = None,
+    tracker=None,
+) -> list[str]:
+    """Return up to n symbols in a pullback-inside-uptrend setup.
+
+    Filters (all required):
+      - Price > 20-day MA (still in a larger uptrend)
+      - Price 5–15% below the trailing 60-day high (meaningful pullback, not a knife)
+      - RSI(14) ∈ [25, 48] — broadened from the traditional 25–40 because in
+        strong-uptrend regimes (MTUM leading SPY by ≥5 pts) pullbacks rarely
+        reach sub-40 RSI; they typically cool to 40–48 and resume. This keeps
+        us from producing zero candidates in exactly the regime where the
+        user most wants buy signals. Must be kept in sync with the mean-
+        reversion RSI range in analyst_guidance.md.
+      - Uptrend intact: price > 50-day MA OR 50-day MA rising over last
+        21 bars. Either condition alone is sufficient — strict "slope
+        rising" kills 85% of valid pullback candidates in trending regimes
+        because a 5–15% pullback often rolls the 50d MA over temporarily.
+      - Average 20-day volume > 200K (IEX-only feed, ~8–10M consolidated).
+
+    Ranked by RSI ascending (most oversold first, within the acceptance band).
+
+    `exclude` lets the caller pre-remove the momentum screener's picks so the
+    two screeners don't double-surface the same ticker — although by
+    construction they rarely overlap (momentum picks have RSI > 55, this
+    screener requires RSI ≤ 40).
+    """
+    combined_pool = list(dict.fromkeys(_SP500_POOL + _IWM_POOL))
+    exclude_set = set(exclude or []) | set(WATCHLIST)
+    screen_symbols = [s for s in combined_pool if s not in exclude_set]
+    if not screen_symbols:
+        return []
+
+    from .alpaca_data import fetch_bars_sync
+
+    def _to_alpaca(sym: str) -> str:
+        return sym.replace("-", ".")
+
+    alpaca_to_yahoo = {_to_alpaca(s): s for s in screen_symbols}
+    alpaca_symbols = list(alpaca_to_yahoo.keys())
+
+    bars: dict = {}
+    try:
+        with _api_ctx(tracker, "alpaca_data", "mean_rev_screener_bars", "SP500+IWM"):
+            # days is CALENDAR days, not trading days — 180 calendar ≈ 128
+            # trading bars, well above the 71-bar minimum (50d MA + 21-bar
+            # slope lookback). Don't shrink this below ~120 calendar.
+            raw_bars = fetch_bars_sync(alpaca_symbols, days=180, tracker=None)
+        bars = {alpaca_to_yahoo.get(s, s): v for s, v in raw_bars.items()}
+    except Exception:
+        logger.warning(
+            "Alpaca mean-reversion screener bars failed — screener returns []",
+            exc_info=True,
+        )
+        return []
+
+    if not bars or sum(len(b) for b in bars.values()) == 0:
+        logger.warning("Alpaca returned no bars for mean-rev screener — returning []")
+        return []
+
+    candidates: list[tuple[str, float]] = []
+    for symbol, sym_bars in bars.items():
+        try:
+            if len(sym_bars) < 71:  # 50d MA + 21 bars lookback for slope
+                continue
+            closes = [b["close"] for b in sym_bars]
+            volumes = [b["volume"] for b in sym_bars]
+            current = closes[-1]
+
+            ma20 = sum(closes[-20:]) / 20
+            if current <= ma20:
+                continue  # not in an uptrend
+
+            # 60-day trailing high (today excluded so a new-high bar doesn't
+            # trivially pass the "5-15% below high" test).
+            high_60 = max(closes[-61:-1]) if len(closes) >= 61 else max(closes[:-1])
+            if high_60 <= 0:
+                continue
+            pullback_pct = (high_60 - current) / high_60 * 100
+            if not (5.0 <= pullback_pct <= 15.0):
+                continue
+
+            # Uptrend intact: EITHER price above 50d MA, OR 50d MA is rising
+            # over the last ~21 bars. Strict slope-only kills most pullback
+            # candidates in trending regimes (5-15% pullback flattens or
+            # briefly rolls the 50d MA even when the stock is structurally
+            # still in its uptrend). Requiring either condition matches the
+            # "50-day MA still rising" spirit in analyst_guidance.md without
+            # being brittle to local rollovers.
+            ma50_now = sum(closes[-50:]) / 50
+            ma50_prev = sum(closes[-71:-21]) / 50
+            if current <= ma50_now and ma50_now <= ma50_prev:
+                continue
+
+            # Alpaca free-tier bars are IEX-only (~2-3% of consolidated US
+            # equity volume), so a 200K IEX floor corresponds to roughly
+            # 8-10M consolidated daily — a reasonable "liquid enough to swing"
+            # floor. The momentum screener's 1M threshold only works there
+            # because momentum ranks by return; rarity-driven mean-reversion
+            # doesn't have that selection bias and needs the looser floor.
+            avg_vol = sum(volumes[-20:]) / 20
+            if avg_vol < 200_000:
+                continue
+
+            rsi = _rsi_wilder(closes)
+            if rsi is None or not (25.0 <= rsi <= 48.0):
+                continue
+
+            candidates.append((symbol, rsi))
+        except Exception:
+            logger.debug("Mean-rev screener: skipping %s (data extraction failed)", symbol)
+            continue
+
+    candidates.sort(key=lambda x: x[1])  # ascending RSI = most oversold first
+    return [sym for sym, _ in candidates[:n]]
+
+
 def _fetch_opening_prices_sync(symbols: list[str], trade_date: date, tracker=None) -> dict[str, float | None]:
     """Fetch today's opening prices using Alpaca snapshots.
 
@@ -1092,26 +1244,36 @@ def build_research_context(
     factor_returns: dict[str, dict[str, float]] | None = None,
     performance_snapshot: dict | None = None,
     failed_exits: list[dict] | None = None,
+    mean_reversion_symbols: list[str] | None = None,
 ) -> str:
     # Merge legacy polygon_news kwarg into detailed_news (prefer detailed_news if both given)
     detailed_news = detailed_news or polygon_news
 
-    # Pre-filter: score all symbols, keep top N + held positions
+    # Pre-filter: score all symbols, keep top N + held positions.
+    # Mean-reversion picks score LOW on _score_symbol (it rewards up-momentum
+    # and news catalysts, neither of which characterizes a pullback setup), so
+    # they would get filtered out of the top-N. Pin them into filtered_symbols
+    # alongside held positions so the declared second entry style has a visible
+    # candidate pool.
     all_symbols = list(price_data.keys())
     held_set = set(current_symbols)
+    mean_rev_set = {s for s in (mean_reversion_symbols or []) if s in price_data}
     non_held = [s for s in all_symbols if s not in held_set]
 
     scores = {s: _score_symbol(s, price_data, news_data, detailed_news,
                                 technicals, insider_activity, relative_strength)
               for s in non_held}
     top_non_held = sorted(scores, key=scores.get, reverse=True)[:MAX_CONTEXT_SYMBOLS]
-    filtered_symbols = set(current_symbols) | set(top_non_held)
+    filtered_symbols = held_set | set(top_non_held) | mean_rev_set
 
     # Filter price_data to only include relevant symbols
     filtered_price_data = {s: d for s, d in price_data.items() if s in filtered_symbols}
 
-    logger.info("Pre-filter: %d total → %d symbols (%d held + %d top-scored)",
-                len(all_symbols), len(filtered_symbols), len(held_set), len(top_non_held))
+    mean_rev_pinned = len(mean_rev_set - held_set - set(top_non_held))
+    logger.info(
+        "Pre-filter: %d total → %d symbols (%d held + %d top-scored + %d mean-rev pinned)",
+        len(all_symbols), len(filtered_symbols), len(held_set), len(top_non_held), mean_rev_pinned,
+    )
 
     lines = []
 
@@ -1196,12 +1358,28 @@ def build_research_context(
             )
     lines.append("")
 
-    # Per-stock data (pre-filtered to top candidates + held positions)
+    # Per-stock data (pre-filtered to top candidates + held positions + mean-reversion picks)
     lines.append(f"=== WATCHLIST DATA ({len(filtered_price_data)} symbols, filtered from {len(price_data)}) ===")
+    if mean_rev_set:
+        lines.append(
+            "Symbols tagged [MEAN_REVERSION CANDIDATE] surfaced from the pullback "
+            "screener (RSI 25–48, 5–15% below 60-day high, uptrend intact — price "
+            "above 50-day MA OR 50-day MA rising). Apply mean-reversion entry "
+            "rules: no volume confirmation required — the pullback-inside-uptrend "
+            "setup IS the confirmation. Do NOT apply the breakout 1.5× volume rule "
+            "to these. See analyst_guidance.md for the RSI 25–40 deep-oversold vs "
+            "RSI 40–48 shallow-pullback distinction."
+        )
     for symbol, data in sorted(filtered_price_data.items()):
         is_held = symbol in current_symbols
-        held_marker = " [HELD]" if is_held else ""
-        lines.append(f"\n{symbol}{held_marker}:")
+        is_mean_rev = symbol in mean_rev_set and not is_held
+        markers = []
+        if is_held:
+            markers.append("HELD")
+        if is_mean_rev:
+            markers.append("MEAN_REVERSION CANDIDATE")
+        marker_str = f" [{' | '.join(markers)}]" if markers else ""
+        lines.append(f"\n{symbol}{marker_str}:")
         rs_str = ""
         if relative_strength and symbol in relative_strength and relative_strength[symbol] is not None:
             rs = relative_strength[symbol]
@@ -1511,6 +1689,16 @@ async def fetch_twelvedata_rsi(symbols: list[str], api_key: str, tracker=None) -
 async def fetch_momentum_screener(n: int = 20, tracker=None) -> list[str]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: _fetch_momentum_screener_sync(n, tracker=tracker))
+
+
+async def fetch_mean_reversion_screener(
+    n: int = 10, exclude: list[str] | None = None, tracker=None
+) -> list[str]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: _fetch_mean_reversion_screener_sync(n, exclude=exclude, tracker=tracker),
+    )
 
 
 async def fetch_factor_returns(tracker=None) -> dict[str, dict[str, float]]:

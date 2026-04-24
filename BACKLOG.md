@@ -4,26 +4,16 @@ Deferred work items — captured here so they don't get lost in chat history. Sh
 
 ---
 
-## BL-1 — Mean-reversion screener
+## BL-1 — Mean-reversion screener — SHIPPED 2026-04-24
 
-**Problem.** `strategy.json → entry_style` declares `["breakout", "mean_reversion"]`, but the Phase 0 screener (`_fetch_momentum_screener_sync` in `src/scorched/services/research.py`) only surfaces top S&P-500 5-day-momentum names — all breakout candidates by construction. Mean-reversion candidates (RSI 25–40, %B ≤ 0, rising 50-day MA, 5–15% off 52-week high) are mechanically absent from Claude's candidate pool, so the declared second entry style never fires.
+Shipped in same commit as the tier-2 volume / factor-sector / macro-event prompt patch. See `project_mean_reversion_screener.md` in memory for details. Resolution criteria (at least one qualified mean-reversion candidate during a pullback-regime session within the next 10 sessions) is now the trigger for closing the parent buy-rate watch item.
 
-**Proposal.** Add a second screener pass that pulls S&P-500 names matching:
-- Rising 50-day MA (confirmed larger uptrend)
-- RSI(14) between 25 and 40
-- Price 5–15% below 52-week high
-- Volume within normal range (0.5–1.5× avg)
-
-Surface up to 10 additional candidates; tag each with `entry_profile: "mean_reversion"` in the Phase 0 cache so `build_research_context` can render them separately and Claude applies the mean-reversion rules (no volume confirmation required) instead of the breakout rules.
-
-**Where the change lives.**
-- `src/scorched/services/research.py` — new `_fetch_mean_reversion_screener_sync()` + merge into Phase 0 gather
-- `src/scorched/api/prefetch.py` — include the new screener output in the cache payload
-- `src/scorched/services/recommender.py` / `build_research_context` — render tagged candidates in a distinct section
-
-**Acceptance.** Phase 1 context shows both a MOMENTUM_CANDIDATES section and a MEAN_REVERSION_CANDIDATES section. On at least two sessions in a row where the momentum side produces zero buys, the mean-reversion side produces at least one qualified candidate.
-
-**Dependencies.** None — can ship after the volume-tier prompt patch (already shipped 2026-04-24) shows whether loosening breakout criteria alone resolves buy-rate.
+Key notes for future tuning:
+- Screener uses Alpaca IEX bars (same path as momentum screener). 180-day fetch covers RSI(14) + 50d MA + 21-bar slope lookback.
+- Filter: price > 20d MA, 5–15% below 60d high, RSI 25–48, uptrend intact (price > 50d MA OR rising slope), 200K IEX-only avg volume (~8–10M consolidated).
+- RSI range broadened from the traditional 25–40 to 25–48 so the screener still fires in strong-trend regimes where pullbacks rarely reach deep-oversold. Matching edit in `analyst_guidance.md` mean-reversion rule.
+- On 2026-04-24 the screener returned 0 picks against a MTUM +8% regime — correct behavior, validated via `/tmp/mean_rev_diag.py` (closest miss was COF at RSI 48.5, one point above threshold).
+- If later tuning shows too many false positives in 40–48 RSI range, tighten back to 25–45 and update guidance in lockstep.
 
 ---
 

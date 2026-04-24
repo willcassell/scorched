@@ -37,6 +37,7 @@ from .research import (
     fetch_factor_returns,
     fetch_fred_macro,
     fetch_market_context,
+    fetch_mean_reversion_screener,
     fetch_momentum_screener,
     fetch_news,
     fetch_options_data,
@@ -401,6 +402,7 @@ async def generate_recommendations(
         analyst_consensus = cache["analyst_consensus"]
         research_symbols = cache["research_symbols"]
         screener_symbols = cache["screener_symbols"]
+        mean_reversion_symbols = cache.get("mean_reversion_symbols", [])
         relative_strength = cache.get("relative_strength", {})
         premarket_data = cache.get("premarket_data", {})
         factor_returns = cache.get("factor_returns", {})
@@ -413,10 +415,21 @@ async def generate_recommendations(
             import finnhub
             finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
 
-        # Run momentum screener first so screener_symbols is available for AV call and gather
-        screener_symbols = await fetch_momentum_screener(n=20, tracker=tracker)
+        # Run both screeners concurrently so research_symbols includes both
+        # momentum and mean-reversion picks before parallel data fetch.
+        screener_symbols, mean_reversion_symbols = await asyncio.gather(
+            fetch_momentum_screener(n=20, tracker=tracker),
+            fetch_mean_reversion_screener(n=10, tracker=tracker),
+        )
+        mean_reversion_symbols = [s for s in mean_reversion_symbols if s not in set(screener_symbols)]
         logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
-        research_symbols = list(set(WATCHLIST + current_symbols + screener_symbols))
+        logger.info(
+            "Mean-reversion screener added %d symbols: %s",
+            len(mean_reversion_symbols), mean_reversion_symbols,
+        )
+        research_symbols = list(
+            set(WATCHLIST + current_symbols + screener_symbols + mean_reversion_symbols)
+        )
         logger.info("Total research universe: %d symbols", len(research_symbols))
 
         # Parallel data fetch
@@ -556,6 +569,7 @@ async def generate_recommendations(
         factor_returns=factor_returns,
         performance_snapshot=performance_snapshot,
         failed_exits=failed_exits,
+        mean_reversion_symbols=mean_reversion_symbols,
     )
 
     # Persist session row early so we have an ID for token_usage FK

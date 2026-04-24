@@ -29,7 +29,7 @@ The declared trading style is swing / position trading with a 2–6 week holding
 ### RSI(14) from Alpha Vantage
 RSI interpretation depends on entry style:
 - **Breakout entry:** RSI 55–70 is ideal (momentum in the direction of the break); RSI >75 is stretched — prefer a pullback. RSI <45 on a "breakout" is suspect.
-- **Mean-reversion entry:** RSI 25–40 is the target zone (oversold inside a larger uptrend). RSI <20 = catching a falling knife, wait for stabilisation. RSI >50 = not oversold, not a valid mean-reversion setup.
+- **Mean-reversion entry:** RSI 25–48 is the acceptable zone (oversold or cooled-off inside a larger uptrend). RSI 25–40 is the classic deep-oversold window (bear-market or correction-regime setups); RSI 40–48 covers shallow pullbacks in strong-uptrend regimes where true oversold rarely occurs — require tier-1 catalyst or confirmed pullback-to-rising-MA geometry to compensate. RSI <20 = catching a falling knife, wait for stabilisation. RSI >50 = not oversold, not a valid mean-reversion setup.
 
 ### Technical Indicators (computed)
 
