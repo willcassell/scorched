@@ -25,6 +25,7 @@ from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from ..drawdown_gate import update_peak_and_check
 from ..correlation import find_high_correlations
+from ..risk_gates import check_cash_floor
 from .telegram import send_telegram
 from .research import (
     WATCHLIST,
@@ -835,7 +836,6 @@ async def generate_recommendations(
 
         if action == "buy":
             estimated_cost = suggested_price * quantity
-            from ..risk_gates import check_cash_floor
             cash_check = check_cash_floor(
                 current_cash=running_cash,
                 total_portfolio_value=total_value_for_floor,
