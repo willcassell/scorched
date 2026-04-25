@@ -136,7 +136,7 @@ DEFAULT_JSON = {
     "loss_management": "time_price_hybrid",
     "sizing_style": "conviction_weighted",
     "concentration": {
-        "max_position_pct": 20,
+        "max_position_pct": 33,
         "max_sector_pct": 40,
         "max_holdings": 10,
     },
@@ -273,7 +273,7 @@ def load_strategy() -> str:
     if conc:
         lines.append(
             f"**Concentration limits:** Never allocate more than "
-            f"{conc.get('max_position_pct', 20)}% of the portfolio to a single position; "
+            f"{conc.get('max_position_pct', 33)}% of the portfolio to a single position; "
             f"never allocate more than {conc.get('max_sector_pct', 40)}% to any one sector; "
             f"hold no more than {conc.get('max_holdings', 10)} positions simultaneously."
         )

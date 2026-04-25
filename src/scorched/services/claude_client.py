@@ -346,7 +346,7 @@ async def call_decision(
     min_cash_pct: int,
     user_content: str,
     *,
-    max_position_pct: int = 20,
+    max_position_pct: int = 33,
     max_holdings: int = 10,
     tracker=None,
 ):

@@ -671,7 +671,7 @@ async def generate_recommendations(
     strategy_conc = strategy_json.get("concentration", {})
     call2_response, decision_raw, parsed = await call_decision(
         strategy, guidance, playbook.content, min_cash_pct, call2_user,
-        max_position_pct=strategy_conc.get("max_position_pct", 20),
+        max_position_pct=strategy_conc.get("max_position_pct", 33),
         max_holdings=strategy_conc.get("max_holdings", 10),
         tracker=tracker,
     )
