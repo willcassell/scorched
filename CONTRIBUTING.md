@@ -55,6 +55,28 @@ docker compose exec tradebot pytest
 - Comments only where the logic isn't self-evident
 - All trading-day logic uses `market_today()` / `market_now()` from `tz.py` — never `date.today()`
 
+## Pre-commit hooks (recommended)
+
+The repo ships with a `.pre-commit-config.yaml` that runs `scripts/check_strategy_docs.py`
+before every commit, catching drift between `strategy.json` and the markdown docs that
+describe it. To enable locally:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Every `git commit` then runs the lint. The same check runs in CI via
+`.github/workflows/docs-sync.yml`, so PRs are protected even if you skip the local hook.
+
+To run the check manually at any time:
+```bash
+python3 scripts/check_strategy_docs.py
+```
+
+When `strategy.json` changes a numeric rule, append the OLD value's phrasing to
+`STALE_PATTERNS` in `scripts/check_strategy_docs.py` so future regressions get caught.
+
 ## What We're Not Looking For
 
 - Enterprise auth/RBAC systems — this is a personal tool

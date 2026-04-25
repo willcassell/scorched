@@ -1,0 +1,19 @@
+# Local pre-commit hooks. Install once:
+#   pip install pre-commit
+#   pre-commit install
+# Then every `git commit` runs these checks. CI runs the same lint via
+# .github/workflows/docs-sync.yml so PRs are protected even without local install.
+
+repos:
+  - repo: local
+    hooks:
+      - id: strategy-docs-sync
+        name: Strategy docs sync
+        description: Verify strategy.md/advisor.md/etc match strategy.json
+        entry: python3 scripts/check_strategy_docs.py
+        language: system
+        # Run whenever strategy.json or any tracked doc changes — but the
+        # linter scans the whole doc set, not just the changed file, so
+        # pass_filenames is false (filenames as args would just be ignored).
+        files: ^(strategy\.json|strategy\.md|analyst_guidance\.md|advisor\.md|SETUP_DEVELOPER\.md|README\.md|START_HERE\.md|src/scorched/CLAUDE\.md|scripts/check_strategy_docs\.py)$
+        pass_filenames: false

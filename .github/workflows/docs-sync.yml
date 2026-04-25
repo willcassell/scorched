@@ -1,0 +1,44 @@
+name: Strategy docs sync
+
+# Catches drift between strategy.json and the markdown docs that describe it.
+# Runs on any push or PR that touches strategy.json or a tracked doc.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "strategy.json"
+      - "strategy.md"
+      - "analyst_guidance.md"
+      - "advisor.md"
+      - "SETUP_DEVELOPER.md"
+      - "README.md"
+      - "START_HERE.md"
+      - "src/scorched/CLAUDE.md"
+      - "scripts/check_strategy_docs.py"
+      - ".github/workflows/docs-sync.yml"
+  pull_request:
+    paths:
+      - "strategy.json"
+      - "strategy.md"
+      - "analyst_guidance.md"
+      - "advisor.md"
+      - "SETUP_DEVELOPER.md"
+      - "README.md"
+      - "START_HERE.md"
+      - "src/scorched/CLAUDE.md"
+      - "scripts/check_strategy_docs.py"
+
+jobs:
+  check-strategy-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run strategy doc sync linter
+        run: python3 scripts/check_strategy_docs.py
