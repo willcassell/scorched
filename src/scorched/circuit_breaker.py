@@ -115,35 +115,59 @@ def check_gap_up_gate(
 
 
 async def fetch_gate_data(symbols: list[str]) -> dict:
-    """Fetch live prices for circuit breaker checks via yfinance.
+    """Fetch live prices for circuit breaker checks via Alpaca snapshots.
 
-    Returns dict with keys: spy_current, spy_prior_close, vix_current,
-    vix_prior_close, and per-symbol current_price and prior_close.
+    For ^VIX (not on Alpaca's equities feed), falls back to yfinance first,
+    then VXX ETF as a proxy — same pattern used in cron/intraday_monitor.py.
+    Returns {symbol: {"current": Decimal, "prior_close": Decimal}}.
     """
-    import yfinance as yf
+    from .services.alpaca_data import fetch_snapshots_sync
 
-    all_symbols = list(set(symbols + ["SPY", "^VIX"]))
-
-    def _fetch():
-        data = {}
-        for sym in all_symbols:
-            try:
-                ticker = yf.Ticker(sym)
-                hist = ticker.history(period="5d")
-                if len(hist) >= 2:
-                    data[sym] = {
-                        "current": Decimal(str(hist["Close"].iloc[-1])),
-                        "prior_close": Decimal(str(hist["Close"].iloc[-2])),
-                    }
-                elif len(hist) == 1:
-                    price = Decimal(str(hist["Close"].iloc[-1]))
-                    data[sym] = {"current": price, "prior_close": price}
-            except Exception as e:
-                logger.warning("Circuit breaker: failed to fetch %s: %s", sym, e)
-        return data
+    equity_symbols = list({s for s in symbols if not s.startswith("^")} | {"SPY"})
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _fetch)
+    snaps = await loop.run_in_executor(None, fetch_snapshots_sync, equity_symbols)
+
+    out: dict = {}
+    for sym, snap in snaps.items():
+        current = snap.get("current_price", 0) or 0
+        prev = snap.get("prev_close", 0) or 0
+        out[sym] = {
+            "current": Decimal(str(current)),
+            "prior_close": Decimal(str(prev)),
+        }
+
+    # VIX: yfinance first (Alpaca doesn't cover index symbols), VXX as proxy fallback.
+    try:
+        import yfinance as yf
+        vix_hist = yf.Ticker("^VIX").history(period="5d")
+        if len(vix_hist) >= 2:
+            out["^VIX"] = {
+                "current": Decimal(str(vix_hist["Close"].iloc[-1])),
+                "prior_close": Decimal(str(vix_hist["Close"].iloc[-2])),
+            }
+        elif len(vix_hist) == 1:
+            price = Decimal(str(vix_hist["Close"].iloc[-1]))
+            out["^VIX"] = {"current": price, "prior_close": price}
+    except Exception:
+        logger.warning("Circuit breaker: yfinance ^VIX fetch failed, trying VXX fallback")
+
+    if "^VIX" not in out:
+        try:
+            vxx_snaps = await loop.run_in_executor(None, fetch_snapshots_sync, ["VXX"])
+            if "VXX" in vxx_snaps:
+                vxx = vxx_snaps["VXX"]
+                current = vxx.get("current_price", 0) or 0
+                prev = vxx.get("prev_close", 0) or 0
+                out["^VIX"] = {
+                    "current": Decimal(str(current)),
+                    "prior_close": Decimal(str(prev)),
+                }
+                logger.info("Circuit breaker: using VXX as VIX proxy")
+        except Exception:
+            logger.warning("Circuit breaker: VXX fallback also failed — VIX gates will be skipped")
+
+    return out
 
 
 async def run_circuit_breaker(
@@ -197,5 +221,16 @@ async def run_circuit_breaker(
             prior_close=sym_data.get("prior_close", Decimal("0")),
             config=config,
         )
+
+        # Check gap-up — only for buys, only when prior gates passed.
+        if rec["action"] == "buy" and rec["gate_result"].passed:
+            gap_up = check_gap_up_gate(
+                symbol=rec["symbol"],
+                current_price=sym_data.get("current", Decimal("0")),
+                prior_close=sym_data.get("prior_close", Decimal("0")),
+                config=config,
+            )
+            if not gap_up.passed:
+                rec["gate_result"] = gap_up
 
     return recommendations
