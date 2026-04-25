@@ -1,4 +1,5 @@
 """Tests for circuit breaker gate checks."""
+import pandas as pd
 import pytest
 from decimal import Decimal
 from unittest.mock import patch, AsyncMock
@@ -8,6 +9,11 @@ from scorched.circuit_breaker import (
     check_market_gate,
     run_circuit_breaker,
 )
+
+
+def _make_yf_hist(closes: list[float]) -> pd.DataFrame:
+    """Minimal stand-in for a yfinance history DataFrame."""
+    return pd.DataFrame({"Close": closes})
 
 
 CB_CONFIG = {
@@ -146,3 +152,55 @@ async def test_circuit_breaker_blocks_gap_up():
         result = await run_circuit_breaker(recs, CB_CONFIG_WITH_GAP_UP)
     assert result[0]["gate_result"].passed is False
     assert "gap_up" in result[0]["gate_result"].reason.lower()
+
+
+# ── fetch_gate_data internals ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_fetch_gate_data_normalizes_alpaca_keys():
+    """Verify Alpaca's prev_close → internal prior_close key rename."""
+    from scorched.circuit_breaker import fetch_gate_data
+
+    fake_snaps = {
+        "AAPL": {"current_price": 150.5, "prev_close": 150.0},
+        "SPY": {"current_price": 500.0, "prev_close": 499.0},
+    }
+    with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=fake_snaps), \
+         patch("yfinance.Ticker") as mock_yf:
+        # yfinance returns valid VIX so VXX fallback isn't exercised
+        mock_yf.return_value.history.return_value = _make_yf_hist([17.5, 18.0])
+        result = await fetch_gate_data(["AAPL"])
+
+    assert "AAPL" in result
+    assert result["AAPL"]["current"] == Decimal("150.5")
+    assert result["AAPL"]["prior_close"] == Decimal("150.0")  # renamed from prev_close
+    assert "SPY" in result  # always added
+    assert result["^VIX"]["current"] == Decimal("18.0")
+
+
+@pytest.mark.asyncio
+async def test_fetch_gate_data_falls_back_to_vxx_when_yf_fails():
+    """When yfinance ^VIX fails, VXX snapshot supplies the fallback."""
+    from scorched.circuit_breaker import fetch_gate_data
+
+    call_count = {"n": 0}
+
+    def snapshot_side_effect(symbols):
+        call_count["n"] += 1
+        if "AAPL" in symbols:
+            return {
+                "AAPL": {"current_price": 150.0, "prev_close": 149.0},
+                "SPY": {"current_price": 500.0, "prev_close": 499.0},
+            }
+        if "VXX" in symbols:
+            return {"VXX": {"current_price": 22.5, "prev_close": 21.0}}
+        return {}
+
+    with patch("scorched.services.alpaca_data.fetch_snapshots_sync", side_effect=snapshot_side_effect), \
+         patch("yfinance.Ticker", side_effect=Exception("yfinance down")):
+        result = await fetch_gate_data(["AAPL"])
+
+    assert result["^VIX"]["current"] == Decimal("22.5")
+    assert result["^VIX"]["prior_close"] == Decimal("21.0")
+    # Confirm two snapshot calls happened: one for equities+SPY, one for VXX fallback
+    assert call_count["n"] == 2

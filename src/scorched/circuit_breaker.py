@@ -195,6 +195,14 @@ async def run_circuit_breaker(
 
     # Market-level gate
     spy_data = data.get("SPY", {})
+    # SAFETY: When VIX data is missing entirely (both yfinance and VXX
+    # fallback failed in fetch_gate_data), vix_current and vix_prior_close
+    # default to Decimal("0"). This makes the VIX absolute-max check
+    # (`vix_current > vix_max`) and the VIX spike check both evaluate as
+    # "no signal," silently bypassing them. This is a known fail-open
+    # path — operator should monitor `fetch_gate_data` warnings in the
+    # cron logs. Tier 2 follow-up: surface as a Telegram alert and/or
+    # gate_result reason on Phase 1.5 summary.
     vix_data = data.get("^VIX", {})
     market_gate = check_market_gate(
         spy_current=spy_data.get("current", Decimal("0")),
