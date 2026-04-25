@@ -1,7 +1,8 @@
 """Tests for intraday endpoint — hard stop bypass and normal Claude path."""
 import json
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -9,6 +10,30 @@ from httpx import ASGITransport, AsyncClient
 from scorched.main import app
 from scorched.database import get_db
 from scorched.api.deps import require_owner_pin
+from scorched.api.intraday import _load_hard_stop_pct
+
+
+class TestLoadHardStopPct:
+    def test_reads_hard_stop_pct_field(self):
+        strategy = {"intraday_monitor": {"hard_stop_pct": 8.0, "position_drop_from_entry_pct": 5.0}}
+        with patch("builtins.open", mock_open(read_data=json.dumps(strategy))):
+            assert _load_hard_stop_pct() == 8.0
+
+    def test_does_not_use_position_drop_field(self):
+        strategy = {"intraday_monitor": {"hard_stop_pct": 8.0, "position_drop_from_entry_pct": 5.0}}
+        with patch("builtins.open", mock_open(read_data=json.dumps(strategy))):
+            value = _load_hard_stop_pct()
+            assert value == 8.0
+            assert value != 5.0
+
+    def test_default_when_field_missing(self):
+        strategy = {"intraday_monitor": {}}
+        with patch("builtins.open", mock_open(read_data=json.dumps(strategy))):
+            assert _load_hard_stop_pct() == 8.0
+
+    def test_default_when_file_missing(self):
+        with patch("builtins.open", side_effect=FileNotFoundError):
+            assert _load_hard_stop_pct() == 8.0
 
 
 @pytest.fixture

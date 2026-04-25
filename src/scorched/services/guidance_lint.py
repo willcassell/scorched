@@ -66,28 +66,28 @@ def _check_sector_limit(strategy: dict, guidance: str) -> Finding:
 
 
 def _check_stop_loss(strategy: dict, guidance: str) -> Finding:
-    # Rule 4 body: "Stop loss at -8% from entry".
+    """Verify hard stop is 8% in both strategy.json and analyst_guidance.md rule #4."""
     strat_val = (strategy.get("intraday_monitor") or {}).get("hard_stop_pct")
     guide_val = _find_first(
         r"Stop loss at\s*-?(\d+(?:\.\d+)?)\s*%\s*from entry", guidance, re.IGNORECASE,
     )
     if strat_val is None or guide_val is None:
         return Finding(
-            rule_number=4, check="stop_loss", severity="warning",
-            message="Could not locate stop-loss value in one of the files",
+            rule_number=4, check="hard_stop", severity="error",
+            message="hard_stop_pct missing from strategy.json or guidance file",
             strategy_value=str(strat_val), guidance_value=guide_val,
         )
-    # intraday_monitor.hard_stop_pct is the intraday fast-path stop (5% default);
-    # the guidance rule #4 quotes the longer-term -8% stop. These are intentionally
-    # different numbers with different jobs, so we don't error on mismatch — we
-    # just report both for visibility.
+    if abs(float(strat_val) - float(guide_val)) > 1e-6:
+        return Finding(
+            rule_number=4, check="hard_stop", severity="error",
+            message=f"Hard-stop mismatch: strategy.json hard_stop_pct={strat_val}%, "
+                    f"guidance rule #4={guide_val}%. These MUST match.",
+            strategy_value=f"{strat_val}%", guidance_value=f"{guide_val}%",
+        )
     return Finding(
-        rule_number=4, check="stop_loss", severity="info",
-        message="Stop-loss values come from two different enforcement paths "
-                "(intraday hard stop vs. end-of-day rule). Mismatch is "
-                "expected; listing both for transparency.",
-        strategy_value=f"{strat_val}% (intraday hard stop)",
-        guidance_value=f"{guide_val}% (daily rule #4)",
+        rule_number=4, check="hard_stop", severity="ok",
+        message="Hard stop: strategy.json and guidance agree",
+        strategy_value=f"{strat_val}%", guidance_value=f"{guide_val}%",
     )
 
 

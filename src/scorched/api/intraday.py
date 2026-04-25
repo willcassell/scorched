@@ -30,13 +30,18 @@ STRATEGY_PATH = Path(__file__).resolve().parent.parent.parent.parent / "strategy
 
 
 def _load_hard_stop_pct() -> float:
-    """Read hard stop threshold from strategy.json (default 5.0%)."""
+    """Read hard stop threshold from strategy.json (default 8.0%).
+
+    This is the deterministic auto-exit threshold (rule #4: -8% from entry).
+    It is intentionally separate from `position_drop_from_entry_pct`, which
+    is the looser Claude-evaluation trigger (default 5%).
+    """
     try:
         with open(STRATEGY_PATH) as f:
             data = json.load(f)
-        return float(data.get("intraday_monitor", {}).get("position_drop_from_entry_pct", 5.0))
+        return float(data.get("intraday_monitor", {}).get("hard_stop_pct", 8.0))
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
-        return 5.0
+        return 8.0
 
 
 def _is_hard_stop(trigger: IntradayTriggerItem, hard_stop_pct: float) -> tuple[bool, float]:

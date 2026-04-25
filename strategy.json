@@ -44,7 +44,7 @@
     "position_drop_from_open_pct": 3.0,
     "spy_intraday_drop_pct": 2.0,
     "volume_surge_multiplier": 3.0,
-    "hard_stop_pct": 5.0
+    "hard_stop_pct": 8.0
   },
   "drawdown_gate": {
     "enabled": true,
