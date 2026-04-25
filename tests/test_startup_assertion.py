@@ -46,4 +46,5 @@ def test_startup_allows_live_mode_with_strong_pin(monkeypatch):
 
     monkeypatch.setattr(main_mod.settings, "broker_mode", "alpaca_live")
     monkeypatch.setattr(main_mod.settings, "settings_pin", "X" * 20)
+    monkeypatch.setattr(main_mod.settings, "live_trading_enabled", True)  # D5: also need kill switch
     main_mod._assert_auth_safe()

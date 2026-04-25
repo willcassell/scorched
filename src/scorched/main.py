@@ -40,6 +40,11 @@ def _assert_auth_safe() -> None:
                 f"SETTINGS_PIN too short (len {len(pin)}) for alpaca_live — "
                 f"need at least {MIN_LIVE_PIN_LEN} characters"
             )
+        if not settings.live_trading_enabled:
+            raise RuntimeError(
+                "BROKER_MODE=alpaca_live but LIVE_TRADING_ENABLED is not true — "
+                "refusing to start. Set LIVE_TRADING_ENABLED=true in .env to enable live trading."
+            )
 
 
 # Keep old name as alias for backward-compat with any existing references

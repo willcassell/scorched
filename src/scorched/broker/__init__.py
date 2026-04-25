@@ -10,6 +10,10 @@ def get_broker(db_session):
     from ..config import settings
 
     if settings.broker_mode in ("alpaca_paper", "alpaca_live"):
+        if settings.broker_mode == "alpaca_live" and not settings.live_trading_enabled:
+            raise RuntimeError(
+                "Cannot construct AlpacaBroker in alpaca_live mode without LIVE_TRADING_ENABLED=true"
+            )
         from alpaca.trading.client import TradingClient
         from .alpaca import AlpacaBroker
 
