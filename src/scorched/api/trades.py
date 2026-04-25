@@ -1,8 +1,6 @@
 import asyncio
-import json
 import logging
 from decimal import Decimal
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -15,32 +13,20 @@ from ..broker import get_broker
 from ..config import settings
 from ..risk_gates import run_all_buy_gates
 from ..services.telegram import send_telegram
+from ..services.strategy import load_strategy_json  # C1: canonical loader — resolves /app/strategy.json in Docker
 from .deps import require_owner_pin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/trades", tags=["trades"])
 
-PRICE_DRIFT_TOLERANCE_PCT = Decimal("5.0")
-
-# strategy.json is volume-mounted at /strategy.json (Docker) or falls back to
-# the src root for local runs.
-_STRATEGY_PATHS = [
-    Path("/strategy.json"),
-    Path(__file__).resolve().parents[4] / "strategy.json",
-]
-
-
-def _load_strategy() -> dict:
-    for p in _STRATEGY_PATHS:
-        if p.exists():
-            with open(p) as f:
-                return json.load(f)
-    return {}
-
 
 def fetch_live_price(symbol: str) -> Decimal | None:
-    """Fetch current price via Alpaca snapshot. Returns None on failure."""
+    """Fetch current price via Alpaca snapshot. Returns None on failure.
+
+    Still used on the sell path where only one symbol is needed.
+    The buy path uses fetch_snapshots_sync directly to get all symbols at once.
+    """
     try:
         from ..services.alpaca_data import fetch_snapshots_sync
         snaps = fetch_snapshots_sync([symbol])
@@ -68,31 +54,12 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
     qty = Decimal(str(rec.quantity))
     stored_price = Decimal(str(rec.suggested_price))
 
-    # Fetch live price; reject if Alpaca is unavailable.
-    live_price = await asyncio.to_thread(fetch_live_price, rec.symbol)
-    if live_price is None:
-        raise HTTPException(status_code=503, detail=f"Cannot fetch live price for {rec.symbol}")
-
-    # Drift check: stored recommendation price vs live price.
-    drift_pct = abs(live_price - stored_price) / stored_price * 100
-    if drift_pct > PRICE_DRIFT_TOLERANCE_PCT:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Price drift {drift_pct:.1f}% exceeds {PRICE_DRIFT_TOLERANCE_PCT}% tolerance — "
-                f"stored ${stored_price}, live ${live_price}"
-            ),
-        )
-
-    # Compute final limit price using strategy buffer.
-    strategy = _load_strategy()
+    # C1: use canonical loader so /app/strategy.json (Docker mount) is always found.
+    strategy = load_strategy_json()
     exec_cfg = strategy.get("execution", {})
-    if rec.action == "buy":
-        buf = Decimal(str(exec_cfg.get("buy_limit_buffer_pct", 0.3))) / Decimal("100")
-        limit_price = (live_price * (Decimal("1") + buf)).quantize(Decimal("0.01"))
-    else:
-        buf = Decimal(str(exec_cfg.get("sell_limit_buffer_pct", 0.3))) / Decimal("100")
-        limit_price = (live_price * (Decimal("1") - buf)).quantize(Decimal("0.01"))
+
+    # I1: drift tolerance is configurable in strategy.json; default 5.0%.
+    drift_tolerance_pct = Decimal(str(exec_cfg.get("confirm_drift_pct", 5.0)))
 
     # Re-run all buy-side gates immediately before broker submission.
     if rec.action == "buy":
@@ -100,9 +67,37 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
         held = list((await db.execute(select(Position))).scalars().all())
         held_symbols = {p.symbol.upper() for p in held}
 
-        # Compute total portfolio value using live prices (best-effort).
+        # C2: fetch a single multi-symbol snapshot so each held position is valued
+        # at its OWN live price, not at the proposed buy's price.
+        from ..services.alpaca_data import fetch_snapshots_sync
+        all_symbols = list({rec.symbol.upper()} | {p.symbol.upper() for p in held})
+        snapshots = await asyncio.to_thread(fetch_snapshots_sync, all_symbols)
+
+        def _live_price_for(sym: str) -> Decimal:
+            snap = snapshots.get(sym.upper())
+            if snap and snap.get("current_price"):
+                return Decimal(str(snap["current_price"]))
+            return Decimal("0")
+
+        live_price = _live_price_for(rec.symbol)
+        if live_price <= 0:
+            raise HTTPException(status_code=503, detail=f"Cannot fetch live price for {rec.symbol}")
+
+        # C3: drift check applies only to buys — sells are usually stop-loss
+        # reactions and must not be blocked by adverse price movement.
+        drift_pct = abs(live_price - stored_price) / stored_price * 100
+        if drift_pct > drift_tolerance_pct:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Buy price drift {drift_pct:.1f}% exceeds {drift_tolerance_pct}% tolerance — "
+                    f"stored ${stored_price}, live ${live_price}"
+                ),
+            )
+
+        # C2: compute total value using same price dict (numerator/denominator consistent).
         from ..services.recommender import _compute_portfolio_total_value
-        price_data = {rec.symbol: {"current_price": float(live_price)}}
+        price_data = {sym.upper(): {"current_price": float(_live_price_for(sym))} for sym in all_symbols}
         total_value = _compute_portfolio_total_value(
             Decimal(str(portfolio.cash_balance)),
             held,
@@ -118,11 +113,12 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
         held_sectors = await asyncio.gather(
             *(asyncio.to_thread(_get_sector_for_symbol, p.symbol) for p in held)
         )
+        # C2: each held position valued at its own live price.
         held_with_sector = [
             {
                 "symbol": p.symbol,
                 "sector": held_sectors[i],
-                "market_value": Decimal(str(p.shares)) * live_price,
+                "market_value": Decimal(str(p.shares)) * _live_price_for(p.symbol),
             }
             for i, p in enumerate(held)
         ]
@@ -151,6 +147,19 @@ async def confirm_trade(body: ConfirmTradeRequest, db: AsyncSession = Depends(ge
                 status_code=422,
                 detail=f"Risk gate rejected at confirm time: {gate_result.reason}",
             )
+    else:
+        # Sell path: fetch live price for limit price calculation only (no gates, no drift check).
+        live_price = await asyncio.to_thread(fetch_live_price, rec.symbol)
+        if live_price is None:
+            raise HTTPException(status_code=503, detail=f"Cannot fetch live price for {rec.symbol}")
+
+    # Compute final limit price using strategy buffer.
+    if rec.action == "buy":
+        buf = Decimal(str(exec_cfg.get("buy_limit_buffer_pct", 0.3))) / Decimal("100")
+        limit_price = (live_price * (Decimal("1") + buf)).quantize(Decimal("0.01"))
+    else:
+        buf = Decimal(str(exec_cfg.get("sell_limit_buffer_pct", 0.3))) / Decimal("100")
+        limit_price = (live_price * (Decimal("1") - buf)).quantize(Decimal("0.01"))
 
     broker = get_broker(db)
     try:

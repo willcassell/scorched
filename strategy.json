@@ -27,7 +27,8 @@
   "notes": "",
   "execution": {
     "buy_limit_buffer_pct": 0.3,
-    "sell_limit_buffer_pct": 0.3
+    "sell_limit_buffer_pct": 0.3,
+    "confirm_drift_pct": 5.0
   },
   "circuit_breaker": {
     "enabled": true,

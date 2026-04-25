@@ -1,7 +1,7 @@
-"""Tests for the hardened /trades/confirm endpoint (audit C1)."""
+"""Tests for the hardened /trades/confirm endpoint (audit C1–C3, I1, I3)."""
 from datetime import date
 from decimal import Decimal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -41,6 +41,10 @@ async def _make_rec(db_session, symbol="AAPL", action="buy", quantity=Decimal("1
     return rec
 
 
+# ---------------------------------------------------------------------------
+# Buy-path tests (C1 / original audit tests)
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
 async def test_confirm_uses_stored_rec_quantity_not_client_qty(db_session, _override_db):
     """Audit C1: client-supplied shares must not override stored rec quantity."""
@@ -53,11 +57,13 @@ async def test_confirm_uses_stored_rec_quantity_not_client_qty(db_session, _over
         "filled_avg_price": Decimal("150"),
     }
 
-    gate_result = AsyncMock()
+    gate_result = MagicMock()
     gate_result.passed = True
 
-    with patch("scorched.api.trades.get_broker", return_value=fake_broker), \
-         patch("scorched.api.trades.fetch_live_price", return_value=Decimal("150.50")), \
+    # Buy path does a local import of fetch_snapshots_sync — patch at the source module.
+    snapshot_data = {"AAPL": {"current_price": 150.5, "prev_close": 149.0}}
+    with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
+         patch("scorched.api.trades.get_broker", return_value=fake_broker), \
          patch("scorched.api.trades.run_all_buy_gates", return_value=gate_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post(
@@ -78,12 +84,13 @@ async def test_confirm_rejects_when_gates_fail(db_session, _override_db):
 
     fake_broker = AsyncMock()
 
-    gate_result = AsyncMock()
+    gate_result = MagicMock()
     gate_result.passed = False
     gate_result.reason = "cash floor would breach"
 
-    with patch("scorched.api.trades.get_broker", return_value=fake_broker), \
-         patch("scorched.api.trades.fetch_live_price", return_value=Decimal("150.50")), \
+    snapshot_data = {"AAPL": {"current_price": 150.5, "prev_close": 149.0}}
+    with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
+         patch("scorched.api.trades.get_broker", return_value=fake_broker), \
          patch("scorched.api.trades.run_all_buy_gates", return_value=gate_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post(
@@ -98,13 +105,15 @@ async def test_confirm_rejects_when_gates_fail(db_session, _override_db):
 
 @pytest.mark.asyncio
 async def test_confirm_rejects_when_live_price_drifts_beyond_tolerance(db_session, _override_db):
-    """Stored price was $150; live $200 -> 33% drift > 5% tolerance -> reject."""
+    """Stored price was $150; live $200 -> 33% drift > 5% tolerance -> reject (buys only)."""
     rec = await _make_rec(db_session)
 
     fake_broker = AsyncMock()
 
-    with patch("scorched.api.trades.get_broker", return_value=fake_broker), \
-         patch("scorched.api.trades.fetch_live_price", return_value=Decimal("200.00")):
+    # $200 live vs $150 stored = 33.3% drift, well above 5% default
+    snapshot_data = {"AAPL": {"current_price": 200.0, "prev_close": 149.0}}
+    with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
+         patch("scorched.api.trades.get_broker", return_value=fake_broker):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post(
                 "/api/v1/trades/confirm",
@@ -114,3 +123,76 @@ async def test_confirm_rejects_when_live_price_drifts_beyond_tolerance(db_sessio
     assert r.status_code == 422
     assert "drift" in r.text.lower() or "tolerance" in r.text.lower()
     fake_broker.submit_buy.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Sell-path tests (C3 / I3)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_confirm_sell_skips_buy_gates(db_session, _override_db):
+    """Sells must NOT run run_all_buy_gates — they always pass through."""
+    rec = await _make_rec(db_session, action="sell")
+
+    fake_broker = AsyncMock()
+    fake_broker.submit_sell.return_value = {
+        "status": "submitted",
+        "filled_qty": Decimal("10"),
+        "filled_avg_price": Decimal("150"),
+    }
+
+    with patch("scorched.api.trades.fetch_live_price", return_value=Decimal("150.0")), \
+         patch("scorched.api.trades.get_broker", return_value=fake_broker), \
+         patch("scorched.api.trades.run_all_buy_gates") as mock_gates:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
+
+    assert r.status_code == 200
+    fake_broker.submit_sell.assert_called_once()
+    mock_gates.assert_not_called()  # sells skip the buy gates
+
+
+@pytest.mark.asyncio
+async def test_confirm_sell_passes_despite_large_drift(db_session, _override_db):
+    """A 20% gap-down on a sell must NOT be rejected (audit C3 / LRCX pattern)."""
+    rec = await _make_rec(db_session, action="sell", suggested_price=Decimal("150.00"))
+
+    fake_broker = AsyncMock()
+    fake_broker.submit_sell.return_value = {
+        "status": "submitted",
+        "filled_qty": Decimal("10"),
+        "filled_avg_price": Decimal("120"),
+    }
+
+    # 20% drift — would have been rejected under the pre-C3 logic
+    with patch("scorched.api.trades.fetch_live_price", return_value=Decimal("120.0")), \
+         patch("scorched.api.trades.get_broker", return_value=fake_broker):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
+
+    assert r.status_code == 200
+    fake_broker.submit_sell.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_confirm_sell_uses_sell_buffer_below_live(db_session, _override_db):
+    """Sell limit price = live * (1 - sell_buffer_pct/100)."""
+    rec = await _make_rec(db_session, action="sell", suggested_price=Decimal("150.00"))
+
+    fake_broker = AsyncMock()
+    fake_broker.submit_sell.return_value = {
+        "status": "submitted",
+        "filled_qty": Decimal("10"),
+        "filled_avg_price": Decimal("149.55"),
+    }
+
+    with patch("scorched.api.trades.fetch_live_price", return_value=Decimal("150.0")), \
+         patch("scorched.api.trades.get_broker", return_value=fake_broker):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
+
+    assert r.status_code == 200
+    fake_broker.submit_sell.assert_called_once()
+    kwargs = fake_broker.submit_sell.call_args.kwargs
+    # 150 * (1 - 0.003) = 149.55
+    assert kwargs["limit_price"] == Decimal("149.55")
