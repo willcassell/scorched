@@ -89,8 +89,8 @@ class TestCheckSectorExposure:
         )
         assert second_ok is False, "Second buy should be rejected (would push to 45%)"
 
-    def test_unknown_symbol_allowed_through(self):
-        """Unknown sector (None) should pass — don't block on incomplete sector map."""
+    def test_unknown_symbol_fail_closed(self):
+        """Unknown sector (None) must now REJECT — fail closed on missing metadata (audit M10)."""
         from scorched.services.recommender import check_sector_exposure
 
         ok = check_sector_exposure(
@@ -101,7 +101,7 @@ class TestCheckSectorExposure:
             total_value=Decimal("100000"),
             max_sector_pct=40.0,
         )
-        assert ok is True
+        assert ok is False
 
     def test_sells_are_not_checked(self):
         """Sector gate function only applies to buys — callers skip it for sells.
@@ -173,3 +173,32 @@ class TestCheckSectorExposure:
             max_sector_pct=max_sector_pct,
         )
         assert ok is False  # 39k + 5k = 44% > 40%
+
+
+class TestSectorGateFailClosed:
+    def test_unknown_sector_now_rejects(self):
+        """Regression for audit M10: was returning True with warning."""
+        from scorched.services.recommender import check_sector_exposure
+
+        result = check_sector_exposure(
+            proposed_symbol="UNKNOWN",
+            proposed_sector=None,
+            proposed_dollars=Decimal("10000"),
+            held_positions=[],
+            total_value=Decimal("100000"),
+            max_sector_pct=40.0,
+        )
+        assert result is False  # fail closed
+
+    def test_known_sector_within_cap_still_passes(self):
+        from scorched.services.recommender import check_sector_exposure
+
+        result = check_sector_exposure(
+            proposed_symbol="AAPL",
+            proposed_sector="Technology",
+            proposed_dollars=Decimal("10000"),
+            held_positions=[],
+            total_value=Decimal("100000"),
+            max_sector_pct=40.0,
+        )
+        assert result is True

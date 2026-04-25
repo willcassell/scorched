@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 import time
+import requests
 
 from ..http_retry import retry_call
+from ..config import settings
 from contextlib import nullcontext
 from typing import Any
 
@@ -140,3 +142,31 @@ def build_analyst_context(analyst_data: dict[str, dict[str, Any]]) -> str:
             lines.append(f"  Price Targets — {' | '.join(parts)}")
 
     return "\n".join(lines)
+
+
+def fetch_sector_for_symbol(symbol: str) -> str | None:
+    """Fetch GICS sector from Finnhub stock/profile2 endpoint. Returns None on failure.
+
+    Used as fallback when the static `_SECTOR_ETF_MAP` has no entry for `symbol`.
+    Finnhub's `finnhubIndustry` field is GICS-aligned for the major sectors.
+
+    NOTE (Tier 2 concern): Finnhub returns names like "Information Technology" or
+    "Financial Services" whereas `_ETF_TO_SECTOR` uses "Technology" and "Financials".
+    If sector-name normalization is needed, it should be added as a Tier 2 follow-up
+    in `_get_sector_for_symbol` — not here. The gate still fails closed on unknown
+    sectors, so a Finnhub-vs-ETF-map mismatch is conservative, not permissive.
+    """
+    if not settings.finnhub_api_key:
+        return None
+    url = "https://finnhub.io/api/v1/stock/profile2"
+    params = {"symbol": symbol.upper(), "token": settings.finnhub_api_key}
+    try:
+        response = retry_call(lambda: requests.get(url, params=params, timeout=10))
+        if response is None or response.status_code != 200:
+            return None
+        data = response.json()
+        industry = data.get("finnhubIndustry")
+        return industry if industry else None
+    except Exception as exc:
+        logger.warning("Finnhub sector lookup failed for %s: %s", symbol, exc)
+        return None

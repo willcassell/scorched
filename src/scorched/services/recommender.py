@@ -253,17 +253,18 @@ _ETF_TO_SECTOR: dict[str, str] = {
 
 
 def _get_sector_for_symbol(symbol: str) -> str | None:
-    """Return GICS sector name for a symbol, or None if not in the sector map.
-
-    Imports _SECTOR_ETF_MAP lazily to avoid a circular import with research.py.
-    Returns None (not a string) so callers can distinguish unknown from diversified.
-    """
+    """Return GICS sector for the symbol; uses static ETF map first, Finnhub second."""
     from .research import _SECTOR_ETF_MAP  # local import avoids module-level circularity
+    from .finnhub_data import fetch_sector_for_symbol
 
     etf = _SECTOR_ETF_MAP.get(symbol)
-    if etf is None:
-        return None
-    return _ETF_TO_SECTOR.get(etf)
+    if etf is not None:
+        sector = _ETF_TO_SECTOR.get(etf)
+        if sector:
+            return sector
+
+    # Fallback: ask Finnhub.
+    return fetch_sector_for_symbol(symbol)
 
 
 def check_sector_exposure(
@@ -284,15 +285,15 @@ def check_sector_exposure(
         total_value:      Total portfolio value (cash + all positions).
         max_sector_pct:   Hard cap, e.g. 40.0 for 40%.
 
-    Returns True with a warning when sector is None — we don't block on
-    missing metadata (incomplete sector map should not freeze the bot).
+    Returns False with a warning when sector is None — fail closed on
+    missing metadata (audit M10) so a 40% cap is actually enforced.
     """
     if proposed_sector is None:
         logger.warning(
-            "Sector gate: %s has no sector metadata — allowing through (unknown sector)",
+            "Sector gate REJECT %s: unknown sector — failing closed (audit M10)",
             proposed_symbol,
         )
-        return True
+        return False
     if total_value <= 0:
         return True
 

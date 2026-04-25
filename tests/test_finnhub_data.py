@@ -52,3 +52,48 @@ class TestBuildAnalystContext:
 
     def test_empty_data_returns_empty(self):
         assert build_analyst_context({}) == ""
+
+
+class TestSectorFallback:
+    def test_returns_finnhub_industry_when_available(self):
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {
+            "ticker": "PLTR",
+            "finnhubIndustry": "Technology",
+            "name": "Palantir",
+        }
+        with patch("scorched.services.finnhub_data.retry_call", return_value=fake_response), \
+             patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = "fake-key"
+            from scorched.services.finnhub_data import fetch_sector_for_symbol
+            sector = fetch_sector_for_symbol("PLTR")
+        assert sector == "Technology"
+
+    def test_returns_none_when_finnhub_returns_no_industry(self):
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {"ticker": "WEIRD"}
+        with patch("scorched.services.finnhub_data.retry_call", return_value=fake_response), \
+             patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = "fake-key"
+            from scorched.services.finnhub_data import fetch_sector_for_symbol
+            sector = fetch_sector_for_symbol("WEIRD")
+        assert sector is None
+
+    def test_returns_none_when_no_api_key(self):
+        with patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = ""
+            from scorched.services.finnhub_data import fetch_sector_for_symbol
+            sector = fetch_sector_for_symbol("AAPL")
+        assert sector is None
+
+    def test_returns_none_on_http_error(self):
+        fake_response = MagicMock()
+        fake_response.status_code = 500
+        with patch("scorched.services.finnhub_data.retry_call", return_value=fake_response), \
+             patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = "fake-key"
+            from scorched.services.finnhub_data import fetch_sector_for_symbol
+            sector = fetch_sector_for_symbol("AAPL")
+        assert sector is None
