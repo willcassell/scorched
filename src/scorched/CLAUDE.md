@@ -33,16 +33,16 @@ The declared strategy is **2–6 week swing/position trading** with two entry st
 1. **Qualifying setup**: EITHER a confirmed breakout above a prior resistance on >1.5× average volume, OR a mean-reversion entry — oversold (RSI 25–40, %B ≤ 0) inside a larger uptrend (50-day MA still rising). Do not mix the two at entry.
 2. **Named catalyst**: Specific, verifiable event (earnings beat, analyst upgrade, product launch, FDA approval, contract win, sector rotation). "The stock looks strong" is NOT a catalyst.
 3. **Not overextended**: For breakouts, prefer a controlled consolidation over a parabolic vertical spike. For mean-reversion, the broader trend must still be up — no catching knives in a downtrend.
-4. **Sector concentration**: No single sector > 40% of portfolio. With 5 × 20% positions, this means max 2 in any sector.
+4. **Sector concentration**: No single sector > 40% of portfolio. With the 33% max-position cap, one full-size position consumes most of a sector's budget — this rule is code-enforced (buys that would breach it are rejected).
 
 ### Step 3: Apply Position Sizing Rules
 
 | Condition | Position Size |
 |-----------|--------------|
-| Normal market (VIX <20, SPY uptrend) | 15–25% of total portfolio value |
-| Elevated volatility (VIX 20–30) | 10–15% of portfolio |
+| Normal market (VIX <20, SPY uptrend) | 15–33% of portfolio (conviction-weighted; 33% is the hard cap in `strategy.json`) |
+| Elevated volatility (VIX 20–30) | 10–20% of portfolio |
 | Portfolio down >12% from starting capital | Half normal size until recovery |
-| Max simultaneous positions | 5 |
+| Max simultaneous positions | 10 (hard cap — enforced by code) |
 | Cash floor | 10% of total portfolio at all times (hard minimum — enforced by code) |
 
 **Cash floor calculation**: `cash_floor = total_portfolio_value × 0.10`. Never recommend a buy that would bring cash below this level.
@@ -107,7 +107,7 @@ RSI interpretation depends on entry style:
 ## Hard Rules — Never Break These
 
 1. **No earnings holds**: Do not buy a position if an earnings report is scheduled within the next 3 trading days, unless the position was opened before the earnings date was announced. For 2–6 week holds that would span earnings, require the thesis to be earnings-independent or plan to trim 50% before the print.
-2. **Sector concentration**: No single sector may exceed 40% of total portfolio value. With 5 positions at ~20% each, that means max 2 in any sector.
+2. **Sector concentration**: No single sector may exceed 40% of total portfolio value. Code-enforced — buys that would push a sector above the cap are rejected before execution.
 3. **100% gain rule**: If any position is up 100%+, sell at least half immediately.
 4. **No buying into a first-day selloff**: If SPY is down >2% today, do not initiate new long positions. Wait for stabilization.
 5. **Stop loss at -8% from entry**: Any position down 8% from the buy price should be exited in full. No averaging down. (Widened from -5% to accommodate 2–6 week volatility; position sizing scales for this.)

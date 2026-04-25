@@ -10,9 +10,9 @@
 - **Entry styles:** Breakout + Mean reversion
 - **Sell discipline:** Scale out
 - **Loss management:** Hybrid (time-based + price-based)
-- **Position sizing:** 15–25% of portfolio per position, conviction-weighted
+- **Position sizing:** conviction-weighted, up to 33% of portfolio per position (hard cap in `strategy.json`)
 - **Cash floor:** 10% of total portfolio value (hard-enforced in code)
-- **Max positions:** 5 simultaneous
+- **Max positions:** 10 simultaneous (hard cap in `strategy.json`)
 - **Max sector exposure:** 40% of portfolio (code-enforced — buys that breach this cap are rejected in `recommender.py`)
 - **Stop loss:** -8% from entry
 - **Time stop:** 30 calendar days flat/down with no fresh catalyst

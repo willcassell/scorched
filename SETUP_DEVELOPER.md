@@ -212,11 +212,13 @@ Without Alpaca keys, the bot runs in paper-only mode (tracks everything in the d
 
 Edit via the dashboard at `/strategy` or directly in `strategy.json`:
 
-- **hold_period**: How long to hold positions (default: "3-10d")
-- **concentration.max_holdings**: Maximum simultaneous positions (default: 5)
-- **concentration.max_position_pct**: Max % of portfolio per position (default: 20)
-- **loss_management**: "hard_stop" enables automatic stop-loss exits
-- **circuit_breaker**: Gate thresholds for blocking buys into falling markets
+- **hold_period**: How long to hold positions (current: `2-6wk` swing/position)
+- **concentration.max_holdings**: Maximum simultaneous positions (current: 10; code default fallback: 5)
+- **concentration.max_position_pct**: Max % of portfolio per position (current: 33; code default fallback: 20)
+- **concentration.max_sector_pct**: Max % of portfolio in a single sector (current: 40, code-enforced)
+- **loss_management**: `time_price_hybrid` — combined -8% hard stop and 30-day time stop
+- **circuit_breaker**: Gate thresholds for blocking buys into falling markets (gap-down, SPY drop, VIX)
+- **drawdown_gate**: Blocks new buys when portfolio drops >8% from peak equity
 
 ### Portfolio
 

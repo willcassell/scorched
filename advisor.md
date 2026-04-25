@@ -1,6 +1,6 @@
 # Scorched Trading System — Advisor & CPA Reference
 
-*Last updated: April 13, 2026*
+*Last updated: April 25, 2026*
 
 This document is written for CPAs, financial advisors, and compliance professionals who need to understand what this automated trading system does, how it makes decisions, what safeguards are in place, and what the tax and risk implications are.
 
@@ -21,27 +21,34 @@ Scorched is an automated stock trading system that uses Claude (Anthropic's AI) 
 
 ## 2. Investment Strategy
 
-The system follows a **short-term momentum strategy** with these parameters:
+The system follows a **swing/position trading strategy** with two complementary entry styles. Current parameters as configured in `strategy.json`:
 
 | Parameter | Value |
 |-----------|-------|
-| **Holding period** | 3–10 trading days (target) |
-| **Position sizing** | 15–25% of portfolio per position |
-| **Maximum positions** | 3–5 simultaneous |
-| **Cash reserve floor** | 10–15% of portfolio always held in cash |
-| **Universe** | ~80 large-cap U.S. equities (S&P 500 components) plus a daily momentum screener of the full S&P 500 |
-| **Strategy type** | Trend-following momentum — buys stocks with positive price momentum, specific catalysts, and technical confirmation |
+| **Holding period** | 2–6 weeks (swing/position) |
+| **Position sizing** | Conviction-weighted, up to 33% of portfolio per position (hard cap) |
+| **Maximum positions** | 10 simultaneous (hard cap) |
+| **Maximum sector exposure** | 40% of portfolio in any single sector (code-enforced) |
+| **Cash reserve floor** | 10% of total portfolio value (hard floor in code) |
+| **Drawdown gate** | New buys blocked when portfolio drops >8% from peak equity |
+| **Universe** | ~80 large-cap U.S. equities (S&P 500 components) plus a daily momentum screener and a mean-reversion screener of the full S&P 500 |
+| **Strategy type** | Multi-style — confirmed breakouts above resistance with volume expansion, AND oversold mean-reversion entries inside confirmed uptrends |
 
-**Entry criteria:** 3–8% gain over prior 5 trading days, accelerating volume, identifiable catalyst (earnings beat, analyst upgrade, sector rotation), technical alignment (MACD, moving average crossover, relative strength vs. sector).
+**Entry criteria** (one of the two styles must be cleanly met — not mixed):
+- **Breakout:** stock clearing a prior resistance with volume expansion (1.0–1.5× with tier-1 catalyst, 1.5×+ unconditional)
+- **Mean reversion:** RSI 25–48 with %B ≤ 0, inside a rising 50-day MA (uptrend intact)
+- **Both styles require a specific named catalyst** — earnings beat, analyst upgrade, FDA decision, contract win, sector rotation. "Strong technicals" is not a catalyst.
 
 **Exit criteria:**
-- Profit target: consider partial exit at +8%, full exit at +15%
-- Stop loss: exit at -5% from entry price
-- Time stop: exit if flat/down after 7 trading days
-- ATR-based trailing stop (see Section 5)
+- Profit target: partial exit (50%) at +15%, full exit at +25%
+- 100% gain rule: any position up 100%+ — sell at least half immediately
+- Stop loss: exit at -8% from entry price (no averaging down)
+- Time stop: exit if flat/down after 30 calendar days with no fresh catalyst
+- ATR-based trailing stop (see Section 5) — high-water-mark ratchet, breach triggers Claude exit evaluation
 - Catalyst invalidation: immediate exit
+- Earnings within 3 days + thesis is earnings-dependent: exit before the print
 
-The strategy is **fully configurable** via a web dashboard. All parameters above can be adjusted by the account owner at any time, and changes take effect the next trading day.
+The strategy is **fully configurable** via a web dashboard. All parameters above can be adjusted by the account owner at any time, and changes take effect the next trading day. The dashboard form does a shallow merge against `strategy.json`, so safety sections (`circuit_breaker`, `intraday_monitor`, `drawdown_gate`) are preserved across saves.
 
 ---
 
@@ -164,9 +171,9 @@ The system has **seven independent layers of risk management**, any one of which
 
 ### Layer 1 — Strategy Constraints
 - Maximum simultaneous positions (configurable, default 3–5)
-- Minimum cash reserve (configurable, default 10–15%)
+- Minimum cash reserve (configurable, current: 10%)
 - Sector concentration limits (configurable, default max 40% in any sector)
-- Position size limits (configurable, default 15–25% per position)
+- Position size limits (configurable, current cap: 33% per position, conviction-weighted)
 
 ### Layer 2 — AI Risk Committee (Call 3)
 - Default-reject stance — each buy must be affirmatively approved
@@ -215,7 +222,7 @@ All realized gains and losses are classified as **short-term** or **long-term** 
 | **Short-term** | < 365 calendar days | 37% (ordinary income) |
 | **Long-term** | ≥ 365 calendar days | 20% (capital gains) |
 
-Given the strategy's 3–10 day target holding period, **virtually all realized gains will be short-term** and taxed at ordinary income rates.
+Given the strategy's 2–6 week target holding period, **virtually all realized gains will be short-term** (under 365 days) and taxed at ordinary income rates.
 
 ### Tax Rates
 
@@ -354,7 +361,7 @@ Every action is logged and auditable:
 
 ### Market Risks
 - **Short-term momentum strategies can underperform in choppy, range-bound markets.** The strategy relies on trends continuing; mean-reversion environments will produce losses.
-- **Concentrated positions** (15–25% per position, max 5 positions) mean that a single bad trade can significantly impact the portfolio. This is by design for the strategy type, but the risk should be understood.
+- **Concentrated positions** (up to 33% per position, max 10 positions) mean that a single bad trade can significantly impact the portfolio. This is by design for the strategy type, but the risk should be understood. Sector concentration is capped at 40% in code.
 - **The system trades only U.S. large-cap equities.** It has no exposure to bonds, commodities, international markets, or alternative assets. It is not a diversified portfolio.
 
 ### AI Risks
@@ -386,13 +393,13 @@ Every action is logged and auditable:
 
 ### Pattern Day Trader Considerations
 
-If the Alpaca account executes 4+ day trades within 5 business days and the account equity is below $25,000, the account may be flagged as a Pattern Day Trader (PDT). The system's target holding period of 3–10 days means PDT violations are unlikely but not impossible, particularly during volatile periods when the intraday monitor exits positions on the same day they were opened.
+If the Alpaca account executes 4+ day trades within 5 business days and the account equity is below $25,000, the account may be flagged as a Pattern Day Trader (PDT). The system's 2–6 week target holding period makes PDT violations unlikely, but not impossible — the intraday monitor can exit positions on the same day they were opened if a hard trigger fires (gap-down, SPY drop, VIX spike, trailing stop breach).
 
 ---
 
 ## 11. Questions an Advisor Should Ask
 
-1. **What is the actual holding period distribution?** Review the trade history to see if positions are being held for the target 3–10 days or if they're being stopped out earlier.
+1. **What is the actual holding period distribution?** Review the trade history to see if positions are being held for the target 2–6 weeks or if they're being stopped out earlier (and whether the time-stop or hard-stop is firing more often).
 
 2. **What is the realized short-term gain/loss for the tax year?** All gains from this strategy will be short-term. Estimate the tax liability using the client's actual marginal rate, not the system's default 37%.
 

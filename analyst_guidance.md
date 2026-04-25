@@ -81,7 +81,7 @@ Mean-reversion entries do not require volume confirmation — the RSI 25–40 + 
 
 **Overall macro read**: If 3+ indicators are bearish, reduce new position sizes by at least half. If VIX >30 or SPY down >2% today, do not initiate new buys.
 
-**Macro event windows (FOMC, CPI, PCE, Jobs, GDP releases)** elevate intraday volatility but are NOT automatic disqualifiers. The VIX >30 and SPY –2% cutoffs above are the only macro pass-throughs. If a setup is otherwise high-conviction with a strong tier-1 named catalyst, an upcoming macro print is a **sizing adjustment** — reduce to 10–15% position size instead of 15–25% — not a reason to pass. Only decline the entry entirely when (a) the catalyst is itself the macro event (e.g., opening a bank position ahead of FOMC), (b) the setup is borderline and the event would materially reshape the thesis, or (c) the hard VIX/SPY cutoffs fire. "Macro caution ahead of PCE" alone is not sufficient grounds to reject an otherwise-qualified tier-1 setup.
+**Macro event windows (FOMC, CPI, PCE, Jobs, GDP releases)** elevate intraday volatility but are NOT automatic disqualifiers. The VIX >30 and SPY –2% cutoffs above are the only macro pass-throughs. If a setup is otherwise high-conviction with a strong tier-1 named catalyst, an upcoming macro print is a **sizing adjustment** — reduce to roughly half normal conviction sizing — not a reason to pass. Only decline the entry entirely when (a) the catalyst is itself the macro event (e.g., opening a bank position ahead of FOMC), (b) the setup is borderline and the event would materially reshape the thesis, or (c) the hard VIX/SPY cutoffs fire. "Macro caution ahead of PCE" alone is not sufficient grounds to reject an otherwise-qualified tier-1 setup.
 
 ### Options Data (candidates only)
 - `put_call_ratio` <0.7: Bullish options sentiment. 0.7–1.2: Neutral. >1.2: Bearish or heavy hedging (note as risk).
@@ -142,8 +142,8 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 
 1. **Catalyst required**: Do not recommend a buy without a specific, named, verifiable catalyst. "Strong technicals" or "sector momentum" alone is not sufficient.
 2. **No earnings risk**: Do not open a new position if the company reports earnings within 3 trading days (unless the position predates the announcement date). For 2–6 week holds that would span earnings, require the thesis to be earnings-independent or plan to trim 50% before the print.
-3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value (e.g., with 5 positions at 20% each, max 2 in same sector). This is also enforced in code — buys that would breach the cap are rejected before execution.
-4. **Stop loss at -8% from entry** (widened from -5% to accommodate 2–6 week volatility). Position sizing already scales for this wider stop (max 20% of portfolio). No averaging down.
+3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value. This is enforced in code — buys that would push a sector above the cap are rejected before execution. Note that with the 33% max-position cap, even one full-size position in a sector consumes most of the budget.
+4. **Stop loss at -8% from entry** (widened from -5% to accommodate 2–6 week volatility). Position sizing is conviction-weighted up to a 33% cap; size down on lower-conviction setups so the -8% stop on a full-size position is a tolerable single-trade loss. No averaging down.
 5. **Time stop at 30 calendar days (≈6 weeks of trading days).** If a position is flat or down after 30 calendar days with no fresh catalyst, exit regardless of thesis. Do not let a swing trade become a buy-and-hold.
 6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.
 7. **No first-day buying into a selloff**: If SPY is down >2% today, do not initiate any new long positions. Wait for stabilization.

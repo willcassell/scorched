@@ -54,4 +54,4 @@ Look for: heavy use of "momentum", "chasing", "parabolic", "breakout confirmatio
 ## Notes
 
 - Track against the Buy-rate watch item in `~/.claude/projects/-home-ubuntu-tradebot/memory/project_buy_rate_watchlist.md` — resolution criteria there govern when each BL-item becomes urgent vs. can stay deferred.
-- Before starting BL-1, verify `strategy.md` vs `strategy.json` — `strategy.md:15` says "Max positions: 5 simultaneous" but `strategy.json → concentration.max_holdings = 10`. Reconcile in the same change.
+- ~~Before starting BL-1, verify `strategy.md` vs `strategy.json` — `strategy.md:15` says "Max positions: 5 simultaneous" but `strategy.json → concentration.max_holdings = 10`. Reconcile in the same change.~~ **Reconciled 2026-04-25** — docs synced to `strategy.json` (33% / 10 max holdings).
