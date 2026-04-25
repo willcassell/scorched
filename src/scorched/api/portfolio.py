@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
-@router.get("", response_model=PortfolioResponse)
+@router.get("", response_model=PortfolioResponse, dependencies=[Depends(require_owner_pin)])
 async def get_portfolio(db: AsyncSession = Depends(get_db)):
     return await portfolio_svc.get_portfolio_state(db)
 
 
-@router.get("/history", response_model=list[TradeHistoryItem])
+@router.get("/history", response_model=list[TradeHistoryItem], dependencies=[Depends(require_owner_pin)])
 async def get_trade_history(
     symbol: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
@@ -36,12 +36,12 @@ async def get_trade_history(
     return rows
 
 
-@router.get("/benchmarks", response_model=BenchmarkResponse)
+@router.get("/benchmarks", response_model=BenchmarkResponse, dependencies=[Depends(require_owner_pin)])
 async def get_benchmarks(db: AsyncSession = Depends(get_db)):
     return await portfolio_svc.get_benchmark_comparison(db)
 
 
-@router.get("/tax-summary", response_model=TaxSummaryResponse)
+@router.get("/tax-summary", response_model=TaxSummaryResponse, dependencies=[Depends(require_owner_pin)])
 async def get_tax_summary(db: AsyncSession = Depends(get_db)):
     return await portfolio_svc.get_tax_summary(db)
 

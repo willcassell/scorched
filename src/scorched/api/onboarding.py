@@ -1,20 +1,39 @@
 """Onboarding wizard API — key validation, config save, status check."""
+import hmac
 import logging
 import os
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from ..config import settings
 from ..services.strategy import save_strategy_json
-from .deps import require_owner_pin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+
+
+def _onboarding_open() -> bool:
+    """Return True if onboarding has not yet been completed."""
+    return not Path(settings.onboarding_completed_path).exists()
+
+
+def require_bootstrap_token(x_bootstrap_token: str = Header(default="")):
+    """Guard for onboarding routes. Requires BOOTSTRAP_TOKEN header until first save completes.
+
+    After /save succeeds, the sentinel file is written and all onboarding routes return 410.
+    """
+    if not _onboarding_open():
+        raise HTTPException(status_code=410, detail="Onboarding already completed; route disabled")
+    expected = settings.bootstrap_token
+    if not expected:
+        raise HTTPException(status_code=503, detail="BOOTSTRAP_TOKEN unset on server")
+    if not hmac.compare_digest(x_bootstrap_token, expected):
+        raise HTTPException(status_code=403, detail="Incorrect bootstrap token")
 
 # Allowed env keys the wizard can write (whitelist for safety)
 _ALLOWED_ENV_KEYS = {
@@ -175,7 +194,7 @@ _VALIDATORS = {
 }
 
 
-@router.post("/validate-key", dependencies=[Depends(require_owner_pin)])
+@router.post("/validate-key", dependencies=[Depends(require_bootstrap_token)])
 async def validate_key(req: ValidateKeyRequest):
     validator = _VALIDATORS.get(req.service)
     if not validator:
@@ -268,7 +287,7 @@ def _write_env(data: dict[str, str]) -> None:
         pass  # Docker volume may not allow chmod
 
 
-@router.post("/save", dependencies=[Depends(require_owner_pin)])
+@router.post("/save", dependencies=[Depends(require_bootstrap_token)])
 async def save_config(req: SaveRequest):
     # Safety: require explicit confirmation for live trading
     broker_mode = req.env.get("BROKER_MODE", "paper")
@@ -297,6 +316,12 @@ async def save_config(req: SaveRequest):
         except OSError as e:
             raise HTTPException(500, f"Failed to write strategy.json: {e}")
 
+    # Mark onboarding as completed — subsequent calls to onboarding routes return 410
+    try:
+        Path(settings.onboarding_completed_path).touch(exist_ok=True)
+    except OSError as e:
+        logger.warning("Could not write onboarding sentinel: %s", e)
+
     return {
         "success": True,
         "restart_required": True,
@@ -307,7 +332,7 @@ async def save_config(req: SaveRequest):
 # ── Status check ──────────────────────────────────────────────────────────────
 
 
-@router.get("/status", dependencies=[Depends(require_owner_pin)])
+@router.get("/status", dependencies=[Depends(require_bootstrap_token)])
 async def onboarding_status():
     return {
         "configured_keys": {

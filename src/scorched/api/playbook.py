@@ -19,7 +19,7 @@ class PlaybookUpdateResponse(PlaybookResponse):
     pass
 
 
-@router.get("", response_model=PlaybookResponse)
+@router.get("", response_model=PlaybookResponse, dependencies=[Depends(require_owner_pin)])
 async def read_playbook(db: AsyncSession = Depends(get_db)):
     pb = await get_playbook(db)
     return PlaybookResponse(

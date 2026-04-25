@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     strategy_file: Path = Path("strategy.json")
-    settings_pin: str = ""  # if set, PUT /api/v1/strategy requires this PIN to save
+    settings_pin: str = ""  # if set, mutation endpoints require this PIN in X-Owner-Pin header
+    bootstrap_token: str = ""  # one-shot token required for onboarding routes; set in env
+    onboarding_completed_path: str = "/app/logs/.onboarding_completed"  # sentinel file path
 
 
 settings = Settings()

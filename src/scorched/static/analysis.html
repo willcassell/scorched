@@ -590,6 +590,93 @@
 <script>
 const API = '/api/v1';
 
+// ── PIN auth helpers ────────────────────────────────────────────────────────
+const _PIN_KEY = 'tradebot-owner-pin';
+const getPin = () => sessionStorage.getItem(_PIN_KEY) || '';
+const setPin = p => sessionStorage.setItem(_PIN_KEY, p);
+const clearPin = () => sessionStorage.removeItem(_PIN_KEY);
+
+function _buildPinOverlay() {
+  const overlay = document.createElement('div');
+  overlay.id = 'pinOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background:#0c1016;border:1px solid #1c2838;border-radius:6px;padding:24px 28px;min-width:300px';
+  const title = document.createElement('div');
+  title.textContent = 'OWNER PIN REQUIRED';
+  title.style.cssText = 'color:#e4eef8;font-family:monospace;font-size:14px;margin-bottom:12px';
+  dialog.appendChild(title);
+  const errEl = document.createElement('div');
+  errEl.id = 'pinOverlayErr';
+  errEl.style.cssText = 'color:#ef4444;font-size:12px;margin-bottom:8px;display:none';
+  dialog.appendChild(errEl);
+  const input = document.createElement('input');
+  input.id = 'pinOverlayInput';
+  input.type = 'password';
+  input.placeholder = 'Enter PIN';
+  input.autocomplete = 'current-password';
+  input.style.cssText = 'width:100%;box-sizing:border-box;background:#111820;border:1px solid #1c2838;color:#e4eef8;padding:8px 10px;font-family:monospace;font-size:13px;border-radius:4px;margin-bottom:12px';
+  dialog.appendChild(input);
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.id = 'pinOverlayCancelBtn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid #1c2838;color:#5e7a94;border-radius:4px;cursor:pointer;font-family:monospace;font-size:12px';
+  const submitBtn = document.createElement('button');
+  submitBtn.id = 'pinOverlaySubmitBtn';
+  submitBtn.textContent = 'Submit';
+  submitBtn.style.cssText = 'padding:6px 14px;background:#e8a030;border:none;color:#080a0d;border-radius:4px;cursor:pointer;font-family:monospace;font-size:12px;font-weight:600';
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(submitBtn);
+  dialog.appendChild(btnRow);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function promptPin(resolve, reject, errMsg) {
+  const overlay = document.getElementById('pinOverlay') || _buildPinOverlay();
+  const errEl = document.getElementById('pinOverlayErr');
+  const input = document.getElementById('pinOverlayInput');
+  const cancelBtn = document.getElementById('pinOverlayCancelBtn');
+  const submitBtn = document.getElementById('pinOverlaySubmitBtn');
+  if (errMsg) { errEl.textContent = errMsg; errEl.style.display = 'block'; }
+  else { errEl.textContent = ''; errEl.style.display = 'none'; }
+  overlay.style.display = 'flex';
+  input.value = '';
+  input.focus();
+  const cleanup = () => { overlay.style.display = 'none'; };
+  const onSubmit = () => {
+    const pin = input.value.trim();
+    if (!pin) return;
+    setPin(pin);
+    cleanup();
+    resolve(pin);
+  };
+  const onCancel = () => { cleanup(); clearPin(); reject(new Error('PIN entry cancelled')); };
+  submitBtn.onclick = onSubmit;
+  cancelBtn.onclick = onCancel;
+  input.onkeydown = e => { if (e.key === 'Enter') onSubmit(); if (e.key === 'Escape') onCancel(); };
+}
+
+async function apiFetch(path) {
+  const pin = getPin();
+  const headers = pin ? { 'X-Owner-Pin': pin } : {};
+  let r = await fetch(API + path, { headers });
+  if (r.status === 403) {
+    const newPin = await new Promise((resolve, reject) => {
+      clearPin();
+      promptPin(resolve, reject, pin ? 'Incorrect PIN — try again' : null);
+    });
+    r = await fetch(API + path, { headers: { 'X-Owner-Pin': newPin } });
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    return r.json();
+  }
+  if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+  return r.json();
+}
+
 // ── Data Dictionary toggle ─────────────────────────────────────────────────
 function toggleDict(id) {
   var el = document.getElementById(id);
@@ -603,8 +690,7 @@ let sessions = [];
 let currentIdx = 0;
 
 async function loadSessions() {
-  const resp = await fetch(API + '/recommendations?limit=30');
-  sessions = await resp.json();
+  sessions = await apiFetch('/recommendations?limit=30');
   if (sessions.length) {
     currentIdx = 0;
     updateNav();
@@ -672,8 +758,8 @@ async function loadAnalysis(sessionId) {
 
   try {
     const [detail, analysisResp] = await Promise.all([
-      fetch(API + '/recommendations/' + sessionId).then(r => r.json()),
-      fetch(API + '/recommendations/' + sessionId + '/analysis').then(r => r.json()),
+      apiFetch('/recommendations/' + sessionId),
+      apiFetch('/recommendations/' + sessionId + '/analysis'),
     ]);
 
     el.className = 'loaded';
@@ -786,7 +872,7 @@ async function loadAnalysis(sessionId) {
 
     // Strategy Playbook section (collapsed by default, not session-specific)
     try {
-      const pb = await fetch(API + '/playbook').then(function(r) { return r.json(); });
+      const pb = await apiFetch('/playbook');
       if (pb && pb.content) {
         const pbSection = document.createElement('div');
         pbSection.className = 'section';

@@ -390,8 +390,90 @@
     return d.innerHTML;
   }
 
+  var _PIN_KEY = 'tradebot-owner-pin';
+  function getPin() { return sessionStorage.getItem(_PIN_KEY) || ''; }
+  function setPin(p) { sessionStorage.setItem(_PIN_KEY, p); }
+  function clearPin() { sessionStorage.removeItem(_PIN_KEY); }
+
+  function _buildPinOverlay() {
+    var overlay = document.createElement('div');
+    overlay.id = 'pinOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+    var dialog = document.createElement('div');
+    dialog.style.cssText = 'background:#0c1016;border:1px solid #1c2838;border-radius:6px;padding:24px 28px;min-width:300px';
+    var title = document.createElement('div');
+    title.textContent = 'OWNER PIN REQUIRED';
+    title.style.cssText = 'color:#e4eef8;font-family:monospace;font-size:14px;margin-bottom:12px';
+    dialog.appendChild(title);
+    var errEl = document.createElement('div');
+    errEl.id = 'pinOverlayErr';
+    errEl.style.cssText = 'color:#ef4444;font-size:12px;margin-bottom:8px;display:none';
+    dialog.appendChild(errEl);
+    var input = document.createElement('input');
+    input.id = 'pinOverlayInput';
+    input.type = 'password';
+    input.placeholder = 'Enter PIN';
+    input.autocomplete = 'current-password';
+    input.style.cssText = 'width:100%;box-sizing:border-box;background:#111820;border:1px solid #1c2838;color:#e4eef8;padding:8px 10px;font-family:monospace;font-size:13px;border-radius:4px;margin-bottom:12px';
+    dialog.appendChild(input);
+    var btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.id = 'pinOverlayCancelBtn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding:6px 14px;background:transparent;border:1px solid #1c2838;color:#5e7a94;border-radius:4px;cursor:pointer;font-family:monospace;font-size:12px';
+    var submitBtn = document.createElement('button');
+    submitBtn.id = 'pinOverlaySubmitBtn';
+    submitBtn.textContent = 'Submit';
+    submitBtn.style.cssText = 'padding:6px 14px;background:#e8a030;border:none;color:#080a0d;border-radius:4px;cursor:pointer;font-family:monospace;font-size:12px;font-weight:600';
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(submitBtn);
+    dialog.appendChild(btnRow);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function promptPin(resolve, reject, errMsg) {
+    var overlay = document.getElementById('pinOverlay') || _buildPinOverlay();
+    var errEl = document.getElementById('pinOverlayErr');
+    var input = document.getElementById('pinOverlayInput');
+    var cancelBtn = document.getElementById('pinOverlayCancelBtn');
+    var submitBtn = document.getElementById('pinOverlaySubmitBtn');
+    if (errMsg) { errEl.textContent = errMsg; errEl.style.display = 'block'; }
+    else { errEl.textContent = ''; errEl.style.display = 'none'; }
+    overlay.style.display = 'flex';
+    input.value = '';
+    input.focus();
+    function cleanup() { overlay.style.display = 'none'; }
+    function onSubmit() {
+      var pin = input.value.trim();
+      if (!pin) return;
+      setPin(pin);
+      cleanup();
+      resolve(pin);
+    }
+    function onCancel() { cleanup(); clearPin(); reject(new Error('PIN entry cancelled')); }
+    submitBtn.onclick = onSubmit;
+    cancelBtn.onclick = onCancel;
+    input.onkeydown = function(e) { if (e.key === 'Enter') onSubmit(); if (e.key === 'Escape') onCancel(); };
+  }
+
   function apiFetch(path) {
-    return fetch('/api/v1' + path).then(function(r) {
+    var pin = getPin();
+    var headers = pin ? { 'X-Owner-Pin': pin } : {};
+    return fetch('/api/v1' + path, { headers: headers }).then(function(r) {
+      if (r.status === 403) {
+        return new Promise(function(resolve, reject) {
+          clearPin();
+          promptPin(resolve, reject, pin ? 'Incorrect PIN — try again' : null);
+        }).then(function(newPin) {
+          return fetch('/api/v1' + path, { headers: { 'X-Owner-Pin': newPin } }).then(function(r2) {
+            if (!r2.ok) throw new Error('HTTP ' + r2.status);
+            return r2.json();
+          });
+        });
+      }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });

@@ -23,24 +23,27 @@ logging.basicConfig(level=logging.INFO)
 MIN_LIVE_PIN_LEN = 16
 
 
-def _assert_live_mode_safe() -> None:
-    """Refuse to boot in live broker mode without a strong PIN.
+def _assert_auth_safe() -> None:
+    """Refuse to boot without a PIN in any mode that exposes mutation endpoints.
 
-    Prevents the foot-gun of switching BROKER_MODE=alpaca_live without
-    setting SETTINGS_PIN — which would leave the mutation surface open
-    against a real brokerage account.
+    Live mode additionally requires a strong PIN (>=16 chars).
     """
+    pin = settings.settings_pin or ""
+    if not pin:
+        raise RuntimeError(
+            "SETTINGS_PIN is unset — refusing to start. "
+            "Mutation endpoints would be open. Set SETTINGS_PIN in .env."
+        )
     if settings.broker_mode == "alpaca_live":
-        pin = settings.settings_pin or ""
-        if not pin:
-            raise RuntimeError(
-                "SETTINGS_PIN is unset while BROKER_MODE=alpaca_live — refusing to start"
-            )
         if len(pin) < MIN_LIVE_PIN_LEN:
             raise RuntimeError(
-                f"SETTINGS_PIN is too short (len {len(pin)}) for live mode — "
+                f"SETTINGS_PIN too short (len {len(pin)}) for alpaca_live — "
                 f"need at least {MIN_LIVE_PIN_LEN} characters"
             )
+
+
+# Keep old name as alias for backward-compat with any existing references
+_assert_live_mode_safe = _assert_auth_safe
 
 
 # FastAPI doesn't propagate lifespan to mounted sub-apps, so we manually start
@@ -48,7 +51,7 @@ def _assert_live_mode_safe() -> None:
 # Portfolio seeding also happens here (replaces the deprecated @on_event("startup")).
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _assert_live_mode_safe()
+    _assert_auth_safe()
     async with AsyncSessionLocal() as db:
         existing = (await db.execute(select(Portfolio))).scalars().first()
         if existing is None:

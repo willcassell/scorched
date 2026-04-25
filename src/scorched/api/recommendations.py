@@ -23,7 +23,7 @@ async def generate_recommendations(
     )
 
 
-@router.get("", response_model=list[SessionListItem])
+@router.get("", response_model=list[SessionListItem], dependencies=[Depends(require_owner_pin)])
 async def list_sessions(
     session_date: date | None = Query(None),
     limit: int = Query(10, ge=1, le=100),
@@ -41,7 +41,7 @@ async def list_sessions(
     ]
 
 
-@router.get("/{session_id}/analysis")
+@router.get("/{session_id}/analysis", dependencies=[Depends(require_owner_pin)])
 async def get_session_analysis(session_id: int, db: AsyncSession = Depends(get_db)):
     from fastapi import HTTPException
     row = await recommender_svc.get_session(db, session_id)
@@ -50,7 +50,7 @@ async def get_session_analysis(session_id: int, db: AsyncSession = Depends(get_d
     return {"session_id": session_id, "analysis_text": row.analysis_text}
 
 
-@router.get("/{session_id}", response_model=SessionDetail)
+@router.get("/{session_id}", response_model=SessionDetail, dependencies=[Depends(require_owner_pin)])
 async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
     import json
     from decimal import Decimal

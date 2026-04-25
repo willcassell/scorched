@@ -6,8 +6,13 @@ from ..config import settings
 
 
 def require_owner_pin(x_owner_pin: str = Header(default="")):
-    """Guard for mutation endpoints. Pass the owner PIN in the X-Owner-Pin header.
-    No-op when SETTINGS_PIN is unset (backward compat / local dev).
+    """Guard for sensitive endpoints. Requires X-Owner-Pin header to match SETTINGS_PIN.
+
+    SETTINGS_PIN must be configured at startup — _assert_auth_safe enforces this.
+    No fail-open path here.
     """
-    if settings.settings_pin and not hmac.compare_digest(x_owner_pin, settings.settings_pin):
+    pin = settings.settings_pin or ""
+    if not pin:
+        raise HTTPException(status_code=503, detail="Server misconfigured: SETTINGS_PIN unset")
+    if not hmac.compare_digest(x_owner_pin, pin):
         raise HTTPException(status_code=403, detail="Incorrect PIN")
