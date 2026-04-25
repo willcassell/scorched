@@ -1183,12 +1183,14 @@
 
     // ─── Save ──────────────────────────────────────────────────────────────────
     async function saveStrategy() {
-      if (window.pinRequired) {
-        // Show PIN modal first; doSave() is called from submitPin() once PIN is entered.
+      const storedPin = getPin();
+      if (window.pinRequired && !storedPin) {
+        // No PIN cached yet — show PIN modal first; doSave() is called from
+        // submitPin() once the user enters their PIN.
         showPinModal();
         return;
       }
-      await doSave('');
+      await doSave(storedPin);
     }
 
     async function doSave(pin) {
@@ -1198,16 +1200,20 @@
 
       try {
         const payload = collectStrategy();
-        if (pin) payload._pin = pin;
+        // PIN is sent via X-Owner-Pin header (consistent with all other mutation
+        // endpoints). _pin is NOT included in the body — the server ignores it.
+        const headers = { 'Content-Type': 'application/json' };
+        if (pin) headers['X-Owner-Pin'] = pin;
 
         const resp = await fetch('/api/v1/strategy', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(payload),
         });
 
         if (resp.status === 403) {
-          // Wrong PIN — reopen modal with error message
+          // Wrong PIN — clear cache, reopen modal with error message
+          clearPin();
           showPinModal();
           document.getElementById('pinError').classList.remove('hidden');
           return;
@@ -1379,13 +1385,15 @@
       const pin = document.getElementById('pinInput').value;
       document.getElementById('pinModal').classList.add('hidden');
       if (_pendingPinResolve) {
-        // Called from apiFetch (GET re-prompt path)
+        // Called from apiFetch (GET re-prompt path) — store and resolve.
+        setPin(pin);
         const resolve = _pendingPinResolve;
         _pendingPinResolve = null;
         _pendingPinReject  = null;
         resolve(pin);
       } else {
-        // Called from saveStrategy (PUT path)
+        // Called from saveStrategy (PUT path) — store PIN then save.
+        setPin(pin);
         await doSave(pin);
       }
     }

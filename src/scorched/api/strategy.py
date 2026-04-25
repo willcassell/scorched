@@ -24,12 +24,12 @@ async def get_strategy():
     )
 
 
-@router.put("", response_model=StrategyResponse)
+@router.put("", response_model=StrategyResponse, dependencies=[Depends(require_owner_pin)])
 async def update_strategy(body: dict):
-    # _pin is meta — pop it before writing to strategy.json so it's never persisted.
-    pin = body.pop("_pin", "")
-    if settings.settings_pin and pin != settings.settings_pin:
-        raise HTTPException(status_code=403, detail="Incorrect PIN")
+    # _pin is no longer used for auth (now handled by Depends(require_owner_pin) via
+    # X-Owner-Pin header with hmac.compare_digest). Pop it if present so it is never
+    # persisted to strategy.json — backwards-compat shim for any older clients.
+    body.pop("_pin", None)
     # Merge incoming form payload into existing strategy.json rather than
     # overwriting. The dashboard form only surfaces a subset of keys; a full
     # overwrite silently wipes safety sections the form doesn't render

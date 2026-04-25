@@ -1,13 +1,11 @@
 """MCP tool definitions. openclaw connects to /mcp and calls these tools."""
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
 
 from mcp.server.fastmcp import FastMCP
 
-from .broker import get_broker
 from .database import AsyncSessionLocal
-from .schemas import ConfirmTradeRequest, RejectTradeRequest
 from .services import portfolio as portfolio_svc
 from .services import recommender as recommender_svc
 from .services.playbook import get_playbook
@@ -93,64 +91,54 @@ async def get_opening_prices(symbols: list[str], date: str | None = None) -> str
 
 
 @mcp.tool(
-    description="Confirm that a recommended trade was executed. Routes through the configured broker "
-    "(paper or Alpaca) for order submission and fill tracking. Updates portfolio cash and positions. "
-    "Call this once per trade after execution. "
+    description="Confirm that a recommended trade should be executed. Routes through the configured "
+    "broker (paper or Alpaca) for order submission and fill tracking. "
+    "The server fetches the live price and re-runs all risk gates — quantity and price are "
+    "ALWAYS taken from the stored recommendation, never from client-supplied values. "
     "Requires the owner PIN if SETTINGS_PIN is configured.",
 )
-async def confirm_trade(recommendation_id: int, execution_price: float, shares: float, pin: str | None = None) -> str:
+async def confirm_trade(
+    recommendation_id: int,
+    pin: str | None = None,
+    execution_price: float | None = None,
+    shares: float | None = None,
+) -> str:
     """
     Args:
         recommendation_id: The id from a get_recommendations response.
-        execution_price: Actual fill price per share.
-        shares: Number of shares traded (may differ slightly from suggested quantity).
         pin: Owner PIN. Required if SETTINGS_PIN is configured.
+        execution_price: Ignored — server fetches the live price. Accepted for backwards
+            compatibility but has NO effect on the submitted order.
+        shares: Ignored — quantity is taken from the stored recommendation. Accepted for
+            backwards compatibility but has NO effect on the submitted order.
     """
     err = _check_pin(pin)
     if err:
         return err
-    from sqlalchemy import select
-    from .models import TradeRecommendation
 
-    exec_price = Decimal(str(execution_price))
-    exec_shares = Decimal(str(shares))
+    from .services.trade_execution import validate_and_submit_trade
 
     async with AsyncSessionLocal() as db:
-        rec = (
-            await db.execute(
-                select(TradeRecommendation).where(TradeRecommendation.id == recommendation_id)
-            )
-        ).scalars().first()
-
-        if rec is None:
-            return json.dumps({"error": f"No recommendation found with id {recommendation_id}"})
-        if rec.status != "pending":
-            return json.dumps({"error": f"Recommendation {recommendation_id} is already {rec.status}"})
-
-        broker = get_broker(db)
-
         try:
-            if rec.action == "buy":
-                result = await broker.submit_buy(
-                    symbol=rec.symbol,
-                    qty=exec_shares,
-                    limit_price=exec_price,
-                    recommendation_id=recommendation_id,
-                )
-            else:
-                result = await broker.submit_sell(
-                    symbol=rec.symbol,
-                    qty=exec_shares,
-                    limit_price=exec_price,
-                    recommendation_id=recommendation_id,
-                )
-        except Exception as exc:
-            return json.dumps({"error": f"Broker order failed for {rec.action} {rec.symbol}: {exc}"})
+            result = await validate_and_submit_trade(recommendation_id, db)
+        except LookupError as exc:
+            return json.dumps({"error": str(exc)})
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        except RuntimeError as exc:
+            return json.dumps({"error": str(exc)})
 
-        if result["status"] != "filled":
-            return json.dumps({"error": f"Order not filled: status={result['status']} for {rec.symbol}"})
-
-    return _to_json(result)
+    return json.dumps({
+        "status": result.status,
+        "symbol": result.symbol,
+        "action": result.action,
+        "filled_qty": float(result.filled_qty),
+        "filled_price": float(result.filled_price),
+        "new_cash_balance": float(result.new_cash_balance) if result.new_cash_balance is not None else None,
+        "realized_gain": float(result.realized_gain) if result.realized_gain is not None else None,
+        "tax_category": result.tax_category,
+        "trade_id": result.trade_id,
+    }, default=_decimal_default)
 
 
 @mcp.tool(

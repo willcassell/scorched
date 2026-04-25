@@ -60,11 +60,11 @@ async def test_confirm_uses_stored_rec_quantity_not_client_qty(db_session, _over
     gate_result = MagicMock()
     gate_result.passed = True
 
-    # Buy path does a local import of fetch_snapshots_sync — patch at the source module.
+    # Buy path uses validate_and_submit_trade — patch at the service module level.
     snapshot_data = {"AAPL": {"current_price": 150.5, "prev_close": 149.0}}
     with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
-         patch("scorched.api.trades.get_broker", return_value=fake_broker), \
-         patch("scorched.api.trades.run_all_buy_gates", return_value=gate_result):
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker), \
+         patch("scorched.services.trade_execution.run_all_buy_gates", return_value=gate_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post(
                 "/api/v1/trades/confirm",
@@ -90,8 +90,8 @@ async def test_confirm_rejects_when_gates_fail(db_session, _override_db):
 
     snapshot_data = {"AAPL": {"current_price": 150.5, "prev_close": 149.0}}
     with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
-         patch("scorched.api.trades.get_broker", return_value=fake_broker), \
-         patch("scorched.api.trades.run_all_buy_gates", return_value=gate_result):
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker), \
+         patch("scorched.services.trade_execution.run_all_buy_gates", return_value=gate_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post(
                 "/api/v1/trades/confirm",
@@ -113,7 +113,7 @@ async def test_confirm_rejects_when_live_price_drifts_beyond_tolerance(db_sessio
     # $200 live vs $150 stored = 33.3% drift, well above 5% default
     snapshot_data = {"AAPL": {"current_price": 200.0, "prev_close": 149.0}}
     with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
-         patch("scorched.api.trades.get_broker", return_value=fake_broker):
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post(
                 "/api/v1/trades/confirm",
@@ -141,9 +141,9 @@ async def test_confirm_sell_skips_buy_gates(db_session, _override_db):
         "filled_avg_price": Decimal("150"),
     }
 
-    with patch("scorched.api.trades.fetch_live_price", return_value=Decimal("150.0")), \
-         patch("scorched.api.trades.get_broker", return_value=fake_broker), \
-         patch("scorched.api.trades.run_all_buy_gates") as mock_gates:
+    with patch("scorched.services.trade_execution._fetch_live_price_single", return_value=Decimal("150.0")), \
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker), \
+         patch("scorched.services.trade_execution.run_all_buy_gates") as mock_gates:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
 
@@ -165,8 +165,8 @@ async def test_confirm_sell_passes_despite_large_drift(db_session, _override_db)
     }
 
     # 20% drift — would have been rejected under the pre-C3 logic
-    with patch("scorched.api.trades.fetch_live_price", return_value=Decimal("120.0")), \
-         patch("scorched.api.trades.get_broker", return_value=fake_broker):
+    with patch("scorched.services.trade_execution._fetch_live_price_single", return_value=Decimal("120.0")), \
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
 
@@ -186,8 +186,8 @@ async def test_confirm_sell_uses_sell_buffer_below_live(db_session, _override_db
         "filled_avg_price": Decimal("149.55"),
     }
 
-    with patch("scorched.api.trades.fetch_live_price", return_value=Decimal("150.0")), \
-         patch("scorched.api.trades.get_broker", return_value=fake_broker):
+    with patch("scorched.services.trade_execution._fetch_live_price_single", return_value=Decimal("150.0")), \
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
 

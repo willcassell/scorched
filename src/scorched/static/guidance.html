@@ -455,16 +455,50 @@
       return Math.floor(days / 30) + 'mo ago';
     }
 
+    // ─── PIN helpers (shared sessionStorage key with dashboard / strategy pages) ──
+    const _PIN_KEY = 'tradebot-owner-pin';
+    function getPin() { return sessionStorage.getItem(_PIN_KEY) || ''; }
+    function setPin(p) { sessionStorage.setItem(_PIN_KEY, p); }
+    function clearPin() { sessionStorage.removeItem(_PIN_KEY); }
+
+    /** Prompt for a PIN via a simple window.prompt. Throws if the user cancels. */
+    function promptPin(errMsg) {
+      const msg = (errMsg ? errMsg + '\n' : '') + 'Enter owner PIN:';
+      const pin = window.prompt(msg);
+      if (pin === null) throw new Error('PIN entry cancelled');
+      return pin;
+    }
+
+    /** apiFetch — wraps fetch() with X-Owner-Pin injection and 403 re-prompt. */
+    async function apiFetch(url, opts) {
+      opts = opts || {};
+      const headers = Object.assign({}, opts.headers || {});
+      const pin = getPin();
+      if (pin) headers['X-Owner-Pin'] = pin;
+      const resp = await fetch(url, Object.assign({}, opts, { headers }));
+      if (resp.status === 403) {
+        clearPin();
+        const newPin = promptPin(pin ? 'Incorrect PIN — try again' : null);
+        setPin(newPin);
+        const retryHeaders = Object.assign({}, opts.headers || {}, { 'X-Owner-Pin': newPin });
+        const resp2 = await fetch(url, Object.assign({}, opts, { headers: retryHeaders }));
+        if (!resp2.ok) throw new Error(resp2.status + ' ' + resp2.statusText);
+        return resp2.json();
+      }
+      if (!resp.ok) throw new Error(resp.status + ' ' + resp.statusText);
+      return resp.json();
+    }
+
     // ─── Data load ──
     async function loadAll() {
       try {
         const [fileR, rulesR, histR, lintR, firesR, stratR] = await Promise.all([
-          fetch('/api/v1/guidance/file').then(r => r.json()),
-          fetch('/api/v1/guidance/rules').then(r => r.json()),
-          fetch('/api/v1/guidance/history?limit=20').then(r => r.json()),
-          fetch('/api/v1/guidance/lint').then(r => r.json()),
-          fetch('/api/v1/guidance/firings?date=' + encodeURIComponent(DATE_TODAY)).then(r => r.json()),
-          fetch('/api/v1/strategy').then(r => r.json()),
+          apiFetch('/api/v1/guidance/file'),
+          apiFetch('/api/v1/guidance/rules'),
+          apiFetch('/api/v1/guidance/history?limit=20'),
+          apiFetch('/api/v1/guidance/lint'),
+          apiFetch('/api/v1/guidance/firings?date=' + encodeURIComponent(DATE_TODAY)),
+          apiFetch('/api/v1/strategy'),
         ]);
 
         renderHeader(fileR);
@@ -608,7 +642,7 @@
 
       // Wire save buttons
       body.querySelectorAll('.ov-save').forEach(btn => {
-        btn.addEventListener('click', () => saveOverride(btn.dataset.ovSave, pin));
+        btn.addEventListener('click', () => saveOverride(btn.dataset.ovSave));
       });
       body.querySelectorAll('.ov-row input, .ov-row select').forEach(el => {
         el.addEventListener('input', () => {
@@ -633,12 +667,8 @@
       btn.className = 'ov-save'; btn.dataset.ovSave = String(rule.number);
       btn.dataset.state = 'clean'; btn.textContent = 'Saved';
       row.appendChild(btn);
-      if (pinRequired) {
-        const pinIn = document.createElement('input');
-        pinIn.type = 'password'; pinIn.className = 'ov-pin';
-        pinIn.placeholder = 'PIN'; pinIn.id = 'ov' + rule.number + '-pin';
-        row.appendChild(pinIn);
-      }
+      // PIN is handled via X-Owner-Pin header from sessionStorage (apiFetch).
+      // No inline PIN input needed here.
       const hint = document.createElement('span'); hint.className = 'ov-disabled-hint';
       hint.textContent = 'Changes apply to the next recommendation run.';
       row.appendChild(hint);
@@ -730,11 +760,9 @@
       return frag;
     }
 
-    async function saveOverride(ruleNum, pinRequired) {
+    async function saveOverride(ruleNum) {
       const btn = document.querySelector('[data-ov-save="' + ruleNum + '"]');
       btn.disabled = true;
-      const pinEl = document.getElementById('ov' + ruleNum + '-pin');
-      const pin = pinEl ? pinEl.value : '';
 
       let patch;
       if (ruleNum === '2') {
@@ -756,20 +784,17 @@
       }
 
       try {
-        const cur = await (await fetch('/api/v1/strategy')).json();
+        const cur = await apiFetch('/api/v1/strategy');
         const existing = (cur.data && cur.data.rule_overrides) || {};
         const merged = Object.assign({}, existing, patch);
         const body = Object.assign({}, cur.data, { rule_overrides: merged });
-        if (pinRequired) body._pin = pin;
-        const r = await fetch('/api/v1/strategy', {
+        // PIN is sent via X-Owner-Pin header (handled by apiFetch) — never in body.
+        const r = await apiFetch('/api/v1/strategy', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        if (!r.ok) {
-          const errTxt = await r.text();
-          throw new Error(r.status + ': ' + errTxt);
-        }
+        // apiFetch already parsed r as JSON (or threw on error); no need to check r.ok.
         btn.textContent = 'Saved';
         btn.dataset.state = 'saved';
         toast('Override saved — applies on next recommendation', 'ok');
