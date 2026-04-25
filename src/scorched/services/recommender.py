@@ -803,6 +803,13 @@ async def generate_recommendations(
             }
         )
 
+    # Running cash tracks how much cash remains after each accepted buy in this
+    # session.  Initialized from the actual balance; decremented on each accepted
+    # buy so the floor check accounts for cumulative spend (audit H1 fix).
+    running_cash = Decimal(str(portfolio.cash_balance))
+    total_value_for_floor = Decimal(str(portfolio_dict["total_value"]))
+    reserve_pct = Decimal(str(settings.min_cash_reserve_pct))  # already a fraction (0.10)
+
     recommendation_rows = []
     for rec in raw_recs:
         action = rec.get("action", "").lower()
@@ -828,12 +835,20 @@ async def generate_recommendations(
 
         if action == "buy":
             estimated_cost = suggested_price * quantity
-            min_cash = portfolio.cash_balance * settings.min_cash_reserve_pct
-            if portfolio.cash_balance - estimated_cost < min_cash:
-                logger.warning("Skipping %s buy — would violate cash reserve", symbol)
+            from ..risk_gates import check_cash_floor
+            cash_check = check_cash_floor(
+                current_cash=running_cash,
+                total_portfolio_value=total_value_for_floor,
+                buy_notional=estimated_cost,
+                reserve_pct=reserve_pct,
+            )
+            if not cash_check.passed:
+                logger.warning(
+                    "Skipping %s buy — cash floor: %s",
+                    symbol, cash_check.reason,
+                )
                 await send_telegram(
-                    f"TRADEBOT // Cash reserve gate: {symbol} BUY skipped — "
-                    f"${estimated_cost:,.0f} would breach {int(settings.min_cash_reserve_pct * 100)}% reserve"
+                    f"TRADEBOT // Cash reserve gate: {symbol} BUY skipped — {cash_check.reason}"
                 )
                 continue
 
@@ -897,6 +912,10 @@ async def generate_recommendations(
                     "market_value": estimated_cost,
                 }
             )
+
+            # Decrement running cash so subsequent buys in this session see the
+            # correct available balance (audit H1 fix — cumulative cash tracking).
+            running_cash = cash_check.projected_cash
 
         key_risks = rec.get("key_risks") or ""
 
