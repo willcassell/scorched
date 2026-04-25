@@ -253,17 +253,23 @@ _ETF_TO_SECTOR: dict[str, str] = {
 
 
 def _get_sector_for_symbol(symbol: str) -> str | None:
-    """Return GICS sector for the symbol; uses static ETF map first, Finnhub second."""
+    """Return GICS sector for the symbol; uses static ETF map first, Finnhub second.
+
+    The "Diversified" catch-all bucket (returned when _SECTOR_ETF_MAP routes a
+    symbol to SPY) is treated as a miss, so the Finnhub fallback resolves the
+    actual sector — otherwise COIN/NET/SNOW would silently bypass the 40% sector
+    cap because they're bucketed as "Diversified" rather than Financials/Technology.
+    """
     from .research import _SECTOR_ETF_MAP  # local import avoids module-level circularity
     from .finnhub_data import fetch_sector_for_symbol
 
     etf = _SECTOR_ETF_MAP.get(symbol)
     if etf is not None:
         sector = _ETF_TO_SECTOR.get(etf)
-        if sector:
+        if sector and sector != "Diversified":
             return sector
 
-    # Fallback: ask Finnhub.
+    # Fallback: ask Finnhub (also handles the Diversified catch-all).
     return fetch_sector_for_symbol(symbol)
 
 
@@ -788,9 +794,17 @@ async def generate_recommendations(
     # Build the list of held positions enriched with sector and market_value for the
     # sector-exposure gate.  We compute this once before the loop so the gate has a
     # stable baseline; accepted buys from *this run* are appended dynamically below.
+    # Sector lookups are offloaded to a thread pool (asyncio.to_thread) because
+    # _get_sector_for_symbol may call Finnhub via sync requests.get + retry_call
+    # (up to 9s of blocking on outage) — running it on the event loop would stall
+    # all other async work.  Symbols are gathered concurrently so the batch cost is
+    # the slowest single lookup, not the sum.
     total_value_decimal = Decimal(str(portfolio_dict["total_value"]))
+    held_sectors: list[str | None] = await asyncio.gather(
+        *(asyncio.to_thread(_get_sector_for_symbol, pos.symbol) for pos in current_positions)
+    )
     held_positions_for_sector: list[dict] = []
-    for pos in current_positions:
+    for pos, sector in zip(current_positions, held_sectors):
         live_px = price_data.get(pos.symbol, {}).get("current_price")
         mkt_val = (
             Decimal(str(live_px)) * Decimal(str(pos.shares))
@@ -800,7 +814,7 @@ async def generate_recommendations(
         held_positions_for_sector.append(
             {
                 "symbol": pos.symbol,
-                "sector": _get_sector_for_symbol(pos.symbol),
+                "sector": sector,
                 "market_value": mkt_val,
             }
         )
@@ -902,9 +916,10 @@ async def generate_recommendations(
                 )
                 continue
 
-            # Sector concentration gate
+            # Sector concentration gate — offload to thread so sync Finnhub HTTP
+            # calls don't block the event loop (same rationale as held_sectors above).
             max_sector_pct = strategy_conc.get("max_sector_pct", 40.0)
-            symbol_sector = _get_sector_for_symbol(symbol)
+            symbol_sector = await asyncio.to_thread(_get_sector_for_symbol, symbol)
             if not check_sector_exposure(
                 symbol,
                 symbol_sector,

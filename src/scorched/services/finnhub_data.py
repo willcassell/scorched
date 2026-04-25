@@ -144,6 +144,10 @@ def build_analyst_context(analyst_data: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# Process-level cache so the same symbol is not re-queried multiple times in
+# one Phase 1 run (both held-position and candidate-buy loops call the lookup).
+_sector_cache: dict[str, str | None] = {}
+
 # Map Finnhub `finnhubIndustry` / GICS variants to the canonical names used
 # in _ETF_TO_SECTOR. Anything not in this map returns None (fail closed).
 _FINNHUB_TO_CANONICAL_SECTOR: dict[str, str] = {
@@ -178,24 +182,37 @@ def _normalize_sector(raw: str | None) -> str | None:
 def fetch_sector_for_symbol(symbol: str) -> str | None:
     """Fetch GICS sector from Finnhub stock/profile2 endpoint. Returns None on failure.
 
-    Used as fallback when the static `_SECTOR_ETF_MAP` has no entry for `symbol`.
-    Prefers `gicsSector` (cleaner GICS labels) and falls back to `finnhubIndustry`.
-    Both are normalized to the canonical _ETF_TO_SECTOR vocabulary. Unknown sector
-    names return None so the sector gate fails closed rather than aggregating into
-    the wrong bucket.
+    Used as fallback when the static `_SECTOR_ETF_MAP` has no entry for `symbol`
+    (or when it returns the "Diversified" catch-all). Prefers `gicsSector` (cleaner
+    GICS labels) and falls back to `finnhubIndustry`. Both are normalized to the
+    canonical _ETF_TO_SECTOR vocabulary. Unknown sector names return None so the
+    sector gate fails closed rather than aggregating into the wrong bucket.
+
+    Results (including None) are cached in `_sector_cache` for the lifetime of the
+    process so the same symbol is not re-queried multiple times per Phase 1 run.
     """
+    sym = symbol.upper()
+    if sym in _sector_cache:
+        return _sector_cache[sym]
+
     if not settings.finnhub_api_key:
+        _sector_cache[sym] = None
         return None
+
     url = "https://finnhub.io/api/v1/stock/profile2"
-    params = {"symbol": symbol.upper(), "token": settings.finnhub_api_key}
+    params = {"symbol": sym, "token": settings.finnhub_api_key}
     try:
         response = retry_call(lambda: requests.get(url, params=params, timeout=10))
-        if response is None or response.status_code != 200:
+        if response.status_code != 200:
+            _sector_cache[sym] = None
             return None
         data = response.json()
         # Prefer gicsSector if present (cleaner GICS); fall back to finnhubIndustry.
         raw = data.get("gicsSector") or data.get("finnhubIndustry")
-        return _normalize_sector(raw)
+        result = _normalize_sector(raw)
+        _sector_cache[sym] = result
+        return result
     except Exception as exc:
         logger.warning("Finnhub sector lookup failed for %s: %s", symbol, exc)
+        _sector_cache[sym] = None
         return None

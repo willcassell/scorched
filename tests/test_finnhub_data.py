@@ -77,6 +77,11 @@ class TestNormalizeSector:
 
 
 class TestSectorFallback:
+    def setup_method(self):
+        # Clear the process-level cache between tests so each test starts fresh.
+        from scorched.services.finnhub_data import _sector_cache
+        _sector_cache.clear()
+
     def test_returns_finnhub_industry_when_available(self):
         """Financial Services from Finnhub normalizes to canonical 'Financials'."""
         fake_response = MagicMock()
@@ -152,3 +157,33 @@ class TestSectorFallback:
             from scorched.services.finnhub_data import fetch_sector_for_symbol
             sector = fetch_sector_for_symbol("AAPL")
         assert sector is None
+
+
+class TestSectorCacheBehavior:
+    def setup_method(self):
+        # Reset the process-level cache before each test.
+        from scorched.services.finnhub_data import _sector_cache
+        _sector_cache.clear()
+
+    def test_second_call_skips_http(self):
+        """A repeated lookup for the same symbol must hit the cache, not Finnhub."""
+        from scorched.services.finnhub_data import fetch_sector_for_symbol
+        fake = MagicMock()
+        fake.status_code = 200
+        fake.json.return_value = {"gicsSector": "Financial Services"}
+        with patch("scorched.services.finnhub_data.retry_call", return_value=fake) as m_retry, \
+             patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = "key"
+            r1 = fetch_sector_for_symbol("PLTR")
+            r2 = fetch_sector_for_symbol("PLTR")
+        assert r1 == r2 == "Financials"
+        assert m_retry.call_count == 1  # second call hit cache, not HTTP
+
+    def test_caches_negative_results(self):
+        """None results (no API key) are also cached to avoid redundant checks."""
+        from scorched.services.finnhub_data import fetch_sector_for_symbol
+        with patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = ""  # no key -> immediately None
+            r1 = fetch_sector_for_symbol("ANY")
+            r2 = fetch_sector_for_symbol("ANY")
+        assert r1 is None and r2 is None
