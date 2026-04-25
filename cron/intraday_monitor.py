@@ -349,7 +349,8 @@ def main():
                 "trailing_stop_price": float(trailing_stop_price) if trailing_stop_price is not None else None,
                 "high_water_mark": float(high_water_mark) if high_water_mark is not None else None,
             })
-            cooldowns[symbol] = time.time()
+            # NOTE: cooldown is NOT recorded here — it is recorded AFTER the
+            # API response confirms a successful terminal action (H6 fix).
 
     if trailing_stop_updates:
         print(f"  Updated trailing stops for {trailing_stop_updates} position(s)")
@@ -359,7 +360,6 @@ def main():
         return
 
     print(f"  TRIGGERS FIRED for {[t['symbol'] for t in triggered_positions]}")
-    save_cooldowns(cooldowns)
 
     # Call the evaluate endpoint
     spy_change_pct = 0.0
@@ -380,14 +380,26 @@ def main():
         print(f"  Evaluate failed: {e}")
         return
 
-    # Send Telegram for each decision
+    # Send Telegram for each decision; record cooldown only on successful exit
     for decision in result.get("decisions", []):
         symbol = decision["symbol"]
         action = decision["action"]
         reasoning = decision["reasoning"]
+        trade_result = decision.get("trade_result")
+
+        # H6 fix: only suppress future ticks when the exit actually succeeded.
+        # A failed hard-stop (action reverted to "hold" due to broker error, or
+        # trade_result is None) must NOT record cooldown — the next 5-min tick
+        # should retry rather than be silently swallowed.
+        sold_successfully = action in ("exit_full", "exit_partial") and trade_result is not None
+        if sold_successfully:
+            cooldowns[symbol] = time.time()
+            print(f"  Cooldown recorded for {symbol} — successful {action}")
+        else:
+            print(f"  No cooldown for {symbol} — action={action} trade_result={trade_result!r}")
 
         if action in ("exit_full", "exit_partial"):
-            trade = decision.get("trade_result") or {}
+            trade = trade_result or {}
             shares = trade.get("shares", "?")
             price = trade.get("execution_price", "?")
             gain = trade.get("realized_gain", 0)
@@ -410,6 +422,7 @@ def main():
         send_telegram(msg)
         print(f"  {symbol}: {action} — {reasoning[:80]}")
 
+    save_cooldowns(cooldowns)
     print(f"  Intraday check complete: {len(result.get('decisions', []))} decisions")
 
 

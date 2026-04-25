@@ -29,6 +29,22 @@ router = APIRouter(prefix="/intraday", tags=["intraday"])
 STRATEGY_PATH = Path(__file__).resolve().parent.parent.parent.parent / "strategy.json"
 
 
+def _compute_emergency_sell_limit(current_price: Decimal, buffer_pct: Decimal) -> Decimal:
+    """Return a marketable limit price below current = current * (1 - buffer/100)."""
+    buf = Decimal(str(buffer_pct)) / Decimal("100")
+    return (Decimal(str(current_price)) * (Decimal("1") - buf)).quantize(Decimal("0.01"))
+
+
+def _load_emergency_buffer_pct() -> Decimal:
+    """Read intraday_monitor.emergency_sell_buffer_pct from strategy.json (default 1.0)."""
+    try:
+        with open(STRATEGY_PATH) as f:
+            data = json.load(f)
+        return Decimal(str(data.get("intraday_monitor", {}).get("emergency_sell_buffer_pct", 1.0)))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return Decimal("1.0")
+
+
 def _load_hard_stop_pct() -> float:
     """Read hard stop threshold from strategy.json (default 8.0%).
 
@@ -71,14 +87,24 @@ async def _execute_sell(
     trigger: IntradayTriggerItem,
     sell_qty: Decimal,
     db: AsyncSession,
+    use_emergency_limit: bool = False,
 ) -> tuple[dict | None, str | None]:
-    """Execute a sell via broker. Returns (trade_result, error_msg)."""
+    """Execute a sell via broker. Returns (trade_result, error_msg).
+
+    When use_emergency_limit=True, the limit price is set below current
+    (current * (1 - emergency_buffer_pct/100)) so the order fills in fast
+    falling markets. Used for hard-stop exits.
+    """
     broker = get_broker(db)
 
     # Fetch fresh price from Alpaca — don't use stale trigger.current_price (#16)
     loop = asyncio.get_running_loop()
     fresh = await loop.run_in_executor(None, _fresh_price, trigger.symbol)
-    limit_price = (fresh or Decimal(str(trigger.current_price))).quantize(Decimal("0.01"))
+    base = fresh or Decimal(str(trigger.current_price))
+    if use_emergency_limit:
+        limit_price = _compute_emergency_sell_limit(base, _load_emergency_buffer_pct())
+    else:
+        limit_price = base.quantize(Decimal("0.01"))
 
     # Deterministic idempotency key for intraday sells (#8)
     today = market_today().isoformat()
@@ -171,7 +197,7 @@ async def evaluate_triggers(
                 f"Hard stop triggered: position down {drop_pct:.1f}% from entry "
                 f"(>= {hard_stop_pct:.1f}% threshold). Auto-exit without Claude evaluation."
             )
-            trade_result, err = await _execute_sell(trigger, trigger.shares, db)
+            trade_result, err = await _execute_sell(trigger, trigger.shares, db, use_emergency_limit=True)
             action = "exit_full"
             if err:
                 reasoning += f" [SELL FAILED: {err}]"

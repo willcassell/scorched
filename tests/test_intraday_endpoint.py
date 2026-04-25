@@ -218,3 +218,27 @@ async def test_hard_stop_sell_failure_logged(db_session, _override_db):
         assert "SELL FAILED" in d["reasoning"]
         assert d["action"] == "hold"
         mock_claude.assert_not_called()
+
+
+from decimal import Decimal
+
+import pytest
+
+from scorched.api.intraday import _compute_emergency_sell_limit
+
+
+class TestEmergencyLimit:
+    def test_applies_buffer_below_current(self):
+        # Current $100, buffer 1% -> limit $99.00
+        limit = _compute_emergency_sell_limit(current_price=Decimal("100"), buffer_pct=Decimal("1.0"))
+        assert limit == Decimal("99.00")
+
+    def test_applies_buffer_below_at_higher_price(self):
+        # Current $250.50, buffer 1% -> $247.99 or $248.00 (rounding tolerance)
+        limit = _compute_emergency_sell_limit(current_price=Decimal("250.50"), buffer_pct=Decimal("1.0"))
+        # 250.50 * 0.99 = 247.995 — quantized either way is acceptable
+        assert limit in (Decimal("247.99"), Decimal("248.00"))
+
+    def test_zero_buffer_returns_current(self):
+        limit = _compute_emergency_sell_limit(current_price=Decimal("100"), buffer_pct=Decimal("0"))
+        assert limit == Decimal("100.00")
