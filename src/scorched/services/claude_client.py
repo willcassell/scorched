@@ -347,7 +347,7 @@ async def call_decision(
     user_content: str,
     *,
     max_position_pct: int = 20,
-    max_holdings: int = 5,
+    max_holdings: int = 10,
     tracker=None,
 ):
     """Call 2: Decision (standard, no extended thinking).

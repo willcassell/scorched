@@ -138,7 +138,7 @@ DEFAULT_JSON = {
     "concentration": {
         "max_position_pct": 20,
         "max_sector_pct": 40,
-        "max_holdings": 5,
+        "max_holdings": 10,
     },
     "add_vs_rotate": "adaptive",
     "partial_sell": "adaptive",
@@ -275,7 +275,7 @@ def load_strategy() -> str:
             f"**Concentration limits:** Never allocate more than "
             f"{conc.get('max_position_pct', 20)}% of the portfolio to a single position; "
             f"never allocate more than {conc.get('max_sector_pct', 40)}% to any one sector; "
-            f"hold no more than {conc.get('max_holdings', 5)} positions simultaneously."
+            f"hold no more than {conc.get('max_holdings', 10)} positions simultaneously."
         )
 
     add_rot = s.get("add_vs_rotate", "adaptive")
