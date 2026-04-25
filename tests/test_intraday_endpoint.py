@@ -229,16 +229,106 @@ from scorched.api.intraday import _compute_emergency_sell_limit
 
 class TestEmergencyLimit:
     def test_applies_buffer_below_current(self):
-        # Current $100, buffer 1% -> limit $99.00
-        limit = _compute_emergency_sell_limit(current_price=Decimal("100"), buffer_pct=Decimal("1.0"))
+        # Current $100, buffer 1%, floor disabled -> limit $99.00
+        limit = _compute_emergency_sell_limit(
+            current_price=Decimal("100"),
+            buffer_pct=Decimal("1.0"),
+            floor_usd=Decimal("0"),
+        )
         assert limit == Decimal("99.00")
 
     def test_applies_buffer_below_at_higher_price(self):
-        # Current $250.50, buffer 1% -> $247.99 or $248.00 (rounding tolerance)
-        limit = _compute_emergency_sell_limit(current_price=Decimal("250.50"), buffer_pct=Decimal("1.0"))
+        # Current $250.50, buffer 1%, floor disabled -> $247.99 or $248.00 (rounding tolerance)
+        limit = _compute_emergency_sell_limit(
+            current_price=Decimal("250.50"),
+            buffer_pct=Decimal("1.0"),
+            floor_usd=Decimal("0"),
+        )
         # 250.50 * 0.99 = 247.995 — quantized either way is acceptable
         assert limit in (Decimal("247.99"), Decimal("248.00"))
 
     def test_zero_buffer_returns_current(self):
-        limit = _compute_emergency_sell_limit(current_price=Decimal("100"), buffer_pct=Decimal("0"))
+        limit = _compute_emergency_sell_limit(
+            current_price=Decimal("100"),
+            buffer_pct=Decimal("0"),
+            floor_usd=Decimal("0"),
+        )
         assert limit == Decimal("100.00")
+
+    def test_floor_activates_on_low_priced_stock(self):
+        # $2.50 stock, 1% buffer = $0.025. Floor $0.05 should win -> limit $2.45.
+        limit = _compute_emergency_sell_limit(
+            current_price=Decimal("2.50"),
+            buffer_pct=Decimal("1.0"),
+            floor_usd=Decimal("0.05"),
+        )
+        assert limit == Decimal("2.45")
+
+    def test_pct_wins_when_above_floor(self):
+        # $100 * 1% = $1.00 > $0.05 floor -> limit $99.00
+        limit = _compute_emergency_sell_limit(
+            current_price=Decimal("100"),
+            buffer_pct=Decimal("1.0"),
+            floor_usd=Decimal("0.05"),
+        )
+        assert limit == Decimal("99.00")
+
+
+@pytest.mark.asyncio
+async def test_hard_stop_passes_emergency_limit_below_current(db_session, _override_db):
+    """Audit H5: hard-stop limit_price reaching the broker must be strictly below trigger.current_price.
+
+    Verifies the full wiring: use_emergency_limit=True -> _compute_emergency_sell_limit ->
+    submit_sell(limit_price=...) where limit_price < current_price. A refactor that drops
+    the floor or removes the buffer would break this test before reaching production.
+    """
+    # Position down 10% from entry — well above the 8% hard stop threshold.
+    # entry=100, current=90 => drop=10%
+    trigger_price = Decimal("90.00")
+    trigger = _make_trigger(entry_price="100.00", current_price=str(trigger_price))
+    body = _make_request([trigger])
+
+    captured_call_args = {}
+
+    mock_broker = AsyncMock()
+
+    async def capture_submit_sell(**kwargs):
+        captured_call_args.update(kwargs)
+        return {
+            "status": "submitted",
+            "trade_id": None,
+            "filled_avg_price": kwargs["limit_price"],
+            "realized_gain": None,
+        }
+
+    mock_broker.submit_sell.side_effect = capture_submit_sell
+
+    # _fresh_price calls Alpaca; mock it to return None so _execute_sell falls back
+    # to trigger.current_price — this is the realistic offline test path.
+    with patch("scorched.api.intraday.get_broker", return_value=mock_broker), \
+         patch("scorched.api.intraday._fresh_price", return_value=None), \
+         patch("scorched.api.intraday.call_intraday_exit") as mock_claude, \
+         patch("scorched.api.intraday.record_usage", new_callable=AsyncMock), \
+         patch("scorched.api.intraday._load_hard_stop_pct", return_value=8.0):
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post("/api/v1/intraday/evaluate", json=body)
+
+    assert resp.status_code == 200
+    d = resp.json()["decisions"][0]
+    assert d["action"] == "exit_full"
+    assert "Hard stop triggered" in d["reasoning"]
+
+    # Claude must NOT have been called (hard stop bypasses Claude)
+    mock_claude.assert_not_called()
+
+    # submit_sell must have been called with a limit_price strictly below the trigger price
+    assert mock_broker.submit_sell.called
+    limit_price = captured_call_args["limit_price"]
+    assert isinstance(limit_price, Decimal), f"Expected Decimal, got {type(limit_price)}"
+    assert limit_price < trigger_price, (
+        f"Hard-stop limit_price {limit_price} must be strictly below "
+        f"trigger.current_price {trigger_price}"
+    )

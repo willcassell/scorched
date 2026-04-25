@@ -46,7 +46,8 @@
     "spy_intraday_drop_pct": 2.0,
     "volume_surge_multiplier": 3.0,
     "hard_stop_pct": 8.0,
-    "emergency_sell_buffer_pct": 1.0
+    "emergency_sell_buffer_pct": 1.0,
+    "emergency_sell_buffer_floor_usd": 0.05
   },
   "drawdown_gate": {
     "enabled": true,

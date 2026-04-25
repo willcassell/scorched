@@ -29,10 +29,19 @@ router = APIRouter(prefix="/intraday", tags=["intraday"])
 STRATEGY_PATH = Path(__file__).resolve().parent.parent.parent.parent / "strategy.json"
 
 
-def _compute_emergency_sell_limit(current_price: Decimal, buffer_pct: Decimal) -> Decimal:
-    """Return a marketable limit price below current = current * (1 - buffer/100)."""
-    buf = Decimal(str(buffer_pct)) / Decimal("100")
-    return (Decimal(str(current_price)) * (Decimal("1") - buf)).quantize(Decimal("0.01"))
+def _compute_emergency_sell_limit(
+    current_price: Decimal,
+    buffer_pct: Decimal,
+    floor_usd: Decimal = Decimal("0.05"),
+) -> Decimal:
+    """Return a marketable limit price below current.
+
+    Effective buffer = max(current * buffer_pct/100, floor_usd). Floor protects
+    low-priced names where 1% rounds to one tick.
+    """
+    pct_buffer = Decimal(str(current_price)) * Decimal(str(buffer_pct)) / Decimal("100")
+    effective_buffer = max(pct_buffer, Decimal(str(floor_usd)))
+    return (Decimal(str(current_price)) - effective_buffer).quantize(Decimal("0.01"))
 
 
 def _load_emergency_buffer_pct() -> Decimal:
@@ -43,6 +52,16 @@ def _load_emergency_buffer_pct() -> Decimal:
         return Decimal(str(data.get("intraday_monitor", {}).get("emergency_sell_buffer_pct", 1.0)))
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         return Decimal("1.0")
+
+
+def _load_emergency_buffer_floor_usd() -> Decimal:
+    """Read intraday_monitor.emergency_sell_buffer_floor_usd from strategy.json (default 0.05)."""
+    try:
+        with open(STRATEGY_PATH) as f:
+            data = json.load(f)
+        return Decimal(str(data.get("intraday_monitor", {}).get("emergency_sell_buffer_floor_usd", 0.05)))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return Decimal("0.05")
 
 
 def _load_hard_stop_pct() -> float:
@@ -102,7 +121,11 @@ async def _execute_sell(
     fresh = await loop.run_in_executor(None, _fresh_price, trigger.symbol)
     base = fresh or Decimal(str(trigger.current_price))
     if use_emergency_limit:
-        limit_price = _compute_emergency_sell_limit(base, _load_emergency_buffer_pct())
+        limit_price = _compute_emergency_sell_limit(
+            base,
+            _load_emergency_buffer_pct(),
+            _load_emergency_buffer_floor_usd(),
+        )
     else:
         limit_price = base.quantize(Decimal("0.01"))
 
