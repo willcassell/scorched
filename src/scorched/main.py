@@ -57,6 +57,8 @@ _assert_live_mode_safe = _assert_auth_safe
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _assert_auth_safe()
+    if settings.broker_mode == "alpaca_live":
+        logging.warning("LIVE TRADING ENABLED — submitting real orders to Alpaca")
     async with AsyncSessionLocal() as db:
         existing = (await db.execute(select(Portfolio))).scalars().first()
         if existing is None:
