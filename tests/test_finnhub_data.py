@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from scorched.services.finnhub_data import (
     fetch_analyst_consensus_sync,
     build_analyst_context,
+    _normalize_sector,
 )
 
 
@@ -54,23 +55,77 @@ class TestBuildAnalystContext:
         assert build_analyst_context({}) == ""
 
 
+class TestNormalizeSector:
+    def test_handles_canonical_form_passthrough(self):
+        assert _normalize_sector("Technology") == "Technology"
+
+    def test_normalizes_financial_services(self):
+        assert _normalize_sector("Financial Services") == "Financials"
+
+    def test_normalizes_health_care(self):
+        assert _normalize_sector("Health Care") == "Healthcare"
+
+    def test_normalizes_consumer_cyclical(self):
+        assert _normalize_sector("Consumer Cyclical") == "Consumer Discretionary"
+
+    def test_returns_none_on_unknown(self):
+        assert _normalize_sector("Software") is None
+
+    def test_returns_none_on_empty(self):
+        assert _normalize_sector("") is None
+        assert _normalize_sector(None) is None
+
+
 class TestSectorFallback:
     def test_returns_finnhub_industry_when_available(self):
+        """Financial Services from Finnhub normalizes to canonical 'Financials'."""
         fake_response = MagicMock()
         fake_response.status_code = 200
         fake_response.json.return_value = {
-            "ticker": "PLTR",
-            "finnhubIndustry": "Technology",
-            "name": "Palantir",
+            "ticker": "GS",
+            "finnhubIndustry": "Financial Services",
+            "name": "Goldman Sachs",
         }
         with patch("scorched.services.finnhub_data.retry_call", return_value=fake_response), \
              patch("scorched.services.finnhub_data.settings") as mock_s:
             mock_s.finnhub_api_key = "fake-key"
             from scorched.services.finnhub_data import fetch_sector_for_symbol
-            sector = fetch_sector_for_symbol("PLTR")
-        assert sector == "Technology"
+            sector = fetch_sector_for_symbol("GS")
+        assert sector == "Financials"
 
-    def test_returns_none_when_finnhub_returns_no_industry(self):
+    def test_normalizes_health_care_to_healthcare(self):
+        """Finnhub's 'Health Care' (with space) normalizes to canonical 'Healthcare'."""
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {
+            "ticker": "JNJ",
+            "finnhubIndustry": "Health Care",
+            "name": "Johnson & Johnson",
+        }
+        with patch("scorched.services.finnhub_data.retry_call", return_value=fake_response), \
+             patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = "fake-key"
+            from scorched.services.finnhub_data import fetch_sector_for_symbol
+            sector = fetch_sector_for_symbol("JNJ")
+        assert sector == "Healthcare"
+
+    def test_returns_none_for_unrecognized_sector(self):
+        """Granular industry names like 'Software' return None (fail closed)."""
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {
+            "ticker": "NOW",
+            "finnhubIndustry": "Software",
+            "name": "ServiceNow",
+        }
+        with patch("scorched.services.finnhub_data.retry_call", return_value=fake_response), \
+             patch("scorched.services.finnhub_data.settings") as mock_s:
+            mock_s.finnhub_api_key = "fake-key"
+            from scorched.services.finnhub_data import fetch_sector_for_symbol
+            sector = fetch_sector_for_symbol("NOW")
+        assert sector is None
+
+    def test_returns_none_when_no_industry(self):
         fake_response = MagicMock()
         fake_response.status_code = 200
         fake_response.json.return_value = {"ticker": "WEIRD"}

@@ -144,17 +144,45 @@ def build_analyst_context(analyst_data: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# Map Finnhub `finnhubIndustry` / GICS variants to the canonical names used
+# in _ETF_TO_SECTOR. Anything not in this map returns None (fail closed).
+_FINNHUB_TO_CANONICAL_SECTOR: dict[str, str] = {
+    "technology": "Technology",
+    "communication services": "Communication Services",
+    "consumer cyclical": "Consumer Discretionary",
+    "consumer discretionary": "Consumer Discretionary",
+    "consumer defensive": "Consumer Staples",
+    "consumer staples": "Consumer Staples",
+    "financial services": "Financials",
+    "financials": "Financials",
+    "health care": "Healthcare",
+    "healthcare": "Healthcare",
+    "industrials": "Industrials",
+    "energy": "Energy",
+    "real estate": "Real Estate",
+    "utilities": "Utilities",
+    "basic materials": "Materials",
+    "materials": "Materials",
+}
+
+
+def _normalize_sector(raw: str | None) -> str | None:
+    """Map a Finnhub-flavored sector/industry name to the canonical GICS-aligned
+    vocabulary used in _ETF_TO_SECTOR. Unknown names return None so the sector
+    gate fails closed rather than aggregating into the wrong bucket."""
+    if not raw:
+        return None
+    return _FINNHUB_TO_CANONICAL_SECTOR.get(raw.strip().lower())
+
+
 def fetch_sector_for_symbol(symbol: str) -> str | None:
     """Fetch GICS sector from Finnhub stock/profile2 endpoint. Returns None on failure.
 
     Used as fallback when the static `_SECTOR_ETF_MAP` has no entry for `symbol`.
-    Finnhub's `finnhubIndustry` field is GICS-aligned for the major sectors.
-
-    NOTE (Tier 2 concern): Finnhub returns names like "Information Technology" or
-    "Financial Services" whereas `_ETF_TO_SECTOR` uses "Technology" and "Financials".
-    If sector-name normalization is needed, it should be added as a Tier 2 follow-up
-    in `_get_sector_for_symbol` — not here. The gate still fails closed on unknown
-    sectors, so a Finnhub-vs-ETF-map mismatch is conservative, not permissive.
+    Prefers `gicsSector` (cleaner GICS labels) and falls back to `finnhubIndustry`.
+    Both are normalized to the canonical _ETF_TO_SECTOR vocabulary. Unknown sector
+    names return None so the sector gate fails closed rather than aggregating into
+    the wrong bucket.
     """
     if not settings.finnhub_api_key:
         return None
@@ -165,8 +193,9 @@ def fetch_sector_for_symbol(symbol: str) -> str | None:
         if response is None or response.status_code != 200:
             return None
         data = response.json()
-        industry = data.get("finnhubIndustry")
-        return industry if industry else None
+        # Prefer gicsSector if present (cleaner GICS); fall back to finnhubIndustry.
+        raw = data.get("gicsSector") or data.get("finnhubIndustry")
+        return _normalize_sector(raw)
     except Exception as exc:
         logger.warning("Finnhub sector lookup failed for %s: %s", symbol, exc)
         return None
