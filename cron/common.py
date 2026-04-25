@@ -102,10 +102,23 @@ def get_base_url():
 
 
 def http_get(path, timeout=60):
-    """GET from the tradebot API. Returns parsed JSON."""
-    req = urllib.request.Request(f"{get_base_url()}{path}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    """GET from the tradebot API. Returns parsed JSON. Includes PIN if set."""
+    headers = {}
+    pin = os.environ.get("SETTINGS_PIN", "")
+    if pin:
+        headers["X-Owner-Pin"] = pin
+    req = urllib.request.Request(f"{get_base_url()}{path}", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            raise urllib.error.HTTPError(
+                e.url, e.code,
+                f"{e.reason} — PIN mismatch? cron PIN len={len(pin)}; verify SETTINGS_PIN in /home/ubuntu/tradebot/.env matches the server's",
+                e.headers, e.fp,
+            ) from None
+        raise
 
 
 def http_post(path, payload, timeout=60):

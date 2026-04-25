@@ -1177,6 +1177,83 @@
 <div class="toast" id="toast"></div>
 
 <script>
+// ── Bootstrap token helpers ────────────────────────────────────────────────────
+
+var BOOTSTRAP_KEY = 'tradebot-bootstrap-token';
+
+function getBootstrapToken() {
+  return sessionStorage.getItem(BOOTSTRAP_KEY) || '';
+}
+
+function setBootstrapToken(tok) {
+  sessionStorage.setItem(BOOTSTRAP_KEY, tok);
+}
+
+function clearBootstrapToken() {
+  sessionStorage.removeItem(BOOTSTRAP_KEY);
+}
+
+/**
+ * Prompt operator for the BOOTSTRAP_TOKEN. Blocks until they enter one.
+ * Re-uses showToast for inline error messages.
+ */
+function promptBootstrapToken(reason) {
+  return new Promise(function(resolve) {
+    var msg = reason
+      ? reason + '\n\nEnter the BOOTSTRAP_TOKEN from your .env file:'
+      : 'Enter the BOOTSTRAP_TOKEN from your .env file to continue setup:';
+    // Simple synchronous prompt — acceptable for a one-time setup wizard
+    var tok = window.prompt(msg);
+    if (tok && tok.trim()) {
+      resolve(tok.trim());
+    } else {
+      // User cancelled — re-prompt
+      resolve(promptBootstrapToken('Token is required to continue.'));
+    }
+  });
+}
+
+/**
+ * apiFetch — POST wrapper that injects X-Bootstrap-Token header.
+ * Handles 403 (wrong token), 503 (server misconfigured), and 410 (already done).
+ */
+async function apiFetch(url, opts) {
+  opts = opts || {};
+  var tok = getBootstrapToken();
+  if (!tok) {
+    tok = await promptBootstrapToken(null);
+    setBootstrapToken(tok);
+  }
+
+  var headers = Object.assign({}, opts.headers || {}, { 'X-Bootstrap-Token': tok });
+  var resp = await fetch(url, Object.assign({}, opts, { headers: headers }));
+
+  if (resp.status === 410) {
+    showToast(
+      'Onboarding already completed. To re-run, the operator must delete /app/logs/.onboarding_completed inside the container.',
+      true
+    );
+    throw new Error('onboarding_completed');
+  }
+
+  if (resp.status === 503) {
+    showToast(
+      'Server misconfigured: BOOTSTRAP_TOKEN env var not set. Set it in .env before running onboarding.',
+      true
+    );
+    throw new Error('server_misconfigured');
+  }
+
+  if (resp.status === 403) {
+    clearBootstrapToken();
+    var newTok = await promptBootstrapToken('Incorrect token — try again.');
+    setBootstrapToken(newTok);
+    return apiFetch(url, opts); // retry with new token
+  }
+
+  return resp;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Escape a string for safe insertion into the DOM via textContent-like patterns */
@@ -1709,7 +1786,7 @@ async function testKey(serviceId) {
   }
 
   try {
-    var resp = await fetch('/api/v1/onboarding/validate-key', {
+    var resp = await apiFetch('/api/v1/onboarding/validate-key', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1740,7 +1817,12 @@ async function testKey(serviceId) {
   } catch (e) {
     btn.textContent = 'Error';
     btn.className = 'test-btn fail';
-    statusEl.textContent = 'Network error -- is the server running?';
+    // 410/503/403 errors are already toasted by apiFetch; show a shorter inline message
+    if (e.message === 'onboarding_completed' || e.message === 'server_misconfigured') {
+      statusEl.textContent = 'See notification above.';
+    } else {
+      statusEl.textContent = 'Network error -- is the server running?';
+    }
     statusEl.className = 'key-status error';
   }
   btn.disabled = false;
@@ -1970,7 +2052,7 @@ async function saveConfig() {
   var confirmLive = state.tradingMode === 'alpaca_live' && state.liveAcknowledged;
 
   try {
-    var resp = await fetch('/api/v1/onboarding/save', {
+    var resp = await apiFetch('/api/v1/onboarding/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ env: env, strategy: strategy, confirm_live: confirmLive }),
@@ -1987,7 +2069,10 @@ async function saveConfig() {
       btn.disabled = false;
     }
   } catch (e) {
-    showToast('Network error -- is the server running?', true);
+    // 410/503 errors are already toasted by apiFetch; avoid double-messaging
+    if (e.message !== 'onboarding_completed' && e.message !== 'server_misconfigured') {
+      showToast('Network error -- is the server running?', true);
+    }
     btn.textContent = 'Save Configuration';
     btn.disabled = false;
   }

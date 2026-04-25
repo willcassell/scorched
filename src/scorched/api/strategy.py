@@ -1,9 +1,10 @@
 """Strategy API — read and write strategy.json via HTTP."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..config import settings
 from ..services.strategy import load_strategy, load_strategy_json, save_strategy_json
+from .deps import require_owner_pin
 
 router = APIRouter(prefix="/strategy", tags=["strategy"])
 
@@ -14,7 +15,7 @@ class StrategyResponse(BaseModel):
     pin_required: bool = False  # true when SETTINGS_PIN is configured
 
 
-@router.get("", response_model=StrategyResponse)
+@router.get("", response_model=StrategyResponse, dependencies=[Depends(require_owner_pin)])
 async def get_strategy():
     return StrategyResponse(
         data=load_strategy_json(),
