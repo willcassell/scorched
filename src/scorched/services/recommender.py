@@ -25,7 +25,7 @@ from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from ..drawdown_gate import update_peak_and_check
 from ..correlation import find_high_correlations
-from ..risk_gates import check_cash_floor, check_holdings_cap
+from ..risk_gates import check_cash_floor, check_holdings_cap, check_position_cap
 from .telegram import send_telegram
 from .research import (
     WATCHLIST,
@@ -817,6 +817,13 @@ async def generate_recommendations(
     held_symbol_set = {p.symbol.upper() for p in current_positions}
     accepted_new_symbols: set[str] = set()
 
+    # Per-symbol market value map for post-trade position cap check (audit H3 fix).
+    # Seeded from held_positions_for_sector which already has live-price market values.
+    existing_position_value: dict[str, Decimal] = {
+        pos["symbol"].upper(): Decimal(str(pos["market_value"]))
+        for pos in held_positions_for_sector
+    }
+
     recommendation_rows = []
     for rec in raw_recs:
         action = rec.get("action", "").lower()
@@ -858,18 +865,23 @@ async def generate_recommendations(
                 )
                 continue
 
-            # Max position size gate
-            total_value = Decimal(str(portfolio_dict["total_value"]))
-            max_pos_pct = strategy_conc.get("max_position_pct", 20)
-            max_pos_dollars = total_value * Decimal(str(max_pos_pct)) / Decimal("100")
-            if estimated_cost > max_pos_dollars:
+            # Max position size gate — post-trade total exposure (audit H3 fix).
+            # existing_value includes current market value of any existing position;
+            # adding buy_notional gives the post-trade total so add-ons can't stack
+            # past the cap while each individual tranche looks small.
+            existing_value = existing_position_value.get(symbol.upper(), Decimal("0"))
+            position_check = check_position_cap(
+                existing_market_value=existing_value,
+                buy_notional=estimated_cost,
+                total_portfolio_value=total_value_for_floor,
+                max_position_pct=Decimal(str(strategy_conc.get("max_position_pct", 33))),
+            )
+            if not position_check.passed:
                 logger.warning(
-                    "Skipping %s buy — $%s exceeds %d%% max position ($%s)",
-                    symbol, estimated_cost, max_pos_pct, max_pos_dollars,
+                    "Skipping %s buy — position cap: %s", symbol, position_check.reason,
                 )
                 await send_telegram(
-                    f"TRADEBOT // Position size gate: {symbol} BUY skipped — "
-                    f"${estimated_cost:,.0f} > {max_pos_pct}% limit (${max_pos_dollars:,.0f})"
+                    f"TRADEBOT // Position size gate: {symbol} BUY skipped — {position_check.reason}"
                 )
                 continue
 
@@ -929,6 +941,10 @@ async def generate_recommendations(
             # count across the whole session (audit H2 fix).
             if symbol.upper() not in held_symbol_set:
                 accepted_new_symbols.add(symbol.upper())
+
+            # Update running position exposure so a second add-on buy in the same
+            # session can't stack past the cap (audit H3 fix).
+            existing_position_value[symbol.upper()] = existing_value + estimated_cost
 
         key_risks = rec.get("key_risks") or ""
 

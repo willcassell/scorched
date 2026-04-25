@@ -88,3 +88,38 @@ def check_holdings_cap(
             reason=f"would create holding #{projected} > cap {max_holdings}",
         )
     return HoldingsCapResult(passed=True, projected_count=projected, cap=max_holdings)
+
+
+@dataclass
+class PositionCapResult:
+    passed: bool
+    projected_pct: float
+    cap_pct: float
+    reason: str = ""
+
+
+def check_position_cap(
+    existing_market_value: Decimal,
+    buy_notional: Decimal,
+    total_portfolio_value: Decimal,
+    max_position_pct: Decimal,
+) -> PositionCapResult:
+    """Reject if `(existing + buy) / total * 100 > max_position_pct`."""
+    if total_portfolio_value <= 0:
+        return PositionCapResult(
+            passed=False,
+            projected_pct=0.0,
+            cap_pct=float(max_position_pct),
+            reason="total_portfolio_value is zero",
+        )
+    post_trade_value = Decimal(str(existing_market_value)) + Decimal(str(buy_notional))
+    pct = float(post_trade_value) / float(total_portfolio_value) * 100
+    cap = float(max_position_pct)
+    if pct > cap:
+        return PositionCapResult(
+            passed=False,
+            projected_pct=pct,
+            cap_pct=cap,
+            reason=f"post-trade exposure {pct:.1f}% > cap {cap:.1f}%",
+        )
+    return PositionCapResult(passed=True, projected_pct=pct, cap_pct=cap)
