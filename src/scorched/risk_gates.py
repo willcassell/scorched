@@ -123,3 +123,58 @@ def check_position_cap(
             reason=f"post-trade exposure {pct:.1f}% > cap {cap:.1f}%",
         )
     return PositionCapResult(passed=True, projected_pct=pct, cap_pct=cap)
+
+
+@dataclass
+class BuyGatesResult:
+    passed: bool
+    reason: str = ""
+    details: dict | None = None
+
+
+def run_all_buy_gates(
+    *,
+    symbol: str,
+    sector: str | None,
+    buy_notional: Decimal,
+    current_cash: Decimal,
+    total_portfolio_value: Decimal,
+    held_symbols: set[str],
+    held_positions_with_sector: list[dict],
+    existing_position_value: Decimal,
+    reserve_pct: Decimal,
+    max_position_pct: Decimal,
+    max_sector_pct: float,
+    max_holdings: int,
+) -> BuyGatesResult:
+    """Run cash floor + holdings + position cap + sector gates in one shot.
+
+    Pure function — no DB, no I/O. Safe to call at confirm time as a
+    re-validation of the original recommendation gates.
+    """
+    cash = check_cash_floor(current_cash, total_portfolio_value, buy_notional, reserve_pct)
+    if not cash.passed:
+        return BuyGatesResult(passed=False, reason=f"cash_floor: {cash.reason}", details={"cash": cash.__dict__})
+
+    holdings = check_holdings_cap(held_symbols, set(), symbol, max_holdings)
+    if not holdings.passed:
+        return BuyGatesResult(passed=False, reason=f"holdings: {holdings.reason}", details={"holdings": holdings.__dict__})
+
+    pos = check_position_cap(existing_position_value, buy_notional, total_portfolio_value, max_position_pct)
+    if not pos.passed:
+        return BuyGatesResult(passed=False, reason=f"position_cap: {pos.reason}", details={"position": pos.__dict__})
+
+    # Sector check lives in recommender; import locally to avoid circular import.
+    from .services.recommender import check_sector_exposure
+    sector_ok = check_sector_exposure(
+        proposed_symbol=symbol,
+        proposed_sector=sector,
+        proposed_dollars=buy_notional,
+        held_positions=held_positions_with_sector,
+        total_value=total_portfolio_value,
+        max_sector_pct=max_sector_pct,
+    )
+    if not sector_ok:
+        return BuyGatesResult(passed=False, reason="sector_cap: would breach sector concentration limit", details=None)
+
+    return BuyGatesResult(passed=True)

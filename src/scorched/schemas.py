@@ -42,8 +42,10 @@ class RecommendationsResponse(BaseModel):
 
 class ConfirmTradeRequest(BaseModel):
     recommendation_id: int
-    execution_price: Decimal
-    shares: Decimal
+    # Advisory only — server uses stored recommendation values (quantity, price).
+    # Accepted for backwards compatibility with old cron payloads but ignored.
+    execution_price: Decimal | None = None
+    shares: Decimal | None = None
 
 
 class PositionDetail(BaseModel):

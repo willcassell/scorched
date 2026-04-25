@@ -202,10 +202,10 @@ def main():
                     continue
 
             try:
+                # Server is now source-of-truth: uses stored rec qty/price + live
+                # Alpaca snapshot. Client values are ignored (audit C1 hardening).
                 result = http_post("/api/v1/trades/confirm", {
                     "recommendation_id": rec_id,
-                    "execution_price": fill_price,
-                    "shares": qty,
                 })
                 print(f"confirm_trade {symbol}: {result}")
                 if "error" in result:
