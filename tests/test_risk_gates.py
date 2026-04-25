@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from scorched.risk_gates import check_cash_floor, CashFloorResult
+from scorched.risk_gates import check_cash_floor, CashFloorResult, check_holdings_cap
 
 
 class TestCashFloor:
@@ -71,3 +71,46 @@ def test_cumulative_two_buys_breach_floor():
     # Second buy $15k against running cash $20k -> $5k. Below floor.
     r2 = check_cash_floor(r1.projected_cash, total, Decimal("15000"), pct)
     assert not r2.passed
+
+
+class TestHoldingsCap:
+    def test_passes_when_under_cap_and_new_symbol(self):
+        result = check_holdings_cap(
+            held_symbols={"AAPL", "MSFT"},
+            accepted_new_symbols=set(),
+            proposed_symbol="NVDA",
+            max_holdings=10,
+        )
+        assert result.passed is True
+
+    def test_rejects_at_cap_with_new_symbol(self):
+        held = {f"S{i}" for i in range(10)}
+        result = check_holdings_cap(
+            held_symbols=held,
+            accepted_new_symbols=set(),
+            proposed_symbol="NEW",
+            max_holdings=10,
+        )
+        assert result.passed is False
+
+    def test_add_to_existing_holding_passes_at_cap(self):
+        held = {f"S{i}" for i in range(10)}
+        result = check_holdings_cap(
+            held_symbols=held,
+            accepted_new_symbols=set(),
+            proposed_symbol="S0",  # already held
+            max_holdings=10,
+        )
+        assert result.passed is True
+
+    def test_cumulative_new_buys_breach_cap(self):
+        held = {f"S{i}" for i in range(8)}
+        # Two prior new buys accepted -> 10 effective holdings.
+        accepted = {"NEW1", "NEW2"}
+        result = check_holdings_cap(
+            held_symbols=held,
+            accepted_new_symbols=accepted,
+            proposed_symbol="NEW3",
+            max_holdings=10,
+        )
+        assert result.passed is False

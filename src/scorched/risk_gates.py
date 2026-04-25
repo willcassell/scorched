@@ -46,3 +46,45 @@ def check_cash_floor(
             reason=f"projected cash ${projected:,.2f} < floor ${floor:,.2f}",
         )
     return CashFloorResult(passed=True, projected_cash=projected, floor=floor)
+
+
+@dataclass
+class HoldingsCapResult:
+    passed: bool
+    projected_count: int
+    cap: int
+    reason: str = ""
+
+
+def check_holdings_cap(
+    held_symbols: set[str],
+    accepted_new_symbols: set[str],
+    proposed_symbol: str,
+    max_holdings: int,
+) -> HoldingsCapResult:
+    """Return PASS unless adding `proposed_symbol` would exceed `max_holdings`.
+
+    Adding to an *existing* holding does not increase the count. Only buys of
+    new symbols not already in `held_symbols` or `accepted_new_symbols` count.
+    """
+    proposed = proposed_symbol.upper()
+    held_upper = {s.upper() for s in held_symbols}
+    accepted_upper = {s.upper() for s in accepted_new_symbols}
+
+    if proposed in held_upper or proposed in accepted_upper:
+        return HoldingsCapResult(
+            passed=True,
+            projected_count=len(held_upper | accepted_upper),
+            cap=max_holdings,
+            reason="add to existing holding — does not increase count",
+        )
+
+    projected = len(held_upper | accepted_upper) + 1
+    if projected > max_holdings:
+        return HoldingsCapResult(
+            passed=False,
+            projected_count=projected,
+            cap=max_holdings,
+            reason=f"would create holding #{projected} > cap {max_holdings}",
+        )
+    return HoldingsCapResult(passed=True, projected_count=projected, cap=max_holdings)

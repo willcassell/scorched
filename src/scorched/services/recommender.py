@@ -25,7 +25,7 @@ from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
 from ..drawdown_gate import update_peak_and_check
 from ..correlation import find_high_correlations
-from ..risk_gates import check_cash_floor
+from ..risk_gates import check_cash_floor, check_holdings_cap
 from .telegram import send_telegram
 from .research import (
     WATCHLIST,
@@ -811,6 +811,12 @@ async def generate_recommendations(
     total_value_for_floor = Decimal(str(portfolio_dict["total_value"]))
     reserve_pct = Decimal(str(settings.min_cash_reserve_pct))  # already a fraction (0.10)
 
+    # Running set of symbols already held or accepted as new buys this session.
+    # Used by check_holdings_cap so successive new-symbol buys see the correct
+    # projected count (audit H2 fix).
+    held_symbol_set = {p.symbol.upper() for p in current_positions}
+    accepted_new_symbols: set[str] = set()
+
     recommendation_rows = []
     for rec in raw_recs:
         action = rec.get("action", "").lower()
@@ -867,17 +873,19 @@ async def generate_recommendations(
                 )
                 continue
 
-            # Max holdings gate
-            max_holdings = strategy_conc.get("max_holdings", 5)
-            current_count = len(current_positions)
-            if current_count >= max_holdings:
+            # Max holdings gate (cumulative — tracks accepted new buys this session)
+            holdings_check = check_holdings_cap(
+                held_symbols=held_symbol_set,
+                accepted_new_symbols=accepted_new_symbols,
+                proposed_symbol=symbol,
+                max_holdings=strategy_conc.get("max_holdings", 10),
+            )
+            if not holdings_check.passed:
                 logger.warning(
-                    "Skipping %s buy — at max holdings (%d/%d)",
-                    symbol, current_count, max_holdings,
+                    "Skipping %s buy — holdings cap: %s", symbol, holdings_check.reason,
                 )
                 await send_telegram(
-                    f"TRADEBOT // Holdings gate: {symbol} BUY skipped — "
-                    f"already holding {current_count}/{max_holdings} positions"
+                    f"TRADEBOT // Holdings gate: {symbol} BUY skipped — {holdings_check.reason}"
                 )
                 continue
 
@@ -916,6 +924,11 @@ async def generate_recommendations(
             # Decrement running cash so subsequent buys in this session see the
             # correct available balance (audit H1 fix — cumulative cash tracking).
             running_cash = cash_check.projected_cash
+
+            # Track accepted new symbols so the holdings cap sees the cumulative
+            # count across the whole session (audit H2 fix).
+            if symbol.upper() not in held_symbol_set:
+                accepted_new_symbols.add(symbol.upper())
 
         key_risks = rec.get("key_risks") or ""
 
