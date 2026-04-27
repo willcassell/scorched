@@ -1,7 +1,8 @@
 """Playbook service: reads and updates the bot's living strategy document."""
 import logging
 import re
-from datetime import date
+from datetime import date, datetime, timezone
+from pathlib import Path
 
 import anthropic
 from sqlalchemy import select
@@ -150,6 +151,34 @@ def _format_closed_trades_for_prompt(closed_trades: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_REJECTION_LOG_DIR = Path("/app/logs/playbook_rejections")
+
+
+def _persist_rejected_playbook(
+    rejected: str,
+    current: str,
+    prior_version: int,
+    drift: list[str],
+) -> None:
+    """Write the rejected playbook payload to a timestamped file for forensics."""
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+        _REJECTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = _REJECTION_LOG_DIR / f"{ts}_v{prior_version}.md"
+        flagged = "\n".join(f"- {d}" for d in drift)
+        path.write_text(
+            f"# Playbook Rejection — {ts}\n\n"
+            f"**Prior version kept:** v{prior_version}\n\n"
+            f"**Drift patterns flagged:**\n{flagged}\n\n"
+            f"---\n\n## Proposed (Rejected) Content\n\n```\n{rejected}\n```\n\n"
+            f"---\n\n## Current (Kept) Content\n\n```\n{current}\n```\n",
+            encoding="utf-8",
+        )
+        logger.info("Persisted rejected playbook to %s", path)
+    except Exception as e:  # noqa: BLE001 — file logging is best-effort
+        logger.warning("Failed to persist rejected playbook to disk: %s", e)
+
+
 async def update_playbook(db: AsyncSession, today: date) -> Playbook:
     """
     Read recent closed trade outcomes, ask Claude to update the playbook,
@@ -220,6 +249,7 @@ Review these outcomes against the playbook and produce an updated version that r
             "Playbook update REJECTED — drift detected: %s. Keeping prior playbook v%d.",
             ", ".join(drift), playbook.version,
         )
+        _persist_rejected_playbook(updated_content, playbook.content, playbook.version, drift)
         try:
             await send_telegram(
                 "⚠️ Playbook update rejected — strategy drift detected:\n"
