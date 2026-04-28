@@ -15,7 +15,7 @@ class StrategyResponse(BaseModel):
     pin_required: bool = False  # true when SETTINGS_PIN is configured
 
 
-@router.get("", response_model=StrategyResponse, dependencies=[Depends(require_owner_pin)])
+@router.get("", response_model=StrategyResponse)
 async def get_strategy():
     return StrategyResponse(
         data=load_strategy_json(),

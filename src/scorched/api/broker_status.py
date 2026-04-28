@@ -11,7 +11,7 @@ from .deps import require_owner_pin
 router = APIRouter(prefix="/broker", tags=["broker"])
 
 
-@router.get("/status", dependencies=[Depends(require_owner_pin)])
+@router.get("/status")
 async def broker_status(db: AsyncSession = Depends(get_db)):
     """Return broker mode, account info, and position reconciliation."""
     broker = get_broker(db)

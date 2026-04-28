@@ -12,12 +12,11 @@ from ..config import settings
 from ..database import get_db
 from ..models import ApiCallLog
 from ..tz import market_today
-from .deps import require_owner_pin
 
 router = APIRouter(prefix="/system", tags=["system"])
 
 
-@router.get("/health", dependencies=[Depends(require_owner_pin)])
+@router.get("/health")
 async def system_health(db: AsyncSession = Depends(get_db)):
     """Return per-service health based on today's api_call_log records."""
     today = market_today()
@@ -60,7 +59,7 @@ async def system_health(db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("/errors", dependencies=[Depends(require_owner_pin)])
+@router.get("/errors")
 async def system_errors(db: AsyncSession = Depends(get_db)):
     """Return last 50 non-success records from api_call_log, newest first."""
     result = await db.execute(
@@ -87,7 +86,7 @@ async def system_errors(db: AsyncSession = Depends(get_db)):
     return {"errors": errors}
 
 
-@router.get("/trend", dependencies=[Depends(require_owner_pin)])
+@router.get("/trend")
 async def system_trend(db: AsyncSession = Depends(get_db)):
     """Return daily success % per service for the last 7 days."""
     cutoff = market_today() - timedelta(days=6)
