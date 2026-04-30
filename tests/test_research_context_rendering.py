@@ -107,3 +107,74 @@ def test_same_day_release_flag_in_calendar():
     assert "TODAY" in econ
     ctx = _ctx(economic_calendar_context=econ)
     assert "TODAY" in ctx
+
+
+# ── Portfolio risk (VaR/CVaR) tests ─────────────────────────────────────────
+
+def test_portfolio_risk_omitted_when_none():
+    """When portfolio_risk is None (default), the risk section is not rendered."""
+    ctx = _ctx()
+    assert "PORTFOLIO RISK" not in ctx
+
+
+def test_portfolio_risk_omitted_when_empty_book():
+    """An empty book (n_positions=0) suppresses the section — nothing to render."""
+    risk = {
+        "var_pct": 0.0,
+        "cvar_pct": 0.0,
+        "var_dollars": 0.0,
+        "cvar_dollars": 0.0,
+        "confidence": 0.95,
+        "lookback_days": 0,
+        "n_positions": 0,
+        "portfolio_value": 100000.0,
+    }
+    ctx = _ctx(portfolio_risk=risk)
+    assert "PORTFOLIO RISK" not in ctx
+
+
+def test_portfolio_risk_rendered_when_populated():
+    """Populated VaR/CVaR renders header, both rows, and basis line with correct formatting."""
+    risk = {
+        "var_pct": -0.024,    # -2.4%
+        "cvar_pct": -0.038,   # -3.8%
+        "var_dollars": 2400.0,
+        "cvar_dollars": 3800.0,
+        "confidence": 0.95,
+        "lookback_days": 251,
+        "n_positions": 5,
+        "portfolio_value": 100000.0,
+    }
+    ctx = _ctx(portfolio_risk=risk)
+    assert "PORTFOLIO RISK (1-day historical-sim, 95%)" in ctx
+    # Both percentages reported as positive-magnitude losses
+    assert "VaR:  2.4%" in ctx
+    assert "CVaR: 3.8%" in ctx
+    # Dollar magnitudes formatted with thousands separator
+    assert "$2,400" in ctx
+    assert "$3,800" in ctx
+    # Basis line lists position count + lookback
+    assert "5 positions" in ctx
+    assert "251 days" in ctx
+    # Tail-frequency phrasing — VaR exceeded ~5% of historical days at 95% confidence
+    assert "5% of historical days" in ctx
+
+
+def test_portfolio_risk_accepts_dataclass():
+    """Dataclass instances (the live in-process shape) render the same as dicts."""
+    from scorched.services.risk import HistoricalSimResult
+    risk = HistoricalSimResult(
+        var_pct=-0.020,
+        cvar_pct=-0.030,
+        var_dollars=2000.0,
+        cvar_dollars=3000.0,
+        confidence=0.99,
+        lookback_days=250,
+        n_positions=3,
+        portfolio_value=100000.0,
+    )
+    ctx = _ctx(portfolio_risk=risk)
+    assert "PORTFOLIO RISK (1-day historical-sim, 99%)" in ctx
+    assert "VaR:  2.0%" in ctx
+    assert "CVaR: 3.0%" in ctx
+    assert "1% of historical days" in ctx

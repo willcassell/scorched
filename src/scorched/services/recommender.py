@@ -542,6 +542,34 @@ async def generate_recommendations(
     except Exception:  # noqa: BLE001 — snapshot is best-effort
         logger.warning("Failed to build performance snapshot — context will omit it", exc_info=True)
 
+    # Portfolio VaR/CVaR — informational sizing context for Claude (no hard
+    # rule, no numeric gate). Prefer the Phase 0 cache; if missing or stale,
+    # compute inline. Failure is non-fatal — Phase 1 should still produce
+    # recommendations even if VaR can't be computed.
+    portfolio_risk: dict | None = None
+    cached_risk = cache.get("portfolio_risk") if cache else None
+    if cached_risk:
+        portfolio_risk = cached_risk
+    else:
+        try:
+            from .risk import compute_portfolio_risk
+            risk_result = await compute_portfolio_risk(db)
+            portfolio_risk = {
+                "var_pct": risk_result.var_pct,
+                "cvar_pct": risk_result.cvar_pct,
+                "var_dollars": risk_result.var_dollars,
+                "cvar_dollars": risk_result.cvar_dollars,
+                "confidence": risk_result.confidence,
+                "lookback_days": risk_result.lookback_days,
+                "n_positions": risk_result.n_positions,
+                "portfolio_value": risk_result.portfolio_value,
+            }
+        except Exception:  # noqa: BLE001 — VaR is best-effort context
+            logger.warning(
+                "Failed to compute portfolio VaR — context will omit it",
+                exc_info=True,
+            )
+
     # Failed-exit retry signal: SELL recs from the prior session whose symbol
     # is still held. Without this, if a sell limit expires unfilled the analyst
     # has no signal on the next session — today's LRCX/GEV earnings-risk exits
@@ -576,6 +604,7 @@ async def generate_recommendations(
         economic_calendar_context=economic_calendar_context,
         factor_returns=factor_returns,
         performance_snapshot=performance_snapshot,
+        portfolio_risk=portfolio_risk,
         failed_exits=failed_exits,
         mean_reversion_symbols=mean_reversion_symbols,
     )

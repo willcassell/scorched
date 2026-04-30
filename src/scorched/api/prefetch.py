@@ -194,6 +194,31 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     # 5. Build the analyst context text
     analyst_context = build_analyst_context(analyst_consensus)
 
+    # 5b. Portfolio VaR/CVaR — informational sizing context for Phase 1.
+    # Computed here so Phase 1 doesn't re-pay the Alpaca bar fetch. Failure
+    # is non-fatal: Phase 1 will fall back to inline computation, and if that
+    # also fails the section is simply omitted from the prompt.
+    portfolio_risk_cache = None
+    try:
+        from ..services.risk import compute_portfolio_risk
+        with _timed("portfolio_risk", timing):
+            risk_result = await compute_portfolio_risk(db)
+        portfolio_risk_cache = {
+            "var_pct": risk_result.var_pct,
+            "cvar_pct": risk_result.cvar_pct,
+            "var_dollars": risk_result.var_dollars,
+            "cvar_dollars": risk_result.cvar_dollars,
+            "confidence": risk_result.confidence,
+            "lookback_days": risk_result.lookback_days,
+            "n_positions": risk_result.n_positions,
+            "portfolio_value": risk_result.portfolio_value,
+        }
+    except Exception:  # noqa: BLE001 — VaR is best-effort
+        logger.warning(
+            "Phase 0: portfolio VaR computation failed — Phase 1 will fall back inline",
+            exc_info=True,
+        )
+
     # 6. Serialize price_data for cache (convert non-serializable types)
     price_data_cache = {}
     for sym, data in price_data.items():
@@ -239,6 +264,7 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "premarket_data": premarket_data,
         "economic_calendar": economic_calendar,
         "economic_calendar_context": build_economic_calendar_context(economic_calendar),
+        "portfolio_risk": portfolio_risk_cache,
     }
 
     # Atomic write

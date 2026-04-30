@@ -61,6 +61,16 @@ RSI interpretation depends on entry style:
 
 Mean-reversion entries do not require volume confirmation — the RSI 25–40 + %B ≤ 0 + rising-50-day-MA combination is the setup confirmation.
 
+**Volatility — ATR (rolling) and GARCH(1,1) forward forecast:**
+- `ATR (14d)` is the lagging realized-volatility read — use it for stop-distance sizing (e.g., "stop at 2× ATR below entry" for high-vol names) and to sanity-check whether a -8% hard stop is wider or tighter than typical daily noise.
+- `GARCH` adds a forward-looking complement: `forward_annual_vol_pct` (5-day-ahead conditional vol, annualized), `realized_annual_vol_pct` (20-day realized, annualized), and a `regime` label derived from their ratio:
+  - `EXPANDING` — model expects vol to rise vs the recent 20-day baseline. Treat as a **sizing lever**: prefer a smaller position, a wider ATR-based stop, or both. Do not auto-pass on this alone.
+  - `STABLE` — forward vol roughly tracks realized. Baseline sizing.
+  - `CONTRACTING` — vol expected to calm. Normal sizing; a contracting regime alongside a clean breakout is a mild positive.
+  - `UNKNOWN` — insufficient history or model fit failed. Ignore the regime field; fall back to ATR.
+
+GARCH is diagnostic, not policy — it is NOT a hard rule and does NOT override catalyst, factor, or sector gates. It informs *how much* to size and *how wide* to stop, not *whether* to enter.
+
 ### Analyst Consensus (Finnhub)
 - >80% bullish (Buy + Strong Buy): Wall Street is overwhelmingly positive — supports buy thesis but watch for crowded trade risk.
 - 50-80% bullish: Moderate consensus — acceptable.

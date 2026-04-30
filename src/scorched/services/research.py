@@ -1159,6 +1159,57 @@ def _format_factor_leadership(factor_returns: dict[str, dict[str, float]] | None
     return lines
 
 
+def _format_portfolio_risk(portfolio_risk) -> list[str]:
+    """Render the PORTFOLIO RISK section. Returns lines (may be empty).
+
+    Accepts either a HistoricalSimResult dataclass instance OR a plain dict
+    (the form it takes after a Phase 0 cache round-trip through JSON). Both
+    shapes expose the same field names.
+
+    Informational only — VaR/CVaR are forward-looking sizing context for
+    Claude's judgment, not policy. There is intentionally no hard rule or
+    numeric gate keyed off these values.
+    """
+    if not portfolio_risk:
+        return []
+
+    # Support both dataclass and dict access.
+    def _get(name):
+        if isinstance(portfolio_risk, dict):
+            return portfolio_risk.get(name)
+        return getattr(portfolio_risk, name, None)
+
+    var_pct = _get("var_pct")
+    cvar_pct = _get("cvar_pct")
+    var_dollars = _get("var_dollars")
+    cvar_dollars = _get("cvar_dollars")
+    confidence = _get("confidence")
+    lookback_days = _get("lookback_days")
+    n_positions = _get("n_positions")
+
+    # If the book is empty (no positions) or VaR couldn't be computed
+    # (insufficient history), skip the section — emitting "0.0% / 0 positions"
+    # adds noise without informing sizing.
+    if not n_positions or not lookback_days or var_pct is None or cvar_pct is None:
+        return []
+
+    conf = confidence if confidence is not None else 0.95
+    lines = [f"=== PORTFOLIO RISK (1-day historical-sim, {conf:.0%}) ==="]
+    lines.append(
+        f"VaR:  {abs(var_pct) * 100:.1f}% (~${var_dollars:,.0f}) — "
+        f"loss exceeded ~{(1 - conf) * 100:.0f}% of historical days"
+    )
+    lines.append(
+        f"CVaR: {abs(cvar_pct) * 100:.1f}% (~${cvar_dollars:,.0f}) — "
+        f"average loss when the tail fires"
+    )
+    lines.append(
+        f"Basis: {n_positions} positions, {lookback_days} days of aligned returns"
+    )
+    lines.append("")
+    return lines
+
+
 def _format_performance_snapshot(snapshot: dict | None) -> list[str]:
     """Render the PERFORMANCE vs BENCHMARKS section. Returns lines (may be empty)."""
     if not snapshot:
@@ -1243,6 +1294,7 @@ def build_research_context(
     economic_calendar_context: str | None = None,
     factor_returns: dict[str, dict[str, float]] | None = None,
     performance_snapshot: dict | None = None,
+    portfolio_risk=None,
     failed_exits: list[dict] | None = None,
     mean_reversion_symbols: list[str] | None = None,
 ) -> str:
@@ -1302,10 +1354,12 @@ def build_research_context(
                 lines.append(f"    Prior risks:  {risks[:220]}")
         lines.append("")
 
-    # Factor leadership + performance snapshot — emitted first so Claude's
-    # framing is set before any per-stock data is read.
+    # Factor leadership + performance snapshot + portfolio risk — emitted
+    # first so Claude's framing is set before any per-stock data is read.
+    # Risk sits adjacent to performance since both are portfolio-state context.
     lines.extend(_format_factor_leadership(factor_returns))
     lines.extend(_format_performance_snapshot(performance_snapshot))
+    lines.extend(_format_portfolio_risk(portfolio_risk))
 
     # FRED macro section
     if fred_macro:
