@@ -252,6 +252,85 @@ def calc_volume_profile(
 
 
 # ---------------------------------------------------------------------------
+# GARCH(1,1) Conditional Volatility Forecast
+# ---------------------------------------------------------------------------
+
+def forecast_garch_volatility(
+    prices: list[float],
+    horizon: int = 5,
+    history_window: int = 252,
+) -> Optional[dict]:
+    """Fit GARCH(1,1) on daily log returns and forecast forward volatility.
+
+    GARCH adds a conditional, forward-looking signal that ATR (rolling, lagging)
+    cannot give: when vol is mean-reverting up, GARCH expands ahead of ATR; when
+    a shock has just hit, GARCH decays back toward unconditional vol while ATR
+    stays elevated. This is what makes it useful for sizing decisions before
+    the trailing-stop machinery sees the new regime.
+
+    Returns dict with annualized forward vol (%) and a regime signal vs the
+    realized 20-day vol; None if fit fails or fewer than 60 returns available.
+    """
+    if len(prices) < 61:
+        return None
+
+    arr = np.asarray(prices[-history_window - 1:], dtype=float)
+    if np.any(arr <= 0):
+        return None
+
+    # Log returns scaled to percent (arch's preferred numerical range)
+    log_returns = np.diff(np.log(arr)) * 100.0
+    if len(log_returns) < 60:
+        return None
+
+    try:
+        from arch import arch_model
+    except ImportError:
+        return None
+
+    try:
+        # Constant mean + GARCH(1,1). Disable optimizer chatter.
+        am = arch_model(log_returns, mean="Constant", vol="GARCH", p=1, q=1, dist="normal")
+        res = am.fit(disp="off", show_warning=False)
+        forecast = res.forecast(horizon=horizon, reindex=False)
+        # variance is daily, in (% returns)^2 — annualize to a single % vol
+        var_path = forecast.variance.values[-1]
+        avg_daily_var = float(np.mean(var_path))
+        if avg_daily_var <= 0:
+            return None
+        forward_daily_vol_pct = float(np.sqrt(avg_daily_var))
+        forward_annual_vol_pct = forward_daily_vol_pct * np.sqrt(252)
+    except Exception:
+        return None
+
+    # Realized 20-day vol (% annualized) from the same series for regime comparison
+    recent = log_returns[-20:]
+    realized_daily_pct = float(np.std(recent, ddof=1)) if len(recent) > 1 else 0.0
+    realized_annual_pct = realized_daily_pct * np.sqrt(252)
+
+    if realized_annual_pct <= 0:
+        regime = "unknown"
+        ratio = None
+    else:
+        ratio = forward_annual_vol_pct / realized_annual_pct
+        if ratio > 1.15:
+            regime = "expanding"
+        elif ratio < 0.85:
+            regime = "contracting"
+        else:
+            regime = "stable"
+
+    return {
+        "forward_annual_vol_pct": round(forward_annual_vol_pct, 2),
+        "forward_daily_vol_pct": round(forward_daily_vol_pct, 2),
+        "realized_annual_vol_pct": round(realized_annual_pct, 2),
+        "ratio": round(ratio, 2) if ratio is not None else None,
+        "horizon_days": horizon,
+        "regime": regime,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -264,7 +343,8 @@ def compute_technicals(price_data: dict[str, dict]) -> dict[str, dict]:
 
     Returns:
         ``{symbol: {"macd": {...}, "bollinger": {...}, "ma_crossover": {...},
-                     "support_resistance": {...}, "volume": {...}, "atr": {...}}}``
+                     "support_resistance": {...}, "volume": {...}, "atr": {...},
+                     "garch": {...}}}``
     """
     results: dict[str, dict] = {}
 
@@ -281,6 +361,7 @@ def compute_technicals(price_data: dict[str, dict]) -> dict[str, dict]:
             "support_resistance": calc_support_resistance(closes),
             "volume": calc_volume_profile(closes, volumes),
             "atr": calc_atr(highs, lows, closes) if highs and lows else None,
+            "garch": forecast_garch_volatility(closes),
         }
 
     return results

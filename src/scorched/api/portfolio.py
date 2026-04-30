@@ -8,8 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import Position, TradeHistory
-from ..schemas import BenchmarkResponse, PortfolioResponse, TaxSummaryResponse, TradeHistoryItem
+from ..schemas import (
+    BenchmarkResponse,
+    PortfolioResponse,
+    PortfolioRiskResponse,
+    TaxSummaryResponse,
+    TradeHistoryItem,
+)
 from ..services import portfolio as portfolio_svc
+from ..services import risk as risk_svc
 from .deps import require_owner_pin
 
 logger = logging.getLogger(__name__)
@@ -44,6 +51,33 @@ async def get_benchmarks(db: AsyncSession = Depends(get_db)):
 @router.get("/tax-summary", response_model=TaxSummaryResponse)
 async def get_tax_summary(db: AsyncSession = Depends(get_db)):
     return await portfolio_svc.get_tax_summary(db)
+
+
+@router.get("/risk", response_model=PortfolioRiskResponse)
+async def get_portfolio_risk(
+    confidence: float = Query(0.95, ge=0.50, le=0.999),
+    lookback_days: int = Query(252, ge=30, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    """1-day historical-simulation VaR & CVaR for the current book.
+
+    `var_pct` is a negative number (loss); the dashboard should render |var_pct|
+    as the "1-day worst-case at <confidence>" line and `cvar_dollars` as the
+    "if it gets that bad, expect this much" line.
+    """
+    result = await risk_svc.compute_portfolio_risk(
+        db, confidence=confidence, lookback_days=lookback_days
+    )
+    return PortfolioRiskResponse(
+        confidence=result.confidence,
+        lookback_days=result.lookback_days,
+        n_positions=result.n_positions,
+        portfolio_value=result.portfolio_value,
+        var_pct=result.var_pct,
+        cvar_pct=result.cvar_pct,
+        var_dollars=result.var_dollars,
+        cvar_dollars=result.cvar_dollars,
+    )
 
 
 class TrailingStopUpdate(BaseModel):

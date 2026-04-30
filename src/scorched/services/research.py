@@ -1448,6 +1448,13 @@ def build_research_context(
             if t.get("atr"):
                 a = t["atr"]
                 ta_parts.append(f"ATR: ${a['atr']:.2f} ({a['atr_pct']:.1f}%)")
+            if t.get("garch"):
+                g = t["garch"]
+                # Forward-looking conditional vol annualized; regime is forecast vs realized 20d
+                ta_parts.append(
+                    f"GARCH(1,1) {g['horizon_days']}d fwd vol: {g['forward_annual_vol_pct']:.0f}% "
+                    f"ann ({g['regime'].upper()} vs 20d {g['realized_annual_vol_pct']:.0f}%)"
+                )
             if ta_parts:
                 lines.append(f"  Technicals: {' | '.join(ta_parts)}")
 

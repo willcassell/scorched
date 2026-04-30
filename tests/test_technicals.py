@@ -8,6 +8,7 @@ from scorched.services.technicals import (
     calc_support_resistance,
     calc_volume_profile,
     compute_technicals,
+    forecast_garch_volatility,
 )
 
 
@@ -111,3 +112,32 @@ class TestComputeTechnicals:
         assert "ma_crossover" in result["AAPL"]
         assert "support_resistance" in result["AAPL"]
         assert "volume" in result["AAPL"]
+
+
+class TestGarchForecast:
+    def test_returns_required_keys_for_normal_series(self):
+        prices = _make_prices(260, trend=0.1, noise=1.5)
+        result = forecast_garch_volatility(prices)
+        assert result is not None
+        assert "forward_annual_vol_pct" in result
+        assert "forward_daily_vol_pct" in result
+        assert "realized_annual_vol_pct" in result
+        assert "regime" in result
+        assert result["regime"] in ("expanding", "contracting", "stable", "unknown")
+        assert result["horizon_days"] == 5
+
+    def test_short_history_returns_none(self):
+        # Below 60-return floor (~61 prices)
+        result = forecast_garch_volatility([100.0 + i * 0.1 for i in range(40)])
+        assert result is None
+
+    def test_zero_or_negative_prices_returns_none(self):
+        result = forecast_garch_volatility([0.0] * 100)
+        assert result is None
+
+    def test_forecast_is_positive_for_volatile_series(self):
+        prices = _make_prices(260, trend=0.0, noise=3.0)
+        result = forecast_garch_volatility(prices)
+        assert result is not None
+        assert result["forward_annual_vol_pct"] > 0
+        assert result["forward_daily_vol_pct"] > 0

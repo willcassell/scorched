@@ -135,6 +135,19 @@ class TaxSummaryResponse(BaseModel):
     total_post_tax_gain: Decimal
 
 
+# ── Portfolio Risk (VaR / CVaR) ────────────────────────────────────────────────
+
+class PortfolioRiskResponse(BaseModel):
+    confidence: float          # e.g. 0.95
+    lookback_days: int         # number of overlapping daily returns used
+    n_positions: int           # positions actually included
+    portfolio_value: float     # equity + cash
+    var_pct: float             # negative number — fraction of equity at risk
+    cvar_pct: float            # negative number — average tail loss fraction
+    var_dollars: float         # |var_pct| × equity (dollars at risk on a 1-day VaR event)
+    cvar_dollars: float        # average dollar loss conditional on VaR breach
+
+
 # ── Benchmarks ─────────────────────────────────────────────────────────────────
 
 class BenchmarkItem(BaseModel):
