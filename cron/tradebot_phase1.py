@@ -35,6 +35,21 @@ LOGS_DIR.mkdir(exist_ok=True)
 RECS_FILE = str(LOGS_DIR / "tradebot_recommendations.json")
 
 
+def _write_recs_file(payload: dict) -> None:
+    """Atomic write: tempfile + rename so a partial file never appears."""
+    fd, tmp_path = tempfile.mkstemp(dir=str(LOGS_DIR), suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+        os.rename(tmp_path, RECS_FILE)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def main():
     now_est, today_str = now_et()
     check_expected_hour(9, "Phase 1")
@@ -91,6 +106,9 @@ def main():
                 f"Check docker logs before assuming it was a deliberate hold day."
             )
         send_telegram(msg)
+        # Write today's empty payload so Phase 1.5/Phase 2 don't pick up
+        # yesterday's stale file and fire false "date mismatch" alerts.
+        _write_recs_file({"date": today_str, "recommendations": [], "symbols": [], "status": "complete"})
         print("No recommendations." if summary else "No recs and no summary — suspicious.")
         return
 
@@ -123,19 +141,8 @@ def main():
 
     send_telegram(msg)
 
-    # Write JSON for Phase 2 (atomic write: tempfile + rename)
     payload = {"date": today_str, "recommendations": recs, "symbols": symbols, "status": "complete"}
-    fd, tmp_path = tempfile.mkstemp(dir=str(LOGS_DIR), suffix=".json")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(payload, f)
-        os.rename(tmp_path, RECS_FILE)
-    except BaseException:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
+    _write_recs_file(payload)
     print(f"Wrote {RECS_FILE} with {len(recs)} recommendations.")
 
 

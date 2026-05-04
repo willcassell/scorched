@@ -31,11 +31,17 @@ ORIGINAL_FILE = str(LOGS_DIR / "tradebot_recommendations.json")
 
 
 def _cleanup_recs_file(path):
-    """Remove the recommendations file, ignoring if already gone."""
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        pass
+    """Remove the recommendations file, ignoring if already gone.
+
+    Also clears the *other* file (gated vs original) — Phase 2 only reads
+    the preferred one, so the unused sibling can sit around as a stale
+    leftover that confuses the next session's date-mismatch check.
+    """
+    for p in (path, GATED_FILE, ORIGINAL_FILE):
+        try:
+            os.remove(p)
+        except FileNotFoundError:
+            pass
 
 
 def main():
