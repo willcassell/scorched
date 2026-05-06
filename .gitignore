@@ -25,6 +25,12 @@ postgres_data/
 # Superpowers plugin state
 .superpowers/
 
+# Session handovers (skill-generated, local-only)
+.handovers/
+
+# Hermes tool workspace
+.hermes/
+
 # Backup files
 *.bak
 
