@@ -154,6 +154,22 @@ async def test_circuit_breaker_blocks_gap_up():
     assert "gap_up" in result[0]["gate_result"].reason.lower()
 
 
+@pytest.mark.asyncio
+async def test_circuit_breaker_fails_closed_when_vix_missing():
+    """If both ^VIX and fallback proxy are unavailable, buy gates must fail closed."""
+    recs = [{"symbol": "AAPL", "action": "buy", "suggested_price": 150.0}]
+
+    with patch("scorched.circuit_breaker.fetch_gate_data", new=AsyncMock(return_value={
+        "AAPL": {"current": Decimal("150.5"), "prior_close": Decimal("150.0")},
+        "SPY": {"current": Decimal("500.0"), "prior_close": Decimal("499.0")},
+    })):
+        result = await run_circuit_breaker(recs, CB_CONFIG_WITH_GAP_UP)
+
+    assert result[0]["gate_result"].passed is False
+    assert "vix" in result[0]["gate_result"].reason.lower()
+    assert "unavailable" in result[0]["gate_result"].reason.lower()
+
+
 # ── fetch_gate_data internals ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio

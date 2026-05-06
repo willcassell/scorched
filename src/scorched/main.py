@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 
 from .api import broker_status, costs, guidance, intraday, market, onboarding, playbook, portfolio, prefetch, recommendations, strategy, system, trades
@@ -19,6 +19,7 @@ from .mcp_tools import mcp
 STATIC_DIR = Path(__file__).parent / "static"
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 MIN_LIVE_PIN_LEN = 16
 
@@ -179,14 +180,24 @@ async def onboarding_page():
     return FileResponse(STATIC_DIR / "onboarding.html")
 
 
+@app.get("/live")
+async def liveness():
+    """Process-only liveness check. Returns 200 if the app is running, regardless of dependencies."""
+    return {"status": "ok"}
+
+
 @app.get("/health")
 async def health():
+    """Dependency-aware readiness check. Returns 503 if the database is unreachable."""
     try:
         async with AsyncSessionLocal() as db:
             await db.execute(select(Portfolio))
-        db_status = "connected"
-    except Exception as e:
-        db_status = f"error: {e}"
-    return {"status": "ok", "db": db_status}
+    except Exception:
+        logger.exception("Health check database probe failed")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "db": "error"},
+        )
+    return {"status": "ok", "db": "connected"}
 
 

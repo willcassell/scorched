@@ -101,6 +101,20 @@ async def remove_pending_fill_by_client_oid(db: AsyncSession, client_order_id: s
         logger.info("Removed pending fill by client_oid=%s", client_order_id)
 
 
+async def get_pending_buy_notional(db: AsyncSession) -> Decimal:
+    """Return total notional reserved by outstanding pending buy orders.
+
+    Pending fills are active until reconciliation records the fill and removes
+    the row. During that window, Scorched should treat buy notional as already
+    reserved so a second confirmation cannot independently spend the same cash.
+    """
+    result = await db.execute(select(PendingFill).where(PendingFill.action == "buy"))
+    total = Decimal("0")
+    for fill in result.scalars().all():
+        total += Decimal(str(fill.qty)) * Decimal(str(fill.limit_price))
+    return total
+
+
 async def get_pending_fills(db: AsyncSession) -> list[dict]:
     """Return all pending fills (used by startup reconciliation)."""
     result = await db.execute(select(PendingFill))

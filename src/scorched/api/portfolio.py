@@ -21,7 +21,7 @@ from .deps import require_owner_pin
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/portfolio", tags=["portfolio"])
+router = APIRouter(prefix="/portfolio", tags=["portfolio"], dependencies=[Depends(require_owner_pin)])
 
 
 @router.get("", response_model=PortfolioResponse)

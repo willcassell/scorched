@@ -171,10 +171,11 @@ class AlpacaBroker(BrokerAdapter):
         alpaca_pos = await loop.run_in_executor(None, self._get_position_sync, symbol)
         if alpaca_pos is None:
             from ..config import settings as _settings
-            if _settings.broker_mode == "alpaca_live":
+            if _settings.broker_mode == "alpaca_live" or not _settings.allow_paper_fallback_sell:
+                mode = "live mode" if _settings.broker_mode == "alpaca_live" else "paper fallback disabled"
                 raise ValueError(
-                    f"SELL rejected for {symbol}: no position on Alpaca (live mode). "
-                    f"Cannot fall back to paper broker — resolve manually."
+                    f"SELL rejected for {symbol}: no position on Alpaca ({mode}). "
+                    f"Resolve manually or set ALLOW_PAPER_FALLBACK_SELL=true for legacy DB-only paper sells."
                 )
             logger.warning(
                 "Sell rejected for %s: no position held on Alpaca (would create short)", symbol

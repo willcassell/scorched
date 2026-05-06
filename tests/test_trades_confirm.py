@@ -9,7 +9,7 @@ from httpx import AsyncClient, ASGITransport
 from scorched.main import app
 from scorched.database import get_db
 from scorched.api.deps import require_owner_pin
-from scorched.models import TradeRecommendation, RecommendationSession
+from scorched.models import PendingFill, TradeRecommendation, RecommendationSession
 
 
 @pytest.fixture
@@ -64,7 +64,10 @@ async def test_confirm_uses_stored_rec_quantity_not_client_qty(db_session, _over
     snapshot_data = {"AAPL": {"current_price": 150.5, "prev_close": 149.0}}
     with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
          patch("scorched.services.trade_execution.get_broker", return_value=fake_broker), \
-         patch("scorched.services.trade_execution.run_all_buy_gates", return_value=gate_result):
+         patch("scorched.services.trade_execution.run_all_buy_gates", return_value=gate_result), \
+         patch("scorched.services.trade_execution.run_circuit_breaker", new=AsyncMock(return_value=[{
+             "symbol": "AAPL", "action": "buy", "suggested_price": 150.0, "gate_result": gate_result,
+         }])):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r = await ac.post(
                 "/api/v1/trades/confirm",
@@ -122,6 +125,80 @@ async def test_confirm_rejects_when_live_price_drifts_beyond_tolerance(db_sessio
 
     assert r.status_code == 422
     assert "drift" in r.text.lower() or "tolerance" in r.text.lower()
+    fake_broker.submit_buy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_confirm_reserves_pending_buy_notional_before_cash_gate(db_session, _override_db):
+    """Pending Alpaca buys must reduce effective cash before confirm-time gates run."""
+    rec = await _make_rec(db_session, symbol="MSFT", quantity=Decimal("1"), suggested_price=Decimal("100.00"))
+    db_session.add(PendingFill(
+        client_order_id="pending-aapl-buy",
+        symbol="AAPL",
+        action="buy",
+        qty=Decimal("2"),
+        limit_price=Decimal("100.00"),
+        recommendation_id=999,
+    ))
+    db_session.add(PendingFill(
+        client_order_id="pending-nvda-sell",
+        symbol="NVDA",
+        action="sell",
+        qty=Decimal("5"),
+        limit_price=Decimal("50.00"),
+        recommendation_id=1000,
+    ))
+    await db_session.commit()
+
+    fake_broker = AsyncMock()
+    fake_broker.submit_buy.return_value = {
+        "status": "submitted",
+        "filled_qty": Decimal("0"),
+        "filled_avg_price": Decimal("100.30"),
+    }
+
+    gate_result = MagicMock()
+    gate_result.passed = True
+    snapshot_data = {"MSFT": {"current_price": 100.0, "prev_close": 99.0}}
+
+    with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker), \
+         patch("scorched.services.trade_execution.run_all_buy_gates", return_value=gate_result) as mock_gates, \
+         patch("scorched.services.trade_execution.run_circuit_breaker", new=AsyncMock(return_value=[{
+             "symbol": "MSFT", "action": "buy", "suggested_price": 100.0, "gate_result": gate_result,
+         }])):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
+
+    assert r.status_code == 200
+    assert mock_gates.call_args.kwargs["current_cash"] == Decimal("800.00")
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_when_circuit_breaker_fails(db_session, _override_db):
+    """Final buy confirmation must re-check the broad market circuit breaker."""
+    rec = await _make_rec(db_session)
+    fake_broker = AsyncMock()
+
+    risk_gate = MagicMock()
+    risk_gate.passed = True
+    circuit_gate = MagicMock()
+    circuit_gate.passed = False
+    circuit_gate.reason = "VIX data unavailable"
+
+    snapshot_data = {"AAPL": {"current_price": 150.5, "prev_close": 149.0}}
+    with patch("scorched.services.alpaca_data.fetch_snapshots_sync", return_value=snapshot_data), \
+         patch("scorched.services.trade_execution.get_broker", return_value=fake_broker), \
+         patch("scorched.services.trade_execution.run_all_buy_gates", return_value=risk_gate), \
+         patch("scorched.services.trade_execution.run_circuit_breaker", new=AsyncMock(return_value=[{
+             "symbol": "AAPL", "action": "buy", "suggested_price": 150.0, "gate_result": circuit_gate,
+         }])):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            r = await ac.post("/api/v1/trades/confirm", json={"recommendation_id": rec.id})
+
+    assert r.status_code == 422
+    assert "circuit" in r.text.lower()
+    assert "vix" in r.text.lower()
     fake_broker.submit_buy.assert_not_called()
 
 

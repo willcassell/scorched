@@ -8,7 +8,7 @@ from ..database import get_db
 from ..services.reconciliation import check_reconciliation, sync_positions
 from .deps import require_owner_pin
 
-router = APIRouter(prefix="/broker", tags=["broker"])
+router = APIRouter(prefix="/broker", tags=["broker"], dependencies=[Depends(require_owner_pin)])
 
 
 @router.get("/status")

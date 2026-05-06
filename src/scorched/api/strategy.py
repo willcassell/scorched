@@ -6,7 +6,7 @@ from ..config import settings
 from ..services.strategy import load_strategy, load_strategy_json, save_strategy_json
 from .deps import require_owner_pin
 
-router = APIRouter(prefix="/strategy", tags=["strategy"])
+router = APIRouter(prefix="/strategy", tags=["strategy"], dependencies=[Depends(require_owner_pin)])
 
 
 class StrategyResponse(BaseModel):

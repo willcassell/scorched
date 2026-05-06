@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import date as date_cls
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..services import guidance_lint
 from ..services.guidance import (
@@ -20,9 +20,10 @@ from ..services.guidance import (
     parse_hard_rules,
 )
 from ..services.strategy import load_strategy_json
+from .deps import require_owner_pin
 
 
-router = APIRouter(prefix="/guidance", tags=["guidance"])
+router = APIRouter(prefix="/guidance", tags=["guidance"], dependencies=[Depends(require_owner_pin)])
 
 
 @router.get("/file")

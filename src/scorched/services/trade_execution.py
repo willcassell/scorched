@@ -15,6 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..broker import get_broker
+from ..broker.pending_fills import get_pending_buy_notional
+from ..circuit_breaker import run_circuit_breaker
 from ..config import settings
 from ..models import Portfolio, Position, TradeRecommendation
 from ..risk_gates import run_all_buy_gates
@@ -115,9 +117,12 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
                 f"stored ${stored_price}, live ${live_price}"
             )
 
+        reserved_buy_notional = await get_pending_buy_notional(db)
+        effective_cash = Decimal(str(portfolio.cash_balance)) - reserved_buy_notional
+
         price_data = {sym.upper(): {"current_price": float(_live_price_for(sym))} for sym in all_symbols}
         total_value = _compute_portfolio_total_value(
-            Decimal(str(portfolio.cash_balance)),
+            effective_cash,
             held,
             price_data,
         )
@@ -143,7 +148,7 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
             symbol=rec.symbol,
             sector=proposed_sector,
             buy_notional=qty * live_price,
-            current_cash=Decimal(str(portfolio.cash_balance)),
+            current_cash=effective_cash,
             total_portfolio_value=total_value,
             held_symbols=held_symbols,
             held_positions_with_sector=held_with_sector,
@@ -159,6 +164,22 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
                 rec.symbol, rec_id, gate_result.reason,
             )
             raise ValueError(f"gate:{gate_result.reason}")
+
+        circuit_cfg = strategy.get("circuit_breaker", {})
+        if circuit_cfg.get("enabled", False):
+            circuit_recs = [{
+                "symbol": rec.symbol,
+                "action": rec.action,
+                "suggested_price": float(stored_price),
+            }]
+            circuit_checked = await run_circuit_breaker(circuit_recs, circuit_cfg)
+            circuit_result = circuit_checked[0].get("gate_result")
+            if circuit_result is not None and not circuit_result.passed:
+                logger.warning(
+                    "Circuit breaker rejected at confirm time: symbol=%s rec_id=%s reason=%s",
+                    rec.symbol, rec_id, circuit_result.reason,
+                )
+                raise ValueError(f"circuit_breaker:{circuit_result.reason}")
     else:
         # Sell path: fetch live price for limit price calculation only (no gates, no drift check).
         live_price = await asyncio.to_thread(_fetch_live_price_single, rec.symbol)
