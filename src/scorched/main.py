@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 
 from .api import broker_status, costs, guidance, intraday, market, onboarding, playbook, portfolio, prefetch, recommendations, strategy, system, trades
-from .broker.pending_fills import get_pending_fills
+from .broker.pending_fills import get_pending_fills, release_stale_pending_fills
 from .config import settings
 from .database import AsyncSessionLocal
 from .models import Portfolio
@@ -72,8 +72,11 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         from .api_tracker import cleanup_old_records
         await cleanup_old_records(db)
-    # Crash recovery: reconcile any pending fills from previous run
+    # Crash recovery: reconcile any pending fills from previous run, then
+    # release anything reconcile couldn't resolve so a leaked reservation
+    # doesn't strand cash forever.
     await _reconcile_pending_fills()
+    await _release_stale_pending_fills_with_alert()
     async with mcp.session_manager.run():
         yield
 
@@ -119,6 +122,37 @@ async def _reconcile_pending_fills() -> None:
     except Exception as exc:
         logging.error("Startup reconciliation failed: %s", exc, exc_info=True)
         await send_telegram(f"TRADEBOT // STARTUP RECONCILIATION FAILED\n{exc}")
+
+
+async def _release_stale_pending_fills_with_alert() -> None:
+    """Release stale pending fills and alert the operator.
+
+    Runs after `_reconcile_pending_fills` so anything still pending is a true
+    lifecycle leak — the reconciler couldn't resolve it. The release does not
+    touch Alpaca; the next reconcile cycle will recover any real order via the
+    stored client_order_id. The point is to stop a leak from blocking new buys
+    against the cash-reservation gate.
+    """
+    from .services.telegram import send_telegram
+
+    try:
+        async with AsyncSessionLocal() as db:
+            released = await release_stale_pending_fills(db)
+        if not released:
+            return
+        lines = [f"TRADEBOT // STARTUP RELEASED {len(released)} STALE RESERVATION(S)"]
+        for r in released:
+            age_h = (r["age_seconds"] or 0) / 3600
+            lines.append(
+                f"  - {r['action'].upper()} {r['symbol']} {r['qty']}sh @ ${r['limit_price']} "
+                f"(age {age_h:.1f}h, client_oid={r['client_order_id']})"
+            )
+        lines.append("Cash reservation freed; next reconcile will recover real orders.")
+        await send_telegram("\n".join(lines))
+    except Exception as exc:
+        logging.error("Stale-pending release failed: %s", exc, exc_info=True)
+        await send_telegram(f"TRADEBOT // STALE-PENDING RELEASE FAILED\n{exc}")
+
 
 app = FastAPI(
     title="Tradebot",

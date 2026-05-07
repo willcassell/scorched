@@ -1,16 +1,22 @@
 """System health, error log, and trend endpoints."""
+from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy import Date, Integer, case
 
 from ..api_tracker import compute_service_health, SERVICES
+from ..broker.pending_fills import get_pending_fills_summary
 from ..config import settings
 from ..database import get_db
 from ..models import ApiCallLog
+from ..services.gate_decisions import (
+    list_recent_gate_decisions,
+    summarize_gate_attribution,
+)
 from ..tz import market_today
 from .deps import require_owner_pin
 
@@ -128,3 +134,43 @@ async def system_trend(db: AsyncSession = Depends(get_db)):
 async def get_market_date():
     """Return today's trading date in the market timezone."""
     return {"date": market_today().isoformat()}
+
+
+@router.get("/gate-attribution", dependencies=[Depends(require_owner_pin)])
+async def gate_attribution(
+    days: int = Query(14, ge=1, le=90),
+    sample_size: int = Query(5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """Group gate decisions in the last `days` by (phase, gate) with verdict counts.
+
+    Operator dashboard: answers "which gate killed the most buys this week?"
+    in one query before any prompt or strategy tuning.
+    """
+    rows = await summarize_gate_attribution(db, days=days, sample_size=sample_size)
+    return {
+        "lookback_days": days,
+        "rows": [asdict(r) for r in rows],
+    }
+
+
+@router.get("/gate-decisions", dependencies=[Depends(require_owner_pin)])
+async def gate_decisions_recent(
+    limit: int = Query(100, ge=1, le=500),
+    only_blocked: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    """Most recent gate decisions for forensic inspection of a session."""
+    rows = await list_recent_gate_decisions(db, limit=limit, only_blocked=only_blocked)
+    return {"decisions": rows}
+
+
+@router.get("/pending-fills", dependencies=[Depends(require_owner_pin)])
+async def pending_fills(db: AsyncSession = Depends(get_db)):
+    """Snapshot of pending-fill state, including stale reservations.
+
+    `stale_count` and `reserved_buy_stale_notional` should be 0 in steady
+    state. Non-zero indicates the reconciler couldn't resolve a leak; the
+    next process restart will release them via the lifecycle backstop.
+    """
+    return await get_pending_fills_summary(db)

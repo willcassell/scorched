@@ -20,6 +20,7 @@ from ..circuit_breaker import run_circuit_breaker
 from ..config import settings
 from ..models import Portfolio, Position, TradeRecommendation
 from ..risk_gates import run_all_buy_gates
+from ..services.gate_decisions import PHASE_CONFIRM, record_gate_decision
 from ..services.strategy import load_strategy_json
 from ..services.telegram import send_telegram
 
@@ -111,7 +112,28 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
             raise ValueError(f"live price:Cannot fetch live price for {rec.symbol}")
 
         drift_pct = abs(live_price - stored_price) / stored_price * 100
-        if drift_pct > drift_tolerance_pct:
+        drift_passed = drift_pct <= drift_tolerance_pct
+        await record_gate_decision(
+            db,
+            session_id=rec.session_id,
+            recommendation_id=rec_id,
+            symbol=rec.symbol,
+            action=rec.action,
+            phase=PHASE_CONFIRM,
+            gate="drift",
+            passed=drift_passed,
+            reason=(
+                None if drift_passed
+                else f"drift {drift_pct:.1f}% exceeds {drift_tolerance_pct}% tolerance"
+            ),
+            details={
+                "stored_price": stored_price,
+                "live_price": live_price,
+                "drift_pct": float(drift_pct),
+                "tolerance_pct": float(drift_tolerance_pct),
+            },
+        )
+        if not drift_passed:
             raise ValueError(
                 f"drift:{drift_pct:.1f}% exceeds {drift_tolerance_pct}% tolerance — "
                 f"stored ${stored_price}, live ${live_price}"
@@ -158,6 +180,27 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
             max_sector_pct=float(conc.get("max_sector_pct", 40)),
             max_holdings=int(conc.get("max_holdings", 10)),
         )
+        await record_gate_decision(
+            db,
+            session_id=rec.session_id,
+            recommendation_id=rec_id,
+            symbol=rec.symbol,
+            action=rec.action,
+            phase=PHASE_CONFIRM,
+            gate="risk_gates",
+            passed=gate_result.passed,
+            reason=gate_result.reason if not gate_result.passed else None,
+            details={
+                "buy_notional": qty * live_price,
+                "effective_cash": effective_cash,
+                "reserved_buy_notional": reserved_buy_notional,
+                "total_value": total_value,
+                "max_position_pct": float(conc.get("max_position_pct", 33)),
+                "max_sector_pct": float(conc.get("max_sector_pct", 40)),
+                "max_holdings": int(conc.get("max_holdings", 10)),
+                "subgates": (gate_result.details or {}),
+            },
+        )
         if not gate_result.passed:
             logger.warning(
                 "Risk gate rejected at confirm time: symbol=%s rec_id=%s reason=%s",
@@ -174,12 +217,29 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
             }]
             circuit_checked = await run_circuit_breaker(circuit_recs, circuit_cfg)
             circuit_result = circuit_checked[0].get("gate_result")
-            if circuit_result is not None and not circuit_result.passed:
+            circuit_passed = circuit_result is None or circuit_result.passed
+            await record_gate_decision(
+                db,
+                session_id=rec.session_id,
+                recommendation_id=rec_id,
+                symbol=rec.symbol,
+                action=rec.action,
+                phase=PHASE_CONFIRM,
+                gate="circuit_breaker",
+                passed=circuit_passed,
+                reason=(
+                    None if circuit_passed
+                    else (circuit_result.reason if circuit_result else "missing_result")
+                ),
+                details={"config_enabled": True, "stored_price": stored_price},
+            )
+            if not circuit_passed:
+                reason = circuit_result.reason if circuit_result else "missing_result"
                 logger.warning(
                     "Circuit breaker rejected at confirm time: symbol=%s rec_id=%s reason=%s",
-                    rec.symbol, rec_id, circuit_result.reason,
+                    rec.symbol, rec_id, reason,
                 )
-                raise ValueError(f"circuit_breaker:{circuit_result.reason}")
+                raise ValueError(f"circuit_breaker:{reason}")
     else:
         # Sell path: fetch live price for limit price calculation only (no gates, no drift check).
         live_price = await asyncio.to_thread(_fetch_live_price_single, rec.symbol)

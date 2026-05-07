@@ -1,9 +1,15 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+
+
+# Use JSONB on Postgres for indexability/performance, fall back to JSON (TEXT)
+# on SQLite so the in-memory test database can mirror the schema.
+JSON_OR_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 from .database import Base
 
@@ -146,6 +152,40 @@ class PendingFill(Base):
     limit_price: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
     recommendation_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class GateDecision(Base):
+    """Persisted record of every gate evaluation in the trade pipeline.
+
+    Captures Phase 1 candidate filters, Phase 1.5 circuit-breaker outcomes, and
+    Phase 2 confirm-time gates. Each row is one (gate, symbol, decision) so we
+    can attribute "which gate blocked this buy" without parsing logs.
+
+    `recommendation_id` is nullable: pre-rec phase 1 rejections happen before a
+    `TradeRecommendation` row exists. `session_id` may also be NULL when a
+    decision is recorded outside a Phase 1 run (e.g. cron-driven Phase 1.5).
+    """
+    __tablename__ = "gate_decisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("recommendation_sessions.id", ondelete="CASCADE"), nullable=True
+    )
+    recommendation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("trade_recommendations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    symbol: Mapped[str] = mapped_column(String(10), nullable=False)
+    action: Mapped[str] = mapped_column(String(4), nullable=False)
+    phase: Mapped[str] = mapped_column(String(20), nullable=False)
+    gate: Mapped[str] = mapped_column(String(40), nullable=False)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSON_OR_JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False, index=True
+    )
 
 
 class ApiCallLog(Base):
