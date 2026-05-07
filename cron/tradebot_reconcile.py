@@ -97,6 +97,30 @@ def main():
         print(msg)
         send_telegram(msg)
 
+    # Step 3: Release stale pending fills — daily backstop for leaked
+    # reservations the reconciler couldn't resolve. Without this a leak only
+    # gets cleared on container restart.
+    if is_afternoon:
+        # Run once per session — afternoon pass is the right hook because the
+        # morning reconcile may legitimately leave orders pending until 2 PM.
+        try:
+            release = http_post(
+                "/api/v1/broker/release-stale-pending-fills", {}
+            )
+            released_count = release.get("released_count", 0)
+            if released_count:
+                print(f"Released {released_count} stale pending fill(s).")
+                # Endpoint already sent its own Telegram alert with detail.
+            else:
+                print("No stale pending fills to release.")
+        except Exception as e:
+            msg = (
+                f"TRADEBOT // Stale-pending release FAILED\n"
+                f"{type(e).__name__}: {str(e)[:300]}"
+            )
+            print(msg)
+            send_telegram(msg)
+
 
 if __name__ == "__main__":
     acquire_lock("reconcile")

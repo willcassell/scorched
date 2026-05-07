@@ -9,13 +9,16 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from scorched.config import settings
 from scorched.main import app
+
+OWNER_HEADERS = {"X-Owner-Pin": settings.settings_pin or "1234"}
 
 
 @pytest.mark.asyncio
 async def test_file_endpoint_returns_content_and_sha():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/guidance/file")
+        r = await ac.get("/api/v1/guidance/file", headers=OWNER_HEADERS)
     assert r.status_code == 200
     body = r.json()
     assert body["content"].startswith("# ") or body["content"].startswith("##") or body["content"].startswith("---")
@@ -26,7 +29,7 @@ async def test_file_endpoint_returns_content_and_sha():
 @pytest.mark.asyncio
 async def test_rules_endpoint_returns_every_hard_rule():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/guidance/rules")
+        r = await ac.get("/api/v1/guidance/rules", headers=OWNER_HEADERS)
     assert r.status_code == 200
     rules = r.json()["rules"]
     # File currently ships 9 numbered hard rules. Loosen lower bound so the
@@ -46,7 +49,7 @@ async def test_rules_endpoint_renders_overrides_for_toggle_rules():
     should return None.
     """
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/guidance/rules")
+        r = await ac.get("/api/v1/guidance/rules", headers=OWNER_HEADERS)
     rules = {r["number"]: r for r in r.json()["rules"]}
     for toggle_rule in (2, 6, 7):
         assert toggle_rule in rules, f"rule #{toggle_rule} missing from parse"
@@ -60,7 +63,7 @@ async def test_rules_endpoint_renders_overrides_for_toggle_rules():
 @pytest.mark.asyncio
 async def test_history_endpoint_returns_commit_entries():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/guidance/history?limit=5")
+        r = await ac.get("/api/v1/guidance/history?limit=5", headers=OWNER_HEADERS)
     assert r.status_code == 200
     entries = r.json()["entries"]
     assert len(entries) >= 1, "file should have at least one commit"
@@ -76,7 +79,7 @@ async def test_history_endpoint_returns_commit_entries():
 async def test_lint_endpoint_structure():
     """Linter always runs and returns structured findings + counts."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/guidance/lint")
+        r = await ac.get("/api/v1/guidance/lint", headers=OWNER_HEADERS)
     assert r.status_code == 200
     body = r.json()
     assert set(body["counts"].keys()) == {"ok", "info", "warning", "error"}
@@ -89,7 +92,7 @@ async def test_lint_endpoint_structure():
 async def test_firings_endpoint_accepts_date_param():
     """Even with no matching date, the endpoint returns valid shape."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/guidance/firings?date=1999-01-01")
+        r = await ac.get("/api/v1/guidance/firings?date=1999-01-01", headers=OWNER_HEADERS)
     assert r.status_code == 200
     body = r.json()
     assert body["firings"] == []
@@ -100,8 +103,15 @@ async def test_firings_endpoint_accepts_date_param():
 @pytest.mark.asyncio
 async def test_firings_endpoint_rejects_bad_date():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/guidance/firings?date=not-a-date")
+        r = await ac.get("/api/v1/guidance/firings?date=not-a-date", headers=OWNER_HEADERS)
     assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_guidance_api_requires_owner_pin():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        r = await ac.get("/api/v1/guidance/file")
+    assert r.status_code == 403
 
 
 @pytest.mark.asyncio

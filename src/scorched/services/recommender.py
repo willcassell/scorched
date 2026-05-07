@@ -16,6 +16,11 @@ from ..cost import record_usage, check_daily_cost_ceiling
 from ..models import Portfolio, Position, RecommendationSession, TokenUsage, TradeHistory, TradeRecommendation
 from ..schemas import PortfolioSummary, RecommendationItem, RecommendationsResponse
 from .claude_client import MODEL, call_analysis, call_decision, call_risk_review, parse_json_response
+from .gate_decisions import (
+    PHASE_FILTER,
+    PHASE_RISK_REVIEW,
+    record_gate_decision,
+)
 from .playbook import get_playbook, update_playbook
 from .risk_review import build_risk_review_prompt, parse_risk_review_response
 from .portfolio import get_portfolio_summary
@@ -752,6 +757,27 @@ async def generate_recommendations(
                 "Drawdown gate filtering %d buy recommendation(s) — portfolio down %.1f%% from peak",
                 buy_count, drawdown_result.current_drawdown_pct,
             )
+            drawdown_reason = (
+                f"portfolio drawdown {drawdown_result.current_drawdown_pct:.1f}% "
+                f"exceeds threshold {drawdown_result.threshold_pct:.1f}%"
+            )
+            for r in raw_recs:
+                if r.get("action", "").lower() != "buy":
+                    continue
+                await record_gate_decision(
+                    db,
+                    session_id=session_row.id,
+                    symbol=r.get("symbol", ""),
+                    action="buy",
+                    phase=PHASE_FILTER,
+                    gate="drawdown",
+                    passed=False,
+                    reason=drawdown_reason,
+                    details={
+                        "current_drawdown_pct": drawdown_result.current_drawdown_pct,
+                        "threshold_pct": drawdown_result.threshold_pct,
+                    },
+                )
             raw_recs = [r for r in raw_recs if r.get("action", "").lower() != "buy"]
 
     # ── Correlation warnings for buy candidates ─────────────────────────────
@@ -801,18 +827,55 @@ async def generate_recommendations(
             await send_telegram(
                 "TRADEBOT // Risk committee parse failure — all BUY recs rejected (fail-closed)"
             )
+            for r in raw_recs:
+                if r.get("action", "").lower() != "buy":
+                    continue
+                await record_gate_decision(
+                    db,
+                    session_id=session_row.id,
+                    symbol=r.get("symbol", ""),
+                    action="buy",
+                    phase=PHASE_RISK_REVIEW,
+                    gate="risk_review",
+                    passed=False,
+                    reason="parse_failure: fail-closed reject",
+                )
             raw_recs = [r for r in raw_recs if r.get("action", "").lower() != "buy"]
         else:
-            rejected_symbols = {
-                d["symbol"].upper()
+            decisions_by_symbol: dict[str, dict] = {
+                (d.get("symbol") or "").upper(): d
                 for d in risk_decisions
-                if d.get("verdict") == "reject" and d.get("action", "").lower() == "buy"
+                if d.get("action", "").lower() == "buy"
+            }
+            rejected_symbols = {
+                sym for sym, d in decisions_by_symbol.items()
+                if d.get("verdict") == "reject"
             }
             if rejected_symbols:
                 logger.info("Risk committee rejected buys: %s", rejected_symbols)
                 for d in risk_decisions:
                     if d.get("verdict") == "reject":
                         logger.info("  %s %s: %s", d.get("action"), d.get("symbol"), d.get("reason"))
+
+            # Persist a verdict row for every buy reviewed — approve OR reject —
+            # so the attribution endpoint can show the Call-3 funnel ratio.
+            for r in raw_recs:
+                if r.get("action", "").lower() != "buy":
+                    continue
+                sym = (r.get("symbol") or "").upper()
+                d = decisions_by_symbol.get(sym, {})
+                verdict = d.get("verdict") or "approve"
+                await record_gate_decision(
+                    db,
+                    session_id=session_row.id,
+                    symbol=sym,
+                    action="buy",
+                    phase=PHASE_RISK_REVIEW,
+                    gate="risk_review",
+                    passed=(verdict != "reject"),
+                    reason=d.get("reason") if verdict == "reject" else None,
+                    details={"verdict": verdict},
+                )
 
             # Filter out rejected buy recommendations (sells always pass through)
             raw_recs = [
@@ -899,6 +962,23 @@ async def generate_recommendations(
                 buy_notional=estimated_cost,
                 reserve_pct=reserve_pct,
             )
+            await record_gate_decision(
+                db,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="cash_floor",
+                passed=cash_check.passed,
+                reason=cash_check.reason if not cash_check.passed else None,
+                details={
+                    "running_cash": running_cash,
+                    "buy_notional": estimated_cost,
+                    "projected_cash": cash_check.projected_cash,
+                    "floor": cash_check.floor,
+                    "reserve_pct": float(reserve_pct),
+                },
+            )
             if not cash_check.passed:
                 logger.warning(
                     "Skipping %s buy — cash floor: %s",
@@ -920,6 +1000,23 @@ async def generate_recommendations(
                 total_portfolio_value=total_value_for_floor,
                 max_position_pct=Decimal(str(strategy_conc.get("max_position_pct", 33))),
             )
+            await record_gate_decision(
+                db,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="position_cap",
+                passed=position_check.passed,
+                reason=position_check.reason if not position_check.passed else None,
+                details={
+                    "existing_value": existing_value,
+                    "buy_notional": estimated_cost,
+                    "total_portfolio_value": total_value_for_floor,
+                    "projected_pct": position_check.projected_pct,
+                    "cap_pct": position_check.cap_pct,
+                },
+            )
             if not position_check.passed:
                 logger.warning(
                     "Skipping %s buy — position cap: %s", symbol, position_check.reason,
@@ -936,6 +1033,22 @@ async def generate_recommendations(
                 proposed_symbol=symbol,
                 max_holdings=strategy_conc.get("max_holdings", 10),
             )
+            await record_gate_decision(
+                db,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="holdings_cap",
+                passed=holdings_check.passed,
+                reason=holdings_check.reason if not holdings_check.passed else None,
+                details={
+                    "projected_count": holdings_check.projected_count,
+                    "cap": holdings_check.cap,
+                    "held_symbols_count": len(held_symbol_set),
+                    "accepted_new_count": len(accepted_new_symbols),
+                },
+            )
             if not holdings_check.passed:
                 logger.warning(
                     "Skipping %s buy — holdings cap: %s", symbol, holdings_check.reason,
@@ -949,15 +1062,35 @@ async def generate_recommendations(
             # calls don't block the event loop (same rationale as held_sectors above).
             max_sector_pct = strategy_conc.get("max_sector_pct", 40.0)
             symbol_sector = await asyncio.to_thread(_get_sector_for_symbol, symbol)
-            if not check_sector_exposure(
+            sector_passed = check_sector_exposure(
                 symbol,
                 symbol_sector,
                 estimated_cost,
                 held_positions_for_sector,
                 total_value_decimal,
                 max_sector_pct,
-            ):
-                sector_label = symbol_sector or "unknown sector"
+            )
+            sector_label = symbol_sector or "unknown sector"
+            await record_gate_decision(
+                db,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="sector_cap",
+                passed=sector_passed,
+                reason=(
+                    f"would breach {max_sector_pct:.0f}% {sector_label} cap"
+                    if not sector_passed else None
+                ),
+                details={
+                    "sector": symbol_sector,
+                    "buy_notional": estimated_cost,
+                    "total_portfolio_value": total_value_decimal,
+                    "max_sector_pct": float(max_sector_pct),
+                },
+            )
+            if not sector_passed:
                 logger.warning(
                     "Skipping %s buy — sector concentration gate rejected (%s, cap=%.0f%%)",
                     symbol, sector_label, max_sector_pct,

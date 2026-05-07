@@ -380,50 +380,78 @@ def main():
         print(f"  Evaluate failed: {e}")
         return
 
-    # Send Telegram for each decision; record cooldown only on successful exit
-    for decision in result.get("decisions", []):
-        symbol = decision["symbol"]
-        action = decision["action"]
-        reasoning = decision["reasoning"]
-        trade_result = decision.get("trade_result")
+    # Send Telegram for each decision; record cooldown only on successful exit.
+    # Wrap each decision in try/except so a single bad decision (e.g. a None
+    # field in trade_result causing a format crash) does NOT skip the
+    # save_cooldowns() call below — otherwise the next 5-min tick would
+    # re-trigger Claude on a position whose sell already went through on the
+    # broker, wasting calls until reconcile.
+    decisions = result.get("decisions", [])
+    try:
+        for decision in decisions:
+            try:
+                symbol = decision["symbol"]
+                action = decision["action"]
+                reasoning = decision["reasoning"]
+                trade_result = decision.get("trade_result")
 
-        # H6 fix: only suppress future ticks when the exit actually succeeded.
-        # A failed hard-stop (action reverted to "hold" due to broker error, or
-        # trade_result is None) must NOT record cooldown — the next 5-min tick
-        # should retry rather than be silently swallowed.
-        sold_successfully = action in ("exit_full", "exit_partial") and trade_result is not None
-        if sold_successfully:
-            cooldowns[symbol] = time.time()
-            print(f"  Cooldown recorded for {symbol} — successful {action}")
-        else:
-            print(f"  No cooldown for {symbol} — action={action} trade_result={trade_result!r}")
+                # H6 fix: only suppress future ticks when the exit actually succeeded.
+                # A failed hard-stop (action reverted to "hold" due to broker error, or
+                # trade_result is None) must NOT record cooldown — the next 5-min tick
+                # should retry rather than be silently swallowed.
+                sold_successfully = action in ("exit_full", "exit_partial") and trade_result is not None
+                if sold_successfully:
+                    cooldowns[symbol] = time.time()
+                    print(f"  Cooldown recorded for {symbol} — successful {action}")
+                else:
+                    print(f"  No cooldown for {symbol} — action={action} trade_result={trade_result!r}")
 
-        if action in ("exit_full", "exit_partial"):
-            trade = trade_result or {}
-            shares = trade.get("shares", "?")
-            price = trade.get("execution_price", "?")
-            gain = trade.get("realized_gain", 0)
-            gain_sign = "+" if gain >= 0 else ""
-            msg = (
-                f"INTRADAY EXIT: {symbol}\n"
-                f"Sold {shares}sh @ ${price}\n"
-                f"Realized: {gain_sign}${gain:,.2f}\n"
-                f"Reason: {reasoning}"
-            )
-        else:
-            triggers = [t for t in triggered_positions if t["symbol"] == symbol]
-            trigger_reasons = triggers[0]["trigger_reasons"] if triggers else []
-            msg = (
-                f"INTRADAY ALERT: {symbol} — HOLD\n"
-                f"Triggers: {', '.join(trigger_reasons)}\n"
-                f"Claude says: {reasoning}"
-            )
+                if action in ("exit_full", "exit_partial"):
+                    trade = trade_result or {}
+                    # Coerce None → defaults. .get(k, default) returns None when
+                    # the key is present with an explicit None value (the default
+                    # only fires when the key is absent). Fire-and-forget Alpaca
+                    # sells return realized_gain=None until reconcile.
+                    shares = trade.get("shares") if trade.get("shares") is not None else "?"
+                    price = trade.get("execution_price") if trade.get("execution_price") is not None else "?"
+                    gain = trade.get("realized_gain")
+                    if gain is None:
+                        gain_line = "Realized: pending fill (reconcile at 10:45)"
+                    else:
+                        gain_sign = "+" if gain >= 0 else ""
+                        gain_line = f"Realized: {gain_sign}${gain:,.2f}"
+                    msg = (
+                        f"INTRADAY EXIT: {symbol}\n"
+                        f"Sold {shares}sh @ ${price}\n"
+                        f"{gain_line}\n"
+                        f"Reason: {reasoning}"
+                    )
+                else:
+                    triggers = [t for t in triggered_positions if t["symbol"] == symbol]
+                    trigger_reasons = triggers[0]["trigger_reasons"] if triggers else []
+                    msg = (
+                        f"INTRADAY ALERT: {symbol} — HOLD\n"
+                        f"Triggers: {', '.join(trigger_reasons)}\n"
+                        f"Claude says: {reasoning}"
+                    )
 
-        send_telegram(msg)
-        print(f"  {symbol}: {action} — {reasoning[:80]}")
-
-    save_cooldowns(cooldowns)
-    print(f"  Intraday check complete: {len(result.get('decisions', []))} decisions")
+                send_telegram(msg)
+                print(f"  {symbol}: {action} — {reasoning[:80]}")
+            except Exception as decision_err:
+                # Don't let one bad decision skip cooldown persistence.
+                sym = decision.get("symbol", "?") if isinstance(decision, dict) else "?"
+                print(f"  Decision processing failed for {sym}: {type(decision_err).__name__}: {decision_err}")
+                try:
+                    send_telegram(
+                        f"TRADEBOT // Intraday decision-format error\n"
+                        f"Symbol: {sym}\n"
+                        f"{type(decision_err).__name__}: {str(decision_err)[:200]}"
+                    )
+                except Exception:
+                    pass
+    finally:
+        save_cooldowns(cooldowns)
+        print(f"  Intraday check complete: {len(decisions)} decisions")
 
 
 if __name__ == "__main__":

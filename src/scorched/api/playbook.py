@@ -6,7 +6,7 @@ from ..database import get_db
 from ..services.playbook import get_playbook, update_playbook
 from .deps import require_owner_pin
 
-router = APIRouter(prefix="/playbook", tags=["playbook"])
+router = APIRouter(prefix="/playbook", tags=["playbook"], dependencies=[Depends(require_owner_pin)])
 
 
 class PlaybookResponse(BaseModel):

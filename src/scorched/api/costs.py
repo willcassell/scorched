@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import TokenUsage
+from .deps import require_owner_pin
 
-router = APIRouter(prefix="/costs", tags=["costs"])
+router = APIRouter(prefix="/costs", tags=["costs"], dependencies=[Depends(require_owner_pin)])
 
 
 @router.get("")

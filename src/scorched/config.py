@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Broker config
     broker_mode: str = "paper"  # "paper" = DB-only, "alpaca_paper" = Alpaca paper, "alpaca_live" = Alpaca live
     live_trading_enabled: bool = False  # second kill switch for live trading (decision D5)
+    allow_paper_fallback_sell: bool = False  # legacy DB-only sell fallback when Alpaca has no position
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
     finnhub_api_key: str = ""

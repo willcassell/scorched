@@ -165,7 +165,7 @@ async def fetch_gate_data(symbols: list[str]) -> dict:
                 }
                 logger.info("Circuit breaker: using VXX as VIX proxy")
         except Exception:
-            logger.warning("Circuit breaker: VXX fallback also failed — VIX gates will be skipped")
+            logger.warning("Circuit breaker: VXX fallback also failed — VIX-dependent buys will fail closed")
 
     return out
 
@@ -193,24 +193,22 @@ async def run_circuit_breaker(
 
     data = await fetch_gate_data(buy_symbols)
 
-    # Market-level gate
-    spy_data = data.get("SPY", {})
-    # SAFETY: When VIX data is missing entirely (both yfinance and VXX
-    # fallback failed in fetch_gate_data), vix_current and vix_prior_close
-    # default to Decimal("0"). This makes the VIX absolute-max check
-    # (`vix_current > vix_max`) and the VIX spike check both evaluate as
-    # "no signal," silently bypassing them. This is a known fail-open
-    # path — operator should monitor `fetch_gate_data` warnings in the
-    # cron logs. Tier 2 follow-up: surface as a Telegram alert and/or
-    # gate_result reason on Phase 1.5 summary.
-    vix_data = data.get("^VIX", {})
-    market_gate = check_market_gate(
-        spy_current=spy_data.get("current", Decimal("0")),
-        spy_prior_close=spy_data.get("prior_close", Decimal("0")),
-        vix_current=vix_data.get("current", Decimal("0")),
-        vix_prior_close=vix_data.get("prior_close", Decimal("0")),
-        config=config,
-    )
+    # Market-level gate. Missing broad-market data fails closed: a data outage
+    # must not look like calm market conditions.
+    spy_data = data.get("SPY")
+    vix_data = data.get("^VIX")
+    if spy_data is None:
+        market_gate = GateResult(passed=False, reason="SPY data unavailable for circuit breaker")
+    elif vix_data is None:
+        market_gate = GateResult(passed=False, reason="VIX data unavailable for circuit breaker")
+    else:
+        market_gate = check_market_gate(
+            spy_current=spy_data.get("current", Decimal("0")),
+            spy_prior_close=spy_data.get("prior_close", Decimal("0")),
+            vix_current=vix_data.get("current", Decimal("0")),
+            vix_prior_close=vix_data.get("prior_close", Decimal("0")),
+            config=config,
+        )
 
     for rec in recommendations:
         if rec["action"] == "sell":

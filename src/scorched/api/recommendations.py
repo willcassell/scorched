@@ -8,7 +8,7 @@ from ..schemas import GenerateRecommendationsRequest, RecommendationsResponse, S
 from ..services import recommender as recommender_svc
 from .deps import require_owner_pin
 
-router = APIRouter(prefix="/recommendations", tags=["recommendations"])
+router = APIRouter(prefix="/recommendations", tags=["recommendations"], dependencies=[Depends(require_owner_pin)])
 
 
 @router.post("/generate", response_model=RecommendationsResponse, dependencies=[Depends(require_owner_pin)])
