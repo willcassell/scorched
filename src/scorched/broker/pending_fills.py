@@ -47,7 +47,24 @@ async def write_pending_fill(
 
     The order_id is not yet known — it will be set after Alpaca accepts.
     We commit here so the record survives a crash during Alpaca submission.
+
+    Dedup: if a row already exists for the same client_order_id, reuse it
+    instead of inserting a duplicate. This pairs with AlpacaBroker's
+    idempotent recovery on error 40010001 — without dedup, a Phase 2 retry
+    or intraday re-fire would leave two pending_fill rows pointing at the
+    same Alpaca order, causing the reconciler to apply the fill twice for
+    recommendation_id=None (intraday) sells.
     """
+    if client_order_id:
+        existing = (await db.execute(
+            select(PendingFill).where(PendingFill.client_order_id == client_order_id)
+        )).scalars().first()
+        if existing is not None:
+            logger.info(
+                "Pending fill already exists for client_oid=%s — reusing row id=%s",
+                client_order_id, existing.id,
+            )
+            return existing
     fill = PendingFill(
         client_order_id=client_order_id,
         symbol=symbol,
