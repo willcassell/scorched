@@ -1325,15 +1325,20 @@
     let _pendingPinResolve = null;
     let _pendingPinReject  = null;
 
-    /** apiFetch — GET wrapper that injects X-Owner-Pin and handles 403 with re-prompt. */
+    /** apiFetch — GET wrapper that injects X-Owner-Pin and handles 403 with re-prompt.
+     *  Recheck getPin() before re-prompting so concurrent 403s (if added later)
+     *  don't overwrite each other's _pendingPinResolve singletons. */
     async function apiFetch(path) {
       const pin = getPin();
       const headers = pin ? { 'X-Owner-Pin': pin } : {};
       const resp = await fetch(path, { headers });
       if (resp.status === 403) {
-        clearPin();
-        const newPin = await promptPin(pin ? 'Incorrect PIN — try again' : null);
-        setPin(newPin);
+        let newPin = getPin();
+        if (!newPin || newPin === pin) {
+          clearPin();
+          newPin = await promptPin(pin ? 'Incorrect PIN — try again' : null);
+          setPin(newPin);
+        }
         const resp2 = await fetch(path, { headers: { 'X-Owner-Pin': newPin } });
         if (!resp2.ok) throw new Error(resp2.status + ' ' + resp2.statusText);
         return resp2.json();

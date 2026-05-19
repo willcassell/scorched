@@ -469,7 +469,12 @@
       return pin;
     }
 
-    /** apiFetch — wraps fetch() with X-Owner-Pin injection and 403 re-prompt. */
+    /** apiFetch — wraps fetch() with X-Owner-Pin injection and 403 re-prompt.
+     *  guidance.html loads 6 endpoints via Promise.all on mount, so all 6 can
+     *  hit 403 in parallel. window.prompt is synchronous, so the first
+     *  microtask to run blocks the JS thread until the user submits. We
+     *  recheck getPin() before re-prompting so the remaining 5 retries reuse
+     *  the freshly-stored PIN instead of asking the user 6 times. */
     async function apiFetch(url, opts) {
       opts = opts || {};
       const headers = Object.assign({}, opts.headers || {});
@@ -477,9 +482,12 @@
       if (pin) headers['X-Owner-Pin'] = pin;
       const resp = await fetch(url, Object.assign({}, opts, { headers }));
       if (resp.status === 403) {
-        clearPin();
-        const newPin = promptPin(pin ? 'Incorrect PIN — try again' : null);
-        setPin(newPin);
+        let newPin = getPin();
+        if (!newPin || newPin === pin) {
+          clearPin();
+          newPin = promptPin(pin ? 'Incorrect PIN — try again' : null);
+          setPin(newPin);
+        }
         const retryHeaders = Object.assign({}, opts.headers || {}, { 'X-Owner-Pin': newPin });
         const resp2 = await fetch(url, Object.assign({}, opts, { headers: retryHeaders }));
         if (!resp2.ok) throw new Error(resp2.status + ' ' + resp2.statusText);
