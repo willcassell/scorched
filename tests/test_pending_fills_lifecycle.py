@@ -19,6 +19,7 @@ from scorched.broker.pending_fills import (
     get_pending_buy_notional,
     get_pending_fills_summary,
     release_stale_pending_fills,
+    write_pending_fill,
 )
 from scorched.database import get_db
 from scorched.main import app
@@ -122,6 +123,51 @@ async def test_release_stale_respects_custom_age_threshold(db_session):
     # Tighter threshold (1 hour) catches the 2h-old row.
     released = await release_stale_pending_fills(db_session, age_hours=1)
     assert len(released) == 1
+
+
+@pytest.mark.asyncio
+async def test_write_pending_fill_dedups_on_same_client_oid(db_session):
+    """Pairs with AlpacaBroker's idempotent recovery on 40010001 — a Phase 2
+    retry or intraday re-fire must not leave two pending_fill rows pointing
+    at the same Alpaca order (would cause reconciler to double-apply for
+    intraday sells where recommendation_id is NULL)."""
+    from sqlalchemy import select
+
+    first = await write_pending_fill(
+        db_session, client_order_id="scorched-intraday-NVDA-2026-05-18",
+        symbol="NVDA", action="sell", qty=Decimal("10"),
+        limit_price=Decimal("200.00"), recommendation_id=None,
+    )
+    second = await write_pending_fill(
+        db_session, client_order_id="scorched-intraday-NVDA-2026-05-18",
+        symbol="NVDA", action="sell", qty=Decimal("10"),
+        limit_price=Decimal("200.00"), recommendation_id=None,
+    )
+
+    assert first.id == second.id
+    rows = (await db_session.execute(
+        select(PendingFill).where(
+            PendingFill.client_order_id == "scorched-intraday-NVDA-2026-05-18"
+        )
+    )).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_write_pending_fill_still_inserts_when_client_oid_is_none(db_session):
+    """Null client_order_id (rec-less PaperBroker fallback path) cannot be
+    deduped — should still insert distinct rows."""
+    from sqlalchemy import select
+
+    f1 = await write_pending_fill(
+        db_session, client_order_id=None, symbol="AAPL", action="buy",
+        qty=Decimal("1"), limit_price=Decimal("150.00"), recommendation_id=None,
+    )
+    f2 = await write_pending_fill(
+        db_session, client_order_id=None, symbol="AAPL", action="buy",
+        qty=Decimal("1"), limit_price=Decimal("150.00"), recommendation_id=None,
+    )
+    assert f1.id != f2.id
 
 
 @pytest.mark.asyncio

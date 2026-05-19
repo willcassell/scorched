@@ -66,7 +66,15 @@ class AlpacaBroker(BrokerAdapter):
         return self.client.submit_order(order_data=order_data)
 
     async def _submit_order_with_retry(self, order_data, max_retries=1):
-        """Submit order via executor with retry on transient (non-4xx) failures."""
+        """Submit order via executor with retry on transient (non-4xx) failures.
+
+        Special-cases Alpaca error 40010001 ("client_order_id must be unique"):
+        when our deterministic client_order_id collides, we fetch the existing
+        order and return it as if newly submitted. This delivers true
+        idempotency for Phase 2 confirm retries and intraday re-fires of the
+        same deterministic key — Alpaca's API rejects duplicates instead of
+        returning the prior order, so the recovery has to be explicit here.
+        """
         loop = asyncio.get_running_loop()
         last_exc = None
         for attempt in range(max_retries + 1):
@@ -75,6 +83,25 @@ class AlpacaBroker(BrokerAdapter):
             except Exception as exc:
                 last_exc = exc
                 exc_str = str(exc).lower()
+                if "40010001" in exc_str or "client_order_id must be unique" in exc_str:
+                    coid = getattr(order_data, "client_order_id", None)
+                    if coid:
+                        logger.warning(
+                            "Alpaca rejected duplicate client_order_id=%s — "
+                            "fetching existing order (idempotent recovery)",
+                            coid,
+                        )
+                        try:
+                            return await loop.run_in_executor(
+                                None,
+                                lambda c=coid: self.client.get_order_by_client_id(client_order_id=c),
+                            )
+                        except Exception as lookup_exc:
+                            logger.error(
+                                "Idempotent recovery failed for client_order_id=%s: %s",
+                                coid, lookup_exc,
+                            )
+                            raise exc from lookup_exc
                 # Don't retry client errors (4xx)
                 if any(code in exc_str for code in ("400", "401", "403", "404", "422")):
                     raise

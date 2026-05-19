@@ -399,10 +399,24 @@ def main():
                 # A failed hard-stop (action reverted to "hold" due to broker error, or
                 # trade_result is None) must NOT record cooldown — the next 5-min tick
                 # should retry rather than be silently swallowed.
+                #
+                # Backstop: when the API surfaces a sell failure via
+                # "[SELL FAILED: ...]" appended to the reasoning, the position
+                # is still locally held but the broker has rejected our submit
+                # (e.g. duplicate client_order_id, rate-limit, transient 5xx).
+                # Letting the next tick re-fire creates a 5-min-cadence error
+                # storm against Alpaca. Record a SHORTER cooldown
+                # (cooldown_minutes / 2, floor 5 min) so retries still happen
+                # this session — just not every tick.
                 sold_successfully = action in ("exit_full", "exit_partial") and trade_result is not None
+                sell_failed_marker = isinstance(reasoning, str) and "[SELL FAILED:" in reasoning
                 if sold_successfully:
                     cooldowns[symbol] = time.time()
                     print(f"  Cooldown recorded for {symbol} — successful {action}")
+                elif sell_failed_marker:
+                    backstop_min = max(5, cooldown_minutes // 2)
+                    cooldowns[symbol] = time.time() - (cooldown_minutes - backstop_min) * 60
+                    print(f"  Backstop cooldown for {symbol} ({backstop_min}min) — submit failed, throttling retries")
                 else:
                     print(f"  No cooldown for {symbol} — action={action} trade_result={trade_result!r}")
 

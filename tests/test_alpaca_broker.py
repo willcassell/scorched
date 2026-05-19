@@ -131,3 +131,106 @@ async def test_alpaca_submit_sell_allows_legacy_paper_fallback_when_enabled(
     assert result == fallback_result
     mock_fallback.assert_awaited_once()
     mock_alpaca_client.submit_order.assert_not_called()
+
+
+# ── Idempotent recovery on duplicate client_order_id (40010001) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_alpaca_submit_buy_recovers_existing_order_on_duplicate_client_oid(
+    alpaca_broker, mock_alpaca_client
+):
+    """Alpaca rejects duplicate client_order_id with 40010001; broker should
+    fetch the existing order and return it as a successful submission instead
+    of raising. This is what makes Phase 2 retries and intraday re-fires of
+    the same deterministic key safe."""
+    existing_order = _make_order(status="accepted")
+    mock_alpaca_client.submit_order.side_effect = Exception(
+        '{"code":40010001,"message":"client_order_id must be unique"}'
+    )
+    mock_alpaca_client.get_order_by_client_id.return_value = existing_order
+
+    result = await alpaca_broker.submit_buy(
+        symbol="AAPL",
+        qty=Decimal("2"),
+        limit_price=Decimal("150.00"),
+        recommendation_id=42,
+    )
+
+    assert result["status"] == "submitted"
+    assert result["order_id"] == "order-abc-123"
+    mock_alpaca_client.get_order_by_client_id.assert_called_once_with(
+        client_order_id="scorched-42-AAPL-buy"
+    )
+
+
+@pytest.mark.asyncio
+async def test_alpaca_submit_sell_recovers_existing_order_on_duplicate_client_oid(
+    alpaca_broker, mock_alpaca_client
+):
+    """Same idempotent recovery for sells — this is the path that fired 14
+    times on NVDA on 2026-05-18 before the fix."""
+    mock_position = MagicMock()
+    mock_position.qty = "1"
+    mock_alpaca_client.get_open_position.return_value = mock_position
+
+    existing_order = _make_order(symbol="NVDA")
+    mock_alpaca_client.submit_order.side_effect = Exception(
+        '{"code":40010001,"message":"client_order_id must be unique"}'
+    )
+    mock_alpaca_client.get_order_by_client_id.return_value = existing_order
+
+    result = await alpaca_broker.submit_sell(
+        symbol="NVDA",
+        qty=Decimal("1"),
+        limit_price=Decimal("200.00"),
+        recommendation_id=None,
+        _client_order_id_override="scorched-intraday-NVDA-2026-05-18",
+    )
+
+    assert result["status"] == "submitted"
+    mock_alpaca_client.get_order_by_client_id.assert_called_once_with(
+        client_order_id="scorched-intraday-NVDA-2026-05-18"
+    )
+
+
+@pytest.mark.asyncio
+async def test_alpaca_submit_buy_raises_on_duplicate_without_client_oid(
+    alpaca_broker, mock_alpaca_client
+):
+    """If there's no client_order_id we can't recover — propagate the error.
+    (In practice recommendation_id=None for buys produces client_oid=None.)"""
+    mock_alpaca_client.submit_order.side_effect = Exception(
+        '{"code":40010001,"message":"client_order_id must be unique"}'
+    )
+
+    with pytest.raises(Exception, match="40010001"):
+        await alpaca_broker.submit_buy(
+            symbol="AAPL",
+            qty=Decimal("2"),
+            limit_price=Decimal("150.00"),
+            recommendation_id=None,
+        )
+
+    mock_alpaca_client.get_order_by_client_id.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_alpaca_submit_buy_raises_original_when_recovery_lookup_fails(
+    alpaca_broker, mock_alpaca_client
+):
+    """If get_order_by_client_id itself fails after a 40010001, surface the
+    original 40010001 (not the lookup error) so the caller sees the real
+    cause."""
+    mock_alpaca_client.submit_order.side_effect = Exception(
+        '{"code":40010001,"message":"client_order_id must be unique"}'
+    )
+    mock_alpaca_client.get_order_by_client_id.side_effect = Exception("503 timeout")
+
+    with pytest.raises(Exception, match="40010001"):
+        await alpaca_broker.submit_buy(
+            symbol="AAPL",
+            qty=Decimal("2"),
+            limit_price=Decimal("150.00"),
+            recommendation_id=42,
+        )
