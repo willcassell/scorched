@@ -459,15 +459,30 @@
     input.onkeydown = function(e) { if (e.key === 'Enter') onSubmit(); if (e.key === 'Escape') onCancel(); };
   }
 
+  // Shared in-flight PIN prompt so concurrent 403s don't race the singleton
+  // overlay (each call would overwrite submitBtn.onclick, orphaning the
+  // earlier promises and leaving panels stuck loading).
+  var _pinPromise = null;
+  function _sharedPinPrompt(hadPin) {
+    if (_pinPromise) return _pinPromise;
+    _pinPromise = new Promise(function(resolve, reject) {
+      promptPin(resolve, reject, hadPin ? 'Incorrect PIN — try again' : null);
+    });
+    _pinPromise.then(
+      function() { _pinPromise = null; },
+      function() { _pinPromise = null; }
+    );
+    return _pinPromise;
+  }
+
   function apiFetch(path) {
     var pin = getPin();
     var headers = pin ? { 'X-Owner-Pin': pin } : {};
     return fetch('/api/v1' + path, { headers: headers }).then(function(r) {
       if (r.status === 403) {
-        return new Promise(function(resolve, reject) {
-          clearPin();
-          promptPin(resolve, reject, pin ? 'Incorrect PIN — try again' : null);
-        }).then(function(newPin) {
+        var hadPin = !!pin;
+        clearPin();
+        return _sharedPinPrompt(hadPin).then(function(newPin) {
           return fetch('/api/v1' + path, { headers: { 'X-Owner-Pin': newPin } }).then(function(r2) {
             if (!r2.ok) throw new Error('HTTP ' + r2.status);
             return r2.json();

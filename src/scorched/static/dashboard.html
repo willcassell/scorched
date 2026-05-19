@@ -1141,6 +1141,22 @@
     input.onkeydown = function(e) { if (e.key === 'Enter') onSubmit(); if (e.key === 'Escape') onCancel(); };
   }
 
+  // Shared in-flight PIN prompt so concurrent 403s don't race the singleton
+  // overlay (each call would overwrite submitBtn.onclick, orphaning earlier
+  // promises and leaving dashboard panels stuck "loading" forever).
+  var _pinPromise = null;
+  function _sharedPinPrompt(hadPin) {
+    if (_pinPromise) return _pinPromise;
+    _pinPromise = new Promise(function(resolve, reject) {
+      promptPin(resolve, reject, hadPin ? 'Incorrect PIN — try again' : null);
+    });
+    _pinPromise.then(
+      function() { _pinPromise = null; },
+      function() { _pinPromise = null; }
+    );
+    return _pinPromise;
+  }
+
   function apiFetch(path, opts) {
     opts = opts || {};
     var headers = Object.assign({}, opts.headers || {});
@@ -1148,12 +1164,11 @@
     if (pin) headers['X-Owner-Pin'] = pin;
     return fetch(API + path, Object.assign({}, opts, { headers: headers })).then(function(r) {
       if (r.status === 403) {
-        // Bad or missing PIN — prompt and retry once
-        return new Promise(function(resolve, reject) {
-          var errMsg = pin ? 'Incorrect PIN — try again' : null;
-          clearPin();
-          promptPin(resolve, reject, errMsg);
-        }).then(function(newPin) {
+        // Bad or missing PIN — clear stored value and await the shared
+        // prompt promise. clearPin() is idempotent under concurrency.
+        var hadPin = !!pin;
+        clearPin();
+        return _sharedPinPrompt(hadPin).then(function(newPin) {
           var retryHeaders = Object.assign({}, opts.headers || {}, { 'X-Owner-Pin': newPin });
           return fetch(API + path, Object.assign({}, opts, { headers: retryHeaders })).then(function(r2) {
             if (!r2.ok) throw new Error(r2.status + ' ' + r2.statusText);

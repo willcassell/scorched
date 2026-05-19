@@ -660,15 +660,26 @@ function promptPin(resolve, reject, errMsg) {
   input.onkeydown = e => { if (e.key === 'Enter') onSubmit(); if (e.key === 'Escape') onCancel(); };
 }
 
+// Shared in-flight PIN prompt so concurrent 403s don't race the singleton
+// overlay (each call would overwrite submitBtn.onclick, orphaning the
+// earlier promises and leaving panels stuck loading).
+let _pinPromise = null;
+function _sharedPinPrompt(hadPin) {
+  if (_pinPromise) return _pinPromise;
+  _pinPromise = new Promise((resolve, reject) => {
+    promptPin(resolve, reject, hadPin ? 'Incorrect PIN — try again' : null);
+  }).finally(() => { _pinPromise = null; });
+  return _pinPromise;
+}
+
 async function apiFetch(path) {
   const pin = getPin();
   const headers = pin ? { 'X-Owner-Pin': pin } : {};
   let r = await fetch(API + path, { headers });
   if (r.status === 403) {
-    const newPin = await new Promise((resolve, reject) => {
-      clearPin();
-      promptPin(resolve, reject, pin ? 'Incorrect PIN — try again' : null);
-    });
+    const hadPin = !!pin;
+    clearPin();
+    const newPin = await _sharedPinPrompt(hadPin);
     r = await fetch(API + path, { headers: { 'X-Owner-Pin': newPin } });
     if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
     return r.json();
