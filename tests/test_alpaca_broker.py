@@ -160,7 +160,7 @@ async def test_alpaca_submit_buy_recovers_existing_order_on_duplicate_client_oid
     assert result["status"] == "submitted"
     assert result["order_id"] == "order-abc-123"
     mock_alpaca_client.get_order_by_client_id.assert_called_once_with(
-        client_order_id="scorched-42-AAPL-buy"
+        "scorched-42-AAPL-buy"
     )
 
 
@@ -190,7 +190,7 @@ async def test_alpaca_submit_sell_recovers_existing_order_on_duplicate_client_oi
 
     assert result["status"] == "submitted"
     mock_alpaca_client.get_order_by_client_id.assert_called_once_with(
-        client_order_id="scorched-intraday-NVDA-2026-05-18"
+        "scorched-intraday-NVDA-2026-05-18"
     )
 
 

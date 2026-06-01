@@ -94,7 +94,7 @@ class AlpacaBroker(BrokerAdapter):
                         try:
                             return await loop.run_in_executor(
                                 None,
-                                lambda c=coid: self.client.get_order_by_client_id(client_order_id=c),
+                                lambda c=coid: self.client.get_order_by_client_id(c),
                             )
                         except Exception as lookup_exc:
                             logger.error(
@@ -384,7 +384,7 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
         if not order_id and client_oid:
             try:
                 order = await loop.run_in_executor(
-                    None, lambda coid=client_oid: client.get_order_by_client_id(client_order_id=coid)
+                    None, lambda coid=client_oid: client.get_order_by_client_id(coid)
                 )
                 order_id = str(order.id)
                 await update_pending_fill_order_id(db, client_order_id=client_oid, order_id=order_id)

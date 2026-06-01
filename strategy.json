@@ -1,6 +1,6 @@
 {
   "objective": "growth",
-  "rec_style": "adaptive",
+  "rec_style": "aggressive",
   "no_trade_threshold": "adaptive",
   "rec_explanation": "standard",
   "hold_period": "2-6wk",
