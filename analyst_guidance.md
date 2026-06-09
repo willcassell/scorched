@@ -59,7 +59,7 @@ RSI interpretation depends on entry style:
 - MODERATE_VOLUME (1.0–1.5× average): Sufficient to confirm a breakout **only when the catalyst is tier-1** (see "Catalyst Tiers" below). On its own, 1.0–1.5× is neutral — proceed only if catalyst quality compensates.
 - LOW_VOLUME (<0.5× average): Lack of conviction — moves are less reliable, breakout thesis fails regardless of catalyst.
 
-Mean-reversion entries do not require volume confirmation — the RSI 25–40 + %B ≤ 0 + rising-50-day-MA combination is the setup confirmation.
+Mean-reversion entries do not require volume confirmation — the setup confirmation is RSI in the 25–48 acceptable zone (per the RSI section above: 25–40 deep-oversold, or 40–48 shallow pullback with a tier-1 catalyst or pullback-to-rising-MA geometry) inside an intact uptrend (price above a rising 50-day MA, or the MA itself still rising).
 
 **Volatility — ATR (rolling) and GARCH(1,1) forward forecast:**
 - `ATR (14d)` is the lagging realized-volatility read — use it for stop-distance sizing (e.g., "stop at 2× ATR below entry" for high-vol names) and to sanity-check whether a -8% hard stop is wider or tighter than typical daily noise.
@@ -154,7 +154,7 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 2. **No earnings risk**: Do not open a new position if the company reports earnings within 3 trading days (unless the position predates the announcement date). For 2–6 week holds that would span earnings, require the thesis to be earnings-independent or plan to trim 50% before the print.
 3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value. This is enforced in code — buys that would push a sector above the cap are rejected before execution. Note that with the 33% max-position cap, even one full-size position in a sector consumes most of the budget.
 4. **Stop loss at -8% from entry** (widened from -5% to accommodate 2–6 week volatility). Position sizing is conviction-weighted up to a 33% cap; size down on lower-conviction setups so the -8% stop on a full-size position is a tolerable single-trade loss. No averaging down.
-5. **Time stop at 30 calendar days (≈6 weeks of trading days).** If a position is flat or down after 30 calendar days with no fresh catalyst, exit regardless of thesis. Do not let a swing trade become a buy-and-hold.
+5. **Time stop at 30 calendar days (~21 trading days).** If a position is flat or down after 30 calendar days with no fresh catalyst, exit regardless of thesis — note this fires ~2 weeks before the 6-week hold ceiling; only positions showing progress earn the full window. Do not let a swing trade become a buy-and-hold.
 6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.
 7. **No first-day buying into a selloff**: If SPY is down >2% today, do not initiate any new long positions. Wait for stabilization.
 8. **Cash floor**: Never recommend a buy that would bring portfolio cash below 10% of total value (the code also enforces this, but anticipate it in your math).
