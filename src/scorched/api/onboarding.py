@@ -39,7 +39,6 @@ def require_bootstrap_token(x_bootstrap_token: str = Header(default="")):
 _ALLOWED_ENV_KEYS = {
     "ANTHROPIC_API_KEY",
     "FRED_API_KEY",
-    "POLYGON_API_KEY",
     "ALPHA_VANTAGE_API_KEY",
     "TWELVEDATA_API_KEY",
     "FINNHUB_API_KEY",
@@ -102,18 +101,6 @@ async def _validate_fred(key: str) -> tuple[bool, str]:
         if resp.status_code == 200:
             return True, "Connected to FRED"
         return False, f"Invalid key or error: {resp.status_code}"
-
-
-async def _validate_polygon(key: str) -> tuple[bool, str]:
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(
-            f"https://api.polygon.io/v2/aggs/ticker/AAPL/prev?apiKey={key}"
-        )
-        if resp.status_code == 200:
-            return True, "Connected to Polygon"
-        if resp.status_code == 403:
-            return False, "Invalid API key"
-        return False, f"Error: {resp.status_code}"
 
 
 async def _validate_alpha_vantage(key: str) -> tuple[bool, str]:
@@ -188,7 +175,6 @@ async def _validate_alpaca(key: str, secret: str) -> tuple[bool, str]:
 _VALIDATORS = {
     "anthropic": lambda r: _validate_anthropic(r.key),
     "fred": lambda r: _validate_fred(r.key),
-    "polygon": lambda r: _validate_polygon(r.key),
     "alpha_vantage": lambda r: _validate_alpha_vantage(r.key),
     "twelvedata": lambda r: _validate_twelvedata(r.key),
     "finnhub": lambda r: _validate_finnhub(r.key),
@@ -248,7 +234,6 @@ def _write_env(data: dict[str, str]) -> None:
         "",
         "# Data Sources",
         f"FRED_API_KEY={data.get('FRED_API_KEY', '')}",
-        f"POLYGON_API_KEY={data.get('POLYGON_API_KEY', '')}",
         f"ALPHA_VANTAGE_API_KEY={data.get('ALPHA_VANTAGE_API_KEY', '')}",
         f"TWELVEDATA_API_KEY={data.get('TWELVEDATA_API_KEY', '')}",
         f"FINNHUB_API_KEY={data.get('FINNHUB_API_KEY', '')}",
@@ -266,7 +251,7 @@ def _write_env(data: dict[str, str]) -> None:
     # Preserve any extra keys not in our template
     known = {
         "ANTHROPIC_API_KEY", "DATABASE_URL", "STARTING_CAPITAL",
-        "FRED_API_KEY", "POLYGON_API_KEY", "ALPHA_VANTAGE_API_KEY",
+        "FRED_API_KEY", "ALPHA_VANTAGE_API_KEY",
         "TWELVEDATA_API_KEY", "FINNHUB_API_KEY", "BROKER_MODE", "ALPACA_API_KEY",
         "ALPACA_SECRET_KEY", "HOST", "PORT", "SETTINGS_PIN",
     }

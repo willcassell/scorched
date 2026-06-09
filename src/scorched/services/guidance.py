@@ -92,7 +92,7 @@ class RuleFiring:
 _PROVENANCE_MAP: dict[int, str] = {
     1: "prompt-only",  # "catalyst required" is a semantic judgement
     2: "prompt-only",  # earnings blackout is LLM-interpreted
-    3: "both",         # recommender._sector_within_limit() also enforces
+    3: "both",         # recommender.check_sector_exposure() also enforces
     4: "both",         # intraday_monitor hard_stop_pct enforces code-side
     5: "prompt-only",
     6: "prompt-only",

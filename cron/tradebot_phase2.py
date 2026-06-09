@@ -93,8 +93,8 @@ def main():
     except Exception:
         strategy = {}
     exec_cfg = strategy.get("execution", {})
-    buy_buffer_pct = exec_cfg.get("buy_limit_buffer_pct", 0.5) / 100  # default 0.5%
-    sell_buffer_pct = exec_cfg.get("sell_limit_buffer_pct", 0.5) / 100
+    buy_buffer_pct = exec_cfg.get("buy_limit_buffer_pct", 0.3) / 100  # match strategy.json default
+    sell_buffer_pct = exec_cfg.get("sell_limit_buffer_pct", 0.3) / 100
 
     if not pending:
         send_telegram(f"TRADEBOT // {today_str} - Phase 2: no trades to confirm.")

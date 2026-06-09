@@ -23,7 +23,10 @@ def main():
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Weekly reflection for week ending {today_str}")
 
     try:
-        result = http_post("/api/v1/market/weekly-reflection", {}, timeout=120)
+        # Client timeout must exceed the server's worst-case Claude budget
+        # (300s) — at 120s a slow reflection produced a false "FAILED" alert
+        # while the server finished and appended the playbook anyway.
+        result = http_post("/api/v1/market/weekly-reflection", {}, timeout=360)
     except Exception as e:
         msg = (
             f"TRADEBOT // {today_str} - Weekly Reflection FAILED\n"

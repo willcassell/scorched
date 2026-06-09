@@ -84,7 +84,7 @@ _PARTIAL_SELL_LABELS = {
 }
 
 _GUARDRAIL_LABELS = {
-    "max_portfolio_dd":    "If the portfolio is down more than 10% from its peak, pause all new buys until it recovers",
+    "max_portfolio_dd":    "If the portfolio is down more than 8% from its peak, pause all new buys until it recovers (matches the code-enforced drawdown gate)",
     "weak_regime_cash":    "When the market regime is weak or uncertain, move at least 50% of the portfolio to cash",
     "no_correlated":       "Never hold two positions that are highly correlated — they behave like one trade with double the risk",
     "earnings_blackout":   "During market-wide earnings season peaks, do not open any new positions for 5 trading days",
@@ -100,7 +100,7 @@ _REGIME_LABELS = {
 
 _EVENT_LABELS = {
     "reduce_before_earnings":  "Reduce existing position size by at least half before a scheduled earnings announcement",
-    "no_new_before_earnings":  "Do not open any new position if the company has an earnings announcement within 5 trading days",
+    "no_new_before_earnings":  "Do not open any new position if the company has an earnings announcement within 3 trading days (matches analyst_guidance.md hard rule #2)",
     "exit_before_earnings":    "Exit all positions entirely before their earnings dates — binary event risk is unacceptable",
     "hold_through_earnings":   "Hold positions through earnings — the risk is already priced in; do not treat earnings as a special event",
     "no_weekend":              "Sell all positions before long weekends (3-day holidays) to avoid overnight gap risk",
@@ -127,11 +127,15 @@ _EXPLANATION_LABELS = {
 # ── Default strategy used when strategy.json is missing ───────────────────────
 
 DEFAULT_JSON = {
+    # Fallback mirrors the LIVE strategy.json — if it drifts, a missing/corrupt
+    # strategy.json injects prose that contradicts analyst_guidance.md (which
+    # hardcodes 2–6wk breakout/mean-reversion) and can even trip the playbook
+    # drift detector (the old "3-10d" fallback was itself a forbidden pattern).
     "objective": "balanced",
     "rec_style": "adaptive",
     "no_trade_threshold": "adaptive",
-    "hold_period": "3-10d",
-    "entry_style": ["momentum_cont", "pullback_uptrend"],
+    "hold_period": "2-6wk",
+    "entry_style": ["breakout", "mean_reversion"],
     "sell_discipline": "scale_out",
     "loss_management": "time_price_hybrid",
     "sizing_style": "conviction_weighted",
@@ -245,7 +249,7 @@ def load_strategy() -> str:
     # ── Group 2: Entry & Exit ──────────────────────────────────────────────────
     lines.append("\n### Entry & Exit\n")
 
-    hold = s.get("hold_period", "3-10d")
+    hold = s.get("hold_period", "2-6wk")
     lines.append(f"**Target holding period:** {_HOLD_LABELS.get(hold, hold)}")
 
     entries = s.get("entry_style", [])

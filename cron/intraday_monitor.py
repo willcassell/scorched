@@ -373,7 +373,11 @@ def main():
                 "spy_change_pct": round(spy_change_pct, 2),
                 "vix_current": vix_data.get("current_price", 0),
             },
-        }, timeout=120)
+        }, timeout=min(120 + 60 * len(triggered_positions), 300))
+        # Scaled timeout: each triggered position is a separate Claude exit
+        # evaluation + possible broker submit server-side. A flat 120s timed
+        # out on multi-position storms, recorded no cooldowns, and re-fired
+        # positions already being sold on the next 5-min tick.
     except Exception as e:
         msg = f"INTRADAY ALERT - Trigger evaluation failed\nTriggered: {[t['symbol'] for t in triggered_positions]}\nError: {e}"
         send_telegram(msg)

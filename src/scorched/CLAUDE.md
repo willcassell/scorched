@@ -30,7 +30,7 @@ Before looking at any individual stock, form a view of whether the macro environ
 
 The declared strategy is **2–6 week swing/position trading** with two entry styles: **breakout** (confirmed range-clear on volume) and **mean reversion** (oversold pullbacks inside a confirmed uptrend). A valid setup requires ALL of:
 
-1. **Qualifying setup**: EITHER a confirmed breakout above a prior resistance on >1.5× average volume, OR a mean-reversion entry — oversold (RSI 25–40, %B ≤ 0) inside a larger uptrend (50-day MA still rising). Do not mix the two at entry.
+1. **Qualifying setup**: EITHER a confirmed breakout above a prior resistance on >1.5× average volume (1.0–1.5× acceptable only with a tier-1 catalyst — see analyst_guidance.md volume tiers), OR a mean-reversion entry — RSI 25–48 inside a larger uptrend (25–40 deep oversold; 40–48 shallow pullback requires tier-1 catalyst or pullback-to-rising-MA geometry). Do not mix the two at entry.
 2. **Named catalyst**: Specific, verifiable event (earnings beat, analyst upgrade, product launch, FDA approval, contract win, sector rotation). "The stock looks strong" is NOT a catalyst.
 3. **Not overextended**: For breakouts, prefer a controlled consolidation over a parabolic vertical spike. For mean-reversion, the broader trend must still be up — no catching knives in a downtrend.
 4. **Sector concentration**: No single sector > 40% of portfolio. With the 33% max-position cap, one full-size position consumes most of a sector's budget — this rule is code-enforced (buys that would breach it are rejected).
@@ -69,7 +69,7 @@ The declared strategy is **2–6 week swing/position trading** with two entry st
 #### RSI(14) from Alpha Vantage (screener picks only)
 RSI interpretation depends on entry style:
 - **Breakout entry:** RSI 55–70 is ideal (momentum in the direction of the break); RSI >75 is stretched — prefer a pullback. RSI <45 on a "breakout" is suspect.
-- **Mean-reversion entry:** RSI 25–40 is the target zone (oversold inside a larger uptrend). RSI <20 = catching a falling knife, wait for stabilisation. RSI >50 = not oversold, not a valid mean-reversion setup.
+- **Mean-reversion entry:** RSI 25–48 is the acceptable zone (25–40 deep oversold; 40–48 shallow pullback in strong uptrends, requiring a tier-1 catalyst or pullback-to-rising-MA geometry). RSI <20 = catching a falling knife, wait for stabilisation. RSI >50 = not oversold, not a valid mean-reversion setup.
 
 #### FRED Macro Indicators
 | Indicator | Interpretation |

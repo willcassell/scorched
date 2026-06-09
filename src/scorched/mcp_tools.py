@@ -1,4 +1,5 @@
 """MCP tool definitions. openclaw connects to /mcp and calls these tools."""
+import hmac
 import json
 from datetime import date, datetime
 from decimal import Decimal
@@ -25,7 +26,8 @@ def _check_pin(pin: str | None) -> str | None:
     """
     if not settings.settings_pin:
         return None  # No PIN configured — allow all
-    if pin != settings.settings_pin:
+    # Constant-time compare, matching the REST require_owner_pin dependency.
+    if not hmac.compare_digest(pin or "", settings.settings_pin):
         return json.dumps({"error": "Incorrect or missing PIN. Set the 'pin' parameter to your SETTINGS_PIN."})
     return None
 

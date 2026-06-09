@@ -160,6 +160,27 @@ def check_prerequisites():
     return issues
 
 
+# The live crontab on the VM is HAND-MAINTAINED in CRON_TZ=America/New_York
+# format (ET times directly, no DST conversion needed, no SCORCHED-TRADEBOT
+# marker). This installer still generates the legacy UTC-offset format under a
+# marker block — running it would APPEND a complete duplicate schedule firing
+# at the same wall-clock minutes (Phase 2 twice = duplicate Alpaca order
+# submission). Install/remove are therefore disabled until this script is
+# rewritten to emit (and recognize) the CRON_TZ format actually in use.
+INSTALL_DISABLED_MSG = """\
+REFUSING to modify the crontab.
+
+The live crontab uses CRON_TZ=America/New_York with ET times and no marker
+comment — this script generates UTC-offset entries under a marker block and
+cannot remove the existing unmarked entries. Installing would create a
+DUPLICATE schedule (Phase 2 would submit orders twice).
+
+The crontab is hand-maintained: edit it with `crontab -e`.
+No DST re-runs are needed — CRON_TZ handles DST automatically.
+
+--check and --dry-run still work for inspection."""
+
+
 def main():
     parser = argparse.ArgumentParser(description="Set up cron jobs for Scorched trading bot")
     parser.add_argument("--check", action="store_true", help="Show current cron status")
@@ -169,10 +190,23 @@ def main():
                         help="Project directory (default: auto-detect)")
     args = parser.parse_args()
 
+    if not (args.check or args.dry_run):
+        print(INSTALL_DISABLED_MSG)
+        sys.exit(1)
+
     project_dir = args.project_dir or str(PROJECT_ROOT)
 
     if args.check:
         current = get_current_crontab()
+        # Hand-maintained CRON_TZ entries (the live format) have no marker —
+        # detect them by script path so --check doesn't report a false negative.
+        if MARKER not in current and "cron/tradebot_phase" in current:
+            print("Tradebot cron jobs are installed (hand-maintained CRON_TZ format):")
+            print()
+            for line in current.split("\n"):
+                if "tradebot" in line.lower() or line.startswith("CRON_TZ"):
+                    print(line)
+            return
         if MARKER in current:
             print("Scorched cron jobs are INSTALLED:")
             print()

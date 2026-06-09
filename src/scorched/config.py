@@ -30,8 +30,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
-    host: str = "0.0.0.0"
-    port: int = 8000
+    # HOST/PORT are read directly from env by entrypoint.sh — not Settings fields.
     strategy_file: Path = Path("strategy.json")
     settings_pin: str = ""  # if set, mutation endpoints require this PIN in X-Owner-Pin header
     bootstrap_token: str = ""  # one-shot token required for onboarding routes; set in env

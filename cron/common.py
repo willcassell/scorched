@@ -54,7 +54,21 @@ def acquire_lock(name):
                     sys.exit(0)
 
     # Either no lock, a dead-PID lock, or a stale-age lock → take it.
-    with open(lock_path, "w") as f:
+    # O_CREAT|O_EXCL makes creation atomic — two processes starting in the
+    # same second can't both pass an exists() check and proceed. The reclaim
+    # paths above delete the old file first, so EXCL only races a genuinely
+    # concurrent starter; the loser exits.
+    if os.path.exists(lock_path):
+        try:
+            os.unlink(lock_path)
+        except FileNotFoundError:
+            pass
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        print(f"Another {name} instance grabbed the lock concurrently, exiting")
+        sys.exit(0)
+    with os.fdopen(fd, "w") as f:
         f.write(str(os.getpid()))
 
 
