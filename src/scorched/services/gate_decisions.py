@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -58,17 +58,23 @@ async def record_gate_decision(
     details: dict | None = None,
     session_id: int | None = None,
     recommendation_id: int | None = None,
+    use_caller_session: bool = False,
 ) -> None:
     """Best-effort persistence of a single gate decision.
 
-    Opens a dedicated short-lived session via `AsyncSessionLocal` so the
-    decision is durable even when the surrounding hot-path transaction rolls
-    back — the typical case, since a gate that REJECTS raises ValueError that
-    would otherwise discard the record.
+    Two write modes:
 
-    The `db` parameter is accepted for API symmetry but ignored. Tests that
-    need to inject a session can monkeypatch
-    `scorched.services.gate_decisions.AsyncSessionLocal`.
+    - Default (`use_caller_session=False`): opens a dedicated short-lived
+      session via `AsyncSessionLocal` so the decision survives a hot-path
+      rollback — required for Phase 2 confirm, where a gate that REJECTS
+      raises ValueError that would otherwise discard the record.
+
+    - `use_caller_session=True`: adds the row to the caller's `db` session
+      (no commit — the caller commits). REQUIRED whenever `session_id`
+      references a parent row that is flushed but not yet committed in the
+      caller's transaction: a separate connection cannot see the uncommitted
+      parent under READ COMMITTED, so the FK check fails and the row is
+      silently lost. Phase 1 (recommender) must use this mode.
 
     Any failure is logged and swallowed — recording must never raise into the
     hot path.
@@ -80,21 +86,23 @@ async def record_gate_decision(
             # them pollute storage with implementation-specific repr().
             json.dumps(coerced_details)
 
-        async with AsyncSessionLocal() as own_db:
-            own_db.add(
-                GateDecision(
-                    session_id=session_id,
-                    recommendation_id=recommendation_id,
-                    symbol=symbol.upper() if symbol else "",
-                    action=action,
-                    phase=phase,
-                    gate=gate,
-                    passed=passed,
-                    reason=reason,
-                    details=coerced_details,
-                )
-            )
-            await own_db.commit()
+        row = GateDecision(
+            session_id=session_id,
+            recommendation_id=recommendation_id,
+            symbol=symbol.upper() if symbol else "",
+            action=action,
+            phase=phase,
+            gate=gate,
+            passed=passed,
+            reason=reason,
+            details=coerced_details,
+        )
+        if use_caller_session and db is not None:
+            db.add(row)
+        else:
+            async with AsyncSessionLocal() as own_db:
+                own_db.add(row)
+                await own_db.commit()
     except Exception:
         logger.exception(
             "Failed to record gate decision: phase=%s gate=%s symbol=%s passed=%s",
@@ -123,7 +131,7 @@ async def summarize_gate_attribution(
     rejection reasons so operators can see WHY each gate fired without paging
     through logs.
     """
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     stmt = (
         select(
             GateDecision.phase,

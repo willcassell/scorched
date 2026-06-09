@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -151,7 +151,9 @@ class PendingFill(Base):
     qty: Mapped[Decimal] = mapped_column(Numeric(15, 6), nullable=False)
     limit_price: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
     recommendation_id: Mapped[int | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # Nullable to match migration 0010 (DB column is nullable) — keeps
+    # `alembic check` clean so autogenerate doesn't emit a surprise SET NOT NULL.
+    created_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), nullable=True)
 
 
 class GateDecision(Base):
@@ -166,6 +168,9 @@ class GateDecision(Base):
     decision is recorded outside a Phase 1 run (e.g. cron-driven Phase 1.5).
     """
     __tablename__ = "gate_decisions"
+    # Declared to match migration 0011 — without it, alembic autogenerate
+    # emits a surprise drop_index on the next routine migration.
+    __table_args__ = (Index("ix_gate_decisions_phase_gate", "phase", "gate"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     session_id: Mapped[int | None] = mapped_column(

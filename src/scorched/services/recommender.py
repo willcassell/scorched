@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..cost import record_usage, check_daily_cost_ceiling
-from ..models import Portfolio, Position, RecommendationSession, TokenUsage, TradeHistory, TradeRecommendation
+from ..models import GateDecision, Portfolio, Position, RecommendationSession, TokenUsage, TradeHistory, TradeRecommendation
 from ..schemas import PortfolioSummary, RecommendationItem, RecommendationsResponse
 from .claude_client import MODEL, call_analysis, call_decision, call_risk_review, parse_json_response
 from .gate_decisions import (
@@ -27,7 +27,7 @@ from .portfolio import get_portfolio_summary
 from .guidance import load_effective_guidance
 from .strategy import load_strategy, load_strategy_json
 from .technicals import compute_technicals
-from .finnhub_data import fetch_analyst_consensus_sync, build_analyst_context
+from .finnhub_data import fetch_analyst_consensus_sync
 from ..drawdown_gate import update_peak_and_check
 from ..correlation import find_high_correlations
 from ..risk_gates import check_cash_floor, check_holdings_cap, check_position_cap
@@ -306,7 +306,13 @@ def check_sector_exposure(
         )
         return False
     if total_value <= 0:
-        return True
+        # Fail closed — a zero/negative total means portfolio state is broken,
+        # not that sector exposure is fine (consistent with the M10 stance above).
+        logger.warning(
+            "Sector gate REJECT %s: non-positive total_value=%s — failing closed",
+            proposed_symbol, total_value,
+        )
+        return False
 
     current_sector_value = sum(
         (p.get("market_value") or Decimal("0"))
@@ -372,6 +378,13 @@ async def generate_recommendations(
             .where(TokenUsage.session_id == existing.id)
             .values(session_id=None)
         )
+        # gate_decisions.session_id has ondelete=CASCADE — detach rows first so
+        # regenerating a session doesn't destroy the gate-attribution history.
+        await db.execute(
+            update(GateDecision)
+            .where(GateDecision.session_id == existing.id)
+            .values(session_id=None)
+        )
         await db.delete(existing)
         await db.flush()
 
@@ -409,7 +422,7 @@ async def generate_recommendations(
         insider_activity = cache["insider_activity"]
         market_context = cache["market_context"]
         fred_macro = cache["fred_macro"]
-        detailed_news = cache.get("detailed_news") or cache.get("polygon_news", {})
+        detailed_news = cache.get("detailed_news") or {}
         av_technicals = cache["av_technicals"]
         technicals = cache["technicals"]
         analyst_consensus = cache["analyst_consensus"]
@@ -734,7 +747,21 @@ async def generate_recommendations(
     logger.info("Call 2 raw response (first 2000 chars):\n%s", (decision_raw or "")[:2000])
 
     research_summary = parsed.get("research_summary", "")
-    raw_recs = parsed.get("recommendations", [])[:3]
+    # Cap at 3 recs (prompt-enforced max) but never let the cap drop a SELL —
+    # a stop-loss exit at index 3 must survive even if Claude over-produced buys.
+    all_recs = parsed.get("recommendations", [])
+    if len(all_recs) > 3:
+        sells = [r for r in all_recs if (r.get("action") or "").lower() == "sell"]
+        buys = [r for r in all_recs if (r.get("action") or "").lower() != "sell"]
+        raw_recs = (sells + buys)[:3]
+        dropped = [r for r in all_recs if r not in raw_recs]
+        logger.warning(
+            "Claude returned %d recs (max 3) — dropped: %s",
+            len(all_recs),
+            [(r.get("action"), r.get("symbol")) for r in dropped],
+        )
+    else:
+        raw_recs = all_recs
 
     # DIAG: dump every rec Call 2 returned so silent drops downstream are visible.
     logger.info("Call 2 parsed %d recommendations:", len(raw_recs))
@@ -766,6 +793,7 @@ async def generate_recommendations(
                     continue
                 await record_gate_decision(
                     db,
+                    use_caller_session=True,
                     session_id=session_row.id,
                     symbol=r.get("symbol", ""),
                     action="buy",
@@ -832,6 +860,7 @@ async def generate_recommendations(
                     continue
                 await record_gate_decision(
                     db,
+                    use_caller_session=True,
                     session_id=session_row.id,
                     symbol=r.get("symbol", ""),
                     action="buy",
@@ -847,35 +876,45 @@ async def generate_recommendations(
                 for d in risk_decisions
                 if d.get("action", "").lower() == "buy"
             }
-            rejected_symbols = {
-                sym for sym, d in decisions_by_symbol.items()
-                if d.get("verdict") == "reject"
-            }
-            if rejected_symbols:
-                logger.info("Risk committee rejected buys: %s", rejected_symbols)
-                for d in risk_decisions:
-                    if d.get("verdict") == "reject":
-                        logger.info("  %s %s: %s", d.get("action"), d.get("symbol"), d.get("reason"))
-
             # Persist a verdict row for every buy reviewed — approve OR reject —
             # so the attribution endpoint can show the Call-3 funnel ratio.
+            # A buy with NO matching verdict (symbol typo, partial Call-3 output)
+            # is rejected, matching the committee's declared default-REJECT
+            # stance — fail-closed, never fail-open.
+            rejected_symbols: set[str] = set()
             for r in raw_recs:
                 if r.get("action", "").lower() != "buy":
                     continue
                 sym = (r.get("symbol") or "").upper()
-                d = decisions_by_symbol.get(sym, {})
-                verdict = d.get("verdict") or "approve"
+                d = decisions_by_symbol.get(sym)
+                if d is None:
+                    verdict = "reject"
+                    reason = "no matching risk-review verdict returned (fail-closed reject)"
+                    logger.warning(
+                        "Risk review returned no verdict for %s — rejecting (fail-closed)", sym
+                    )
+                else:
+                    verdict = d.get("verdict") or "reject"
+                    reason = d.get("reason")
+                if verdict == "reject":
+                    rejected_symbols.add(sym)
                 await record_gate_decision(
                     db,
+                    use_caller_session=True,
                     session_id=session_row.id,
                     symbol=sym,
                     action="buy",
                     phase=PHASE_RISK_REVIEW,
                     gate="risk_review",
                     passed=(verdict != "reject"),
-                    reason=d.get("reason") if verdict == "reject" else None,
+                    reason=reason if verdict == "reject" else None,
                     details={"verdict": verdict},
                 )
+            if rejected_symbols:
+                logger.info("Risk committee rejected buys: %s", rejected_symbols)
+                for d in risk_decisions:
+                    if d.get("verdict") == "reject":
+                        logger.info("  %s %s: %s", d.get("action"), d.get("symbol"), d.get("reason"))
 
             # Filter out rejected buy recommendations (sells always pass through)
             raw_recs = [
@@ -964,6 +1003,7 @@ async def generate_recommendations(
             )
             await record_gate_decision(
                 db,
+                use_caller_session=True,
                 session_id=session_row.id,
                 symbol=symbol,
                 action="buy",
@@ -1002,6 +1042,7 @@ async def generate_recommendations(
             )
             await record_gate_decision(
                 db,
+                use_caller_session=True,
                 session_id=session_row.id,
                 symbol=symbol,
                 action="buy",
@@ -1035,6 +1076,7 @@ async def generate_recommendations(
             )
             await record_gate_decision(
                 db,
+                use_caller_session=True,
                 session_id=session_row.id,
                 symbol=symbol,
                 action="buy",
@@ -1073,6 +1115,7 @@ async def generate_recommendations(
             sector_label = symbol_sector or "unknown sector"
             await record_gate_decision(
                 db,
+                use_caller_session=True,
                 session_id=session_row.id,
                 symbol=symbol,
                 action="buy",
@@ -1178,6 +1221,11 @@ async def generate_recommendations(
         logger.info("No recommendations survived filtering — removing empty session to allow retry")
         await db.execute(
             update(TokenUsage).where(TokenUsage.session_id == session_row.id).values(session_id=None)
+        )
+        # Detach gate rows before the delete — the CASCADE would otherwise wipe
+        # the attribution data on exactly the all-blocked days it matters most.
+        await db.execute(
+            update(GateDecision).where(GateDecision.session_id == session_row.id).values(session_id=None)
         )
         await db.delete(session_row)
 
