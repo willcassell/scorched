@@ -1,5 +1,6 @@
 """Portfolio state management: reads, buys, sells."""
 import asyncio
+import logging
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -20,6 +21,8 @@ from ..schemas import (
     TaxSummaryResponse,
 )
 from ..tax import classify_gain, estimate_tax, post_tax_gain
+
+logger = logging.getLogger(__name__)
 
 
 async def _get_current_price(symbol: str) -> Decimal:
@@ -176,13 +179,28 @@ async def apply_buy(
     shares: Decimal,
     execution_price: Decimal,
     executed_at: datetime,
+    enforce_cash: bool = True,
 ) -> ConfirmTradeResponse:
+    """Record a buy into the local books.
+
+    `enforce_cash=False` is for the reconciler path: the order already FILLED
+    on Alpaca, so the money is spent regardless of local cash — raising here
+    would leave the fill unrecorded (ghost position, missing TradeHistory row).
+    Local cash may go briefly negative; the daily /broker/sync corrects it
+    against Alpaca's actual account cash.
+    """
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     total_cost = (shares * execution_price).quantize(Decimal("0.01"))
 
     if portfolio.cash_balance < total_cost:
-        raise ValueError(
-            f"Insufficient cash: have {portfolio.cash_balance}, need {total_cost}"
+        if enforce_cash:
+            raise ValueError(
+                f"Insufficient cash: have {portfolio.cash_balance}, need {total_cost}"
+            )
+        logger.warning(
+            "apply_buy recording filled order despite insufficient local cash "
+            "(have %s, need %s) — cash will go negative until /broker/sync corrects it",
+            portfolio.cash_balance, total_cost,
         )
 
     # Upsert position

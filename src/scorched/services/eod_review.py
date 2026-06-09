@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cost import record_usage
 from ..models import Position, RecommendationSession, TradeHistory, TradeRecommendation
-from .claude_client import MODEL, call_eod_review as _call_eod_review, call_position_review as _call_position_review
-from .playbook import get_playbook
+from .claude_client import HAIKU_MODEL, MODEL, call_eod_review as _call_eod_review, call_position_review as _call_position_review
+from .playbook import _check_playbook_drift, _persist_rejected_playbook, get_playbook
+from .telegram import send_telegram
 from .position_mgmt import build_position_review_prompt
 from .research import fetch_market_eod, fetch_price_data
 
@@ -191,16 +192,37 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
         db,
         session_id=session.id,
         call_type="eod_review",
-        model=MODEL,
+        model=HAIKU_MODEL,
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
     )
-    playbook.content = updated_content
-    playbook.version += 1
+
+    # Same drift guardrail as the morning update_playbook() path — without it
+    # the evening Haiku write could reinstall the exact drift class (deprecated
+    # numeric rules) that the morning path rejects, and the drifted text would
+    # be injected into the next day's Call 2.
+    drift = _check_playbook_drift(updated_content)
+    if drift:
+        logger.error(
+            "EOD playbook update REJECTED — drift detected: %s. Keeping playbook v%d.",
+            ", ".join(drift), playbook.version,
+        )
+        _persist_rejected_playbook(updated_content, playbook.content, playbook.version, drift)
+        try:
+            await send_telegram(
+                "⚠️ EOD playbook update rejected — strategy drift detected:\n"
+                + "\n".join(f"  • {d}" for d in drift)
+                + f"\n\nKept playbook v{playbook.version}."
+            )
+        except Exception as e:  # noqa: BLE001 — Telegram is best-effort
+            logger.warning("Failed to send EOD drift-alert Telegram: %s", e)
+    else:
+        playbook.content = updated_content
+        playbook.version += 1
     await db.commit()
     await db.refresh(playbook)
 
-    logger.info("EOD review complete — playbook updated to v%d", playbook.version)
+    logger.info("EOD review complete — playbook at v%d", playbook.version)
 
     # ── Call 4: Position management review ───────────────────────────────────
     if positions:

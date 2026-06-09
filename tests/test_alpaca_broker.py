@@ -165,16 +165,18 @@ async def test_alpaca_submit_buy_recovers_existing_order_on_duplicate_client_oid
 
 
 @pytest.mark.asyncio
-async def test_alpaca_submit_sell_recovers_existing_order_on_duplicate_client_oid(
+async def test_alpaca_submit_sell_recovers_live_order_on_duplicate_client_oid(
     alpaca_broker, mock_alpaca_client
 ):
-    """Same idempotent recovery for sells — this is the path that fired 14
-    times on NVDA on 2026-05-18 before the fix."""
+    """Idempotent recovery for sells when the colliding order is still LIVE —
+    this is the path that fired 14 times on NVDA on 2026-05-18 before the fix.
+    A live recovered order IS the same intent: return it, do not resubmit."""
     mock_position = MagicMock()
     mock_position.qty = "1"
     mock_alpaca_client.get_open_position.return_value = mock_position
 
-    existing_order = _make_order(symbol="NVDA")
+    existing_order = _make_order(symbol="NVDA", status="new")
+    existing_order.client_order_id = "scorched-intraday-NVDA-2026-05-18"
     mock_alpaca_client.submit_order.side_effect = Exception(
         '{"code":40010001,"message":"client_order_id must be unique"}'
     )
@@ -192,6 +194,53 @@ async def test_alpaca_submit_sell_recovers_existing_order_on_duplicate_client_oi
     mock_alpaca_client.get_order_by_client_id.assert_called_once_with(
         "scorched-intraday-NVDA-2026-05-18"
     )
+    # Live order recovered — no resubmission attempt beyond the first call
+    assert mock_alpaca_client.submit_order.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_alpaca_submit_sell_resubmits_fresh_oid_when_recovered_order_terminal(
+    alpaca_broker, mock_alpaca_client
+):
+    """A TERMINAL recovered order on a day-scoped intraday key is a consumed
+    oid from an EARLIER intent (e.g. morning exit_partial already filled and
+    reconciled). Returning it would silently skip the new exit and let the
+    reconciler re-apply the morning fill — instead resubmit with a fresh
+    suffixed client_order_id."""
+    mock_position = MagicMock()
+    mock_position.qty = "1"
+    mock_alpaca_client.get_open_position.return_value = mock_position
+
+    stale_filled = _make_order(symbol="NVDA", status="filled")
+    stale_filled.client_order_id = "scorched-intraday-NVDA-2026-05-18"
+    fresh_order = _make_order(symbol="NVDA", status="new")
+    fresh_order.id = "order-fresh-456"
+
+    calls = {"n": 0}
+
+    def _submit(order_data=None, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise Exception('{"code":40010001,"message":"client_order_id must be unique"}')
+        fresh_order.client_order_id = order_data.client_order_id
+        return fresh_order
+
+    mock_alpaca_client.submit_order.side_effect = _submit
+    mock_alpaca_client.get_order_by_client_id.return_value = stale_filled
+
+    result = await alpaca_broker.submit_sell(
+        symbol="NVDA",
+        qty=Decimal("1"),
+        limit_price=Decimal("200.00"),
+        recommendation_id=None,
+        _client_order_id_override="scorched-intraday-NVDA-2026-05-18",
+    )
+
+    assert result["status"] == "submitted"
+    assert result["order_id"] == "order-fresh-456"
+    assert mock_alpaca_client.submit_order.call_count == 2
+    # The resubmission used a fresh suffixed key, not the consumed one
+    assert fresh_order.client_order_id.startswith("scorched-intraday-NVDA-2026-05-18-r")
 
 
 @pytest.mark.asyncio

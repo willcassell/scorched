@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..broker import get_broker
 from ..broker.pending_fills import get_pending_buy_notional
 from ..circuit_breaker import run_circuit_breaker
+from ..drawdown_gate import update_peak_and_check
 from ..config import settings
 from ..models import Portfolio, Position, TradeRecommendation
 from ..risk_gates import run_all_buy_gates
@@ -139,7 +140,9 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
                 f"stored ${stored_price}, live ${live_price}"
             )
 
-        reserved_buy_notional = await get_pending_buy_notional(db)
+        reserved_buy_notional = await get_pending_buy_notional(
+            db, exclude_recommendation_id=rec_id
+        )
         effective_cash = Decimal(str(portfolio.cash_balance)) - reserved_buy_notional
 
         price_data = {sym.upper(): {"current_price": float(_live_price_for(sym))} for sym in all_symbols}
@@ -207,6 +210,43 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
                 rec.symbol, rec_id, gate_result.reason,
             )
             raise ValueError(f"gate:{gate_result.reason}")
+
+        # Drawdown gate re-check at confirm time — Phase 1 (9:45) checked it,
+        # but the portfolio can cross the threshold before Phase 2 (10:15).
+        # Every other gate is re-run here; this one was the gap.
+        dd_result = await update_peak_and_check(
+            db, price_data, strategy.get("drawdown_gate", {})
+        )
+        await record_gate_decision(
+            db,
+            session_id=rec.session_id,
+            recommendation_id=rec_id,
+            symbol=rec.symbol,
+            action=rec.action,
+            phase=PHASE_CONFIRM,
+            gate="drawdown",
+            passed=not dd_result.blocked,
+            reason=(
+                f"portfolio drawdown {dd_result.current_drawdown_pct:.1f}% "
+                f"exceeds threshold {dd_result.threshold_pct:.1f}%"
+                if dd_result.blocked else None
+            ),
+            details={
+                "current_drawdown_pct": dd_result.current_drawdown_pct,
+                "threshold_pct": dd_result.threshold_pct,
+                "peak_value": dd_result.peak_value,
+                "current_value": dd_result.current_value,
+            },
+        )
+        if dd_result.blocked:
+            logger.warning(
+                "Drawdown gate rejected at confirm time: symbol=%s rec_id=%s drawdown=%.1f%%",
+                rec.symbol, rec_id, dd_result.current_drawdown_pct,
+            )
+            raise ValueError(
+                f"gate:portfolio drawdown {dd_result.current_drawdown_pct:.1f}% "
+                f"exceeds {dd_result.threshold_pct:.1f}% threshold"
+            )
 
         circuit_cfg = strategy.get("circuit_breaker", {})
         if circuit_cfg.get("enabled", False):

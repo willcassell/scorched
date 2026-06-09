@@ -65,7 +65,21 @@ class AlpacaBroker(BrokerAdapter):
         """Alpaca SDK is sync — call from executor."""
         return self.client.submit_order(order_data=order_data)
 
-    async def _submit_order_with_retry(self, order_data, max_retries=1):
+    _TERMINAL_ORDER_STATUSES = ("filled", "canceled", "expired", "rejected", "done_for_day")
+
+    async def _rename_pending_fill_coid(self, old_coid: str, new_coid: str) -> None:
+        """Re-key a pending fill row's client_order_id (fresh-oid resubmission)."""
+        from ..models import PendingFill
+        row = (await self.db.execute(
+            select(PendingFill).where(PendingFill.client_order_id == old_coid)
+        )).scalars().first()
+        if row is not None:
+            row.client_order_id = new_coid
+            await self.db.commit()
+
+    async def _submit_order_with_retry(
+        self, order_data, max_retries=1, allow_fresh_oid_on_terminal=False,
+    ):
         """Submit order via executor with retry on transient (non-4xx) failures.
 
         Special-cases Alpaca error 40010001 ("client_order_id must be unique"):
@@ -74,6 +88,15 @@ class AlpacaBroker(BrokerAdapter):
         idempotency for Phase 2 confirm retries and intraday re-fires of the
         same deterministic key — Alpaca's API rejects duplicates instead of
         returning the prior order, so the recovery has to be explicit here.
+
+        `allow_fresh_oid_on_terminal` (intraday day-scoped oids only): if the
+        recovered order is already TERMINAL, this collision is a NEW intent
+        reusing a consumed day-scoped key (e.g. afternoon exit_full after a
+        morning exit_partial already filled and was reconciled). Returning the
+        stale order would (a) silently skip the intended exit and (b) let the
+        reconciler re-apply the morning's fill. Instead we resubmit with a
+        fresh suffixed client_order_id. Rec-scoped oids keep the old behavior:
+        a terminal recovered order IS the same intent, already handled.
         """
         loop = asyncio.get_running_loop()
         last_exc = None
@@ -92,7 +115,7 @@ class AlpacaBroker(BrokerAdapter):
                             coid,
                         )
                         try:
-                            return await loop.run_in_executor(
+                            recovered = await loop.run_in_executor(
                                 None,
                                 lambda c=coid: self.client.get_order_by_client_id(c),
                             )
@@ -102,6 +125,38 @@ class AlpacaBroker(BrokerAdapter):
                                 coid, lookup_exc,
                             )
                             raise exc from lookup_exc
+
+                        rec_status = (
+                            recovered.status.value
+                            if hasattr(recovered.status, "value")
+                            else str(recovered.status)
+                        )
+                        if (
+                            allow_fresh_oid_on_terminal
+                            and rec_status in self._TERMINAL_ORDER_STATUSES
+                        ):
+                            fresh_coid = f"{coid}-r{int(time.time())}"
+                            logger.warning(
+                                "Recovered order for %s is already %s — consumed "
+                                "day-scoped key; resubmitting NEW intent with "
+                                "client_order_id=%s",
+                                coid, rec_status, fresh_coid,
+                            )
+                            # Re-key the pending row FIRST so a crash between
+                            # resubmit and order-id update still reconciles the
+                            # new order, not the stale terminal one.
+                            await self._rename_pending_fill_coid(coid, fresh_coid)
+                            order_data.client_order_id = fresh_coid
+                            try:
+                                return await loop.run_in_executor(
+                                    None, self._submit_order_sync, order_data
+                                )
+                            except Exception:
+                                # Restore the original key so the caller's
+                                # cleanup (remove by original coid) still works.
+                                await self._rename_pending_fill_coid(fresh_coid, coid)
+                                raise
+                        return recovered
                 # Don't retry client errors (4xx)
                 if any(code in exc_str for code in ("400", "401", "403", "404", "422")):
                     raise
@@ -261,7 +316,12 @@ class AlpacaBroker(BrokerAdapter):
 
         start = time.monotonic()
         try:
-            order = await self._submit_order_with_retry(order_data)
+            # Override oids are day-scoped intraday keys — allow fresh-oid
+            # resubmission when the recovered colliding order is terminal.
+            order = await self._submit_order_with_retry(
+                order_data,
+                allow_fresh_oid_on_terminal=bool(_client_order_id_override),
+            )
             elapsed_ms = int((time.monotonic() - start) * 1000)
             await _record_api_call(self.db, "submit_sell", "success", elapsed_ms, symbol=symbol)
         except Exception as exc:
@@ -276,9 +336,12 @@ class AlpacaBroker(BrokerAdapter):
         order_id = str(order.id)
         logger.info("Submitted SELL %s x%s limit=$%s — order_id=%s", symbol, qty, limit_price, order_id)
 
-        # Update pending fill with real Alpaca order ID
-        if client_oid:
-            await update_pending_fill_order_id(self.db, client_order_id=client_oid, order_id=order_id)
+        # Update pending fill with real Alpaca order ID. Use the order's OWN
+        # client_order_id — on fresh-oid resubmission the pending row was
+        # re-keyed and the original client_oid no longer matches.
+        effective_coid = str(getattr(order, "client_order_id", None) or client_oid or "")
+        if effective_coid:
+            await update_pending_fill_order_id(self.db, client_order_id=effective_coid, order_id=order_id)
 
         return {
             "status": "submitted",
@@ -346,6 +409,14 @@ class AlpacaBroker(BrokerAdapter):
         }
 
 
+# Serializes reconcile runs. Reachable from four entry points (startup, Phase 2
+# pre-trade flush, Phase 2.5/2.75 crons via HTTP, manual /trades/reconcile) —
+# all in this one FastAPI process, so an in-process lock is sufficient. Two
+# overlapping runs would both read the same pending list and could double-apply
+# fills for recommendation_id=None (intraday) sells.
+_reconcile_lock = asyncio.Lock()
+
+
 async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
     """Check all pending orders on Alpaca and record fills in local DB.
 
@@ -356,6 +427,17 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
 
     if settings.broker_mode not in ("alpaca_paper", "alpaca_live"):
         return []
+
+    if _reconcile_lock.locked():
+        logger.info("Reconcile already in progress — skipping concurrent run")
+        return []
+
+    async with _reconcile_lock:
+        return await _reconcile_pending_orders_inner(db)
+
+
+async def _reconcile_pending_orders_inner(db: AsyncSession) -> list[dict]:
+    from ..config import settings
 
     is_paper = settings.broker_mode == "alpaca_paper"
     client = TradingClient(
@@ -443,6 +525,9 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
                         continue
 
                 if action == "buy":
+                    # enforce_cash=False: the order already filled on Alpaca —
+                    # the money is spent. Raising on local cash here would leave
+                    # the fill unrecorded (ghost position, missing TradeHistory).
                     result = await apply_buy(
                         db,
                         recommendation_id=recommendation_id,
@@ -450,6 +535,7 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
                         shares=filled_qty,
                         execution_price=filled_price,
                         executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        enforce_cash=False,
                     )
                     await remove_pending_fill(db, order_id)
                     await db.commit()
@@ -505,6 +591,7 @@ async def reconcile_pending_orders(db: AsyncSession) -> list[dict]:
                             shares=filled_qty,
                             execution_price=filled_price,
                             executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                            enforce_cash=False,
                         )
                     elif action == "sell":
                         result = await apply_sell(

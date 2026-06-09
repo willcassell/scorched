@@ -140,7 +140,11 @@ async def fetch_gate_data(symbols: list[str]) -> dict:
     # VIX: yfinance first (Alpaca doesn't cover index symbols), VXX as proxy fallback.
     try:
         import yfinance as yf
-        vix_hist = yf.Ticker("^VIX").history(period="5d")
+        # yfinance is sync — run in executor so a slow fetch doesn't block the
+        # event loop (same rule as every other yfinance call in the repo).
+        vix_hist = await loop.run_in_executor(
+            None, lambda: yf.Ticker("^VIX").history(period="5d")
+        )
         if len(vix_hist) >= 2:
             out["^VIX"] = {
                 "current": Decimal(str(vix_hist["Close"].iloc[-1])),

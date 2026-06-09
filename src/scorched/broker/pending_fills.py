@@ -131,16 +131,28 @@ async def remove_pending_fill_by_client_oid(db: AsyncSession, client_order_id: s
         logger.info("Removed pending fill by client_oid=%s", client_order_id)
 
 
-async def get_pending_buy_notional(db: AsyncSession) -> Decimal:
+async def get_pending_buy_notional(
+    db: AsyncSession,
+    exclude_recommendation_id: int | None = None,
+) -> Decimal:
     """Return total notional reserved by outstanding pending buy orders.
 
     Pending fills are active until reconciliation records the fill and removes
     the row. During that window, Scorched should treat buy notional as already
     reserved so a second confirmation cannot independently spend the same cash.
+
+    `exclude_recommendation_id` lets an idempotent re-confirm of an already
+    "submitted" rec skip its OWN pending fill — otherwise the retry double-debits
+    its notional and can self-reject on the cash floor.
     """
     result = await db.execute(select(PendingFill).where(PendingFill.action == "buy"))
     total = Decimal("0")
     for fill in result.scalars().all():
+        if (
+            exclude_recommendation_id is not None
+            and fill.recommendation_id == exclude_recommendation_id
+        ):
+            continue
         total += Decimal(str(fill.qty)) * Decimal(str(fill.limit_price))
     return total
 

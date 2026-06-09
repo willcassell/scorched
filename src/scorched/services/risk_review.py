@@ -79,4 +79,8 @@ def parse_risk_review_response(raw: str) -> list[dict] | None:
     validated = validate_llm_output(parsed, RiskReviewOutput)
     if validated:
         return [d.model_dump() for d in validated.decisions]
-    return parsed.get("decisions", [])
+    # Validation failure → fail-closed, same as parse failure. Returning the
+    # raw dicts here fed entries with missing action/verdict downstream, where
+    # they were silently dropped and the buy defaulted through unreviewed.
+    logger.warning("Risk review JSON failed schema validation — treating as parse failure (fail-closed)")
+    return None
