@@ -607,7 +607,9 @@ def _fetch_market_context_sync(today: date, symbols: list[str] | None = None, tr
         except Exception:
             logger.warning("Market context: sector %s fetch failed", ticker_sym, exc_info=True)
     window_start = today - timedelta(days=1)
-    window_end = today + timedelta(days=2)
+    # +5 calendar days so hard rule #2 ("no buy if earnings within 3 trading
+    # days") is enforceable across a weekend — +2 hid Tuesday prints on Friday.
+    window_end = today + timedelta(days=5)
     upcoming_earnings = []
     for symbol in (symbols or WATCHLIST):
         try:
@@ -1284,7 +1286,6 @@ def build_research_context(
     insider_activity: dict | None = None,
     fred_macro: dict | None = None,
     detailed_news: dict | None = None,
-    polygon_news: dict | None = None,  # legacy alias — use detailed_news instead
     av_technicals: dict | None = None,
     technicals: dict | None = None,
     analyst_consensus: dict | None = None,
@@ -1298,9 +1299,6 @@ def build_research_context(
     failed_exits: list[dict] | None = None,
     mean_reversion_symbols: list[str] | None = None,
 ) -> str:
-    # Merge legacy polygon_news kwarg into detailed_news (prefer detailed_news if both given)
-    detailed_news = detailed_news or polygon_news
-
     # Pre-filter: score all symbols, keep top N + held positions.
     # Mean-reversion picks score LOW on _score_symbol (it rewards up-momentum
     # and news catalysts, neither of which characterizes a pullback setup), so
@@ -1627,9 +1625,11 @@ def _fetch_sector_returns_sync(tracker=None) -> dict[str, float]:
         bars_data = fetch_bars_sync(_SECTOR_ETFS, days=15, tracker=tracker)
         for etf in _SECTOR_ETFS:
             bars = bars_data.get(etf, [])
-            if len(bars) >= 5:
+            if len(bars) >= 6:
                 current = bars[-1]["close"]
-                five_ago = bars[-5]["close"]
+                # bars[-6] = 5 trading days back (bars[-5] was only 4 — skewed
+                # relative strength vs the factor returns, which use -6).
+                five_ago = bars[-6]["close"]
                 result[etf] = round((current - five_ago) / five_ago * 100, 2)
     except Exception:
         logger.warning("Sector ETF fetch failed", exc_info=True)
@@ -1731,10 +1731,6 @@ async def fetch_edgar_insider(symbols: list[str], days_back: int = 30, tracker=N
 async def fetch_detailed_news(symbols: list[str], tracker=None) -> dict:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: _fetch_detailed_news_sync(symbols, tracker=tracker))
-
-
-# Backwards-compat alias; remove after all callers are migrated
-fetch_polygon_news = fetch_detailed_news
 
 
 async def fetch_av_technicals(symbols: list[str], api_key: str, tracker=None) -> dict:

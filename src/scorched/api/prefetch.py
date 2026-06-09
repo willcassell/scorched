@@ -153,12 +153,19 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         _timed_fetch("economic_calendar", fetch_economic_calendar(settings.fred_api_key, tracker=tracker)),
         _timed_fetch("alpaca_news", fetch_detailed_news(research_symbols, tracker=tracker)),
     ]
+    # Per-source empty defaults, in parallel_tasks order. gather() with
+    # return_exceptions=True hands back the Exception OBJECT in the result
+    # slot — unpacking it unchecked crashed downstream (compute_technicals,
+    # json.dump) with a confusing error and no cache for Phase 1.
+    _source_defaults: list[tuple[str, object]] = [
+        ("price_data", {}), ("news", {}), ("earnings_surprise", {}),
+        ("edgar_insider", {}), ("market_context", ""), ("fred_macro", {}),
+        ("av_technicals", {}), ("twelvedata_rsi", {}), ("sector_returns", {}),
+        ("factor_returns", {}), ("premarket", {}), ("economic_calendar", []),
+        ("alpaca_news", {}),
+    ]
     try:
-        (
-            price_data, news_data, earnings_surprise, insider_activity,
-            market_context, fred_macro, av_technicals, twelvedata_rsi,
-            sector_returns, factor_returns, premarket_data, economic_calendar, detailed_news
-        ) = await _gather_with_timeout(parallel_tasks, timeout_s=PHASE0_GATHER_TIMEOUT_S)
+        raw_results = await _gather_with_timeout(parallel_tasks, timeout_s=PHASE0_GATHER_TIMEOUT_S)
     except asyncio.TimeoutError:
         from ..services.telegram import send_telegram
         msg = f"TRADEBOT // Phase 0 hit {PHASE0_GATHER_TIMEOUT_S}s hard timeout — one or more data sources hung"
@@ -168,6 +175,31 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         except Exception:
             logger.exception("Phase 0: failed to send timeout alert via Telegram")
         raise HTTPException(status_code=504, detail="Phase 0 exceeded hard timeout")
+
+    failed_sources: list[str] = []
+    cleaned_results = []
+    for (source_name, default), res in zip(_source_defaults, raw_results):
+        if isinstance(res, BaseException):
+            logger.error("Phase 0: %s fetch failed (%r) — using empty default", source_name, res)
+            failed_sources.append(source_name)
+            cleaned_results.append(default)
+        else:
+            cleaned_results.append(res)
+    (
+        price_data, news_data, earnings_surprise, insider_activity,
+        market_context, fred_macro, av_technicals, twelvedata_rsi,
+        sector_returns, factor_returns, premarket_data, economic_calendar, detailed_news
+    ) = cleaned_results
+    if failed_sources:
+        from ..services.telegram import send_telegram
+        try:
+            await send_telegram(
+                "TRADEBOT // Phase 0: data source(s) failed, continuing with partial data: "
+                + ", ".join(failed_sources)
+            )
+        except Exception:
+            logger.exception("Phase 0: failed to send partial-data alert via Telegram")
+
     timing["parallel_fetch_wall"] = round(time.monotonic() - parallel_start, 1)
     logger.info("Phase 0: parallel_fetch wall time %.1fs", timing["parallel_fetch_wall"])
 
@@ -252,7 +284,6 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
         "insider_activity": insider_activity,
         "fred_macro": fred_macro,
         "detailed_news": detailed_news,
-        "polygon_news": detailed_news,  # legacy key for backward compat
         "av_technicals": av_technicals,
         "twelvedata_rsi": twelvedata_rsi,
         "technicals": technicals,

@@ -220,14 +220,13 @@ def test_score_symbol_detailed_news_beats_yfinance_headlines():
 
 
 # ---------------------------------------------------------------------------
-# Legacy polygon_news kwarg still accepted by build_research_context
+# detailed_news kwarg renders into build_research_context
 # ---------------------------------------------------------------------------
 
-def test_build_research_context_accepts_polygon_news_kwarg():
-    """Legacy polygon_news kwarg still works (backward compat)."""
-    poly_news = {
-        "AAPL": [{"title": "Legacy polygon headline", "description": "Legacy summary."}]
+def test_build_research_context_accepts_detailed_news_kwarg():
+    detailed = {
+        "AAPL": [{"title": "Detailed headline", "description": "Detailed summary."}]
     }
-    ctx = _ctx(polygon_news=poly_news)
-    assert "Legacy polygon headline" in ctx
-    assert "Legacy summary." in ctx
+    ctx = _ctx(detailed_news=detailed)
+    assert "Detailed headline" in ctx
+    assert "Detailed summary." in ctx

@@ -293,12 +293,18 @@ async def call_analysis(strategy: str, guidance: str, user_content: str, tracker
     with ctx:
         response = await claude_call_with_retry(
             _client(), "Call 1 (analysis)",
+            # max_tokens covers thinking + text; +2048 left only ~2k tokens for
+            # the JSON (analysis prose + candidates + position actions), which
+            # risks a max_tokens truncation mid-object. 4096 gives headroom.
             model=MODEL,
-            max_tokens=THINKING_BUDGET + 2048,
+            max_tokens=THINKING_BUDGET + 4096,
             thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         )
+
+    if response.stop_reason == "max_tokens":
+        logger.warning("Call 1 hit max_tokens — JSON output may be truncated")
 
     analysis_raw = extract_text(response.content)
     thinking_text = extract_thinking(response.content)
@@ -465,7 +471,7 @@ async def call_eod_review(user_content: str):
 
 
 async def call_playbook_update(user_content: str):
-    """Playbook update (uses claude-opus-4-6, not sonnet).
+    """Playbook update (uses MODEL — sonnet; switched from opus for cost).
 
     Returns (response, updated_text).
     Raises anthropic.APIStatusError on failure after retries.
