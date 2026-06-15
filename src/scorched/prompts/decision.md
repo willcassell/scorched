@@ -15,7 +15,7 @@ Apply this playbook as a hard filter. If a candidate violates any prohibition he
 - Maintain cash above {min_cash_pct}% of total portfolio value
 - Maximum {max_position_pct}% of portfolio in any single position
 - Maximum {max_holdings} simultaneous holdings
-- Maximum 3 trades per day — 0, 1, or 2 are equally valid
+- No fixed limit on trades per day. Recommend EVERY exit the thesis or rules require (exits are risk management — never withhold one to stay under a count), and as many qualifying new entries as the holdings/cash/sector constraints above allow. Zero trades is still valid when nothing qualifies; do not trade out of habit.
 - Honor every `position_actions` entry from Analysis (exit/trim/hold). Do not second-guess a rule-based exit.
 - If a candidate's entry would violate the declared strategy or any constraint above, reject it
 

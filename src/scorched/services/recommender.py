@@ -747,21 +747,21 @@ async def generate_recommendations(
     logger.info("Call 2 raw response (first 2000 chars):\n%s", (decision_raw or "")[:2000])
 
     research_summary = parsed.get("research_summary", "")
-    # Cap at 3 recs (prompt-enforced max) but never let the cap drop a SELL —
-    # a stop-loss exit at index 3 must survive even if Claude over-produced buys.
+    # No hard cap on rec count. The previous "max 3" truncation discarded a
+    # rotation BUY on a multi-exit day (2026-06-15: the US-Iran ceasefire forced
+    # 3 oil-thesis sells (CVX/HAL/GE) and the cap dropped the one risk-on buy,
+    # CCL — the bot sold into a +1.5% SPY rally and couldn't participate).
+    # Exits are risk management and must never be dropped; new buys are already
+    # bounded downstream by the holdings cap, cash floor, sector cap, and
+    # position cap. Keep only a soft observability warning.
     all_recs = parsed.get("recommendations", [])
-    if len(all_recs) > 3:
-        sells = [r for r in all_recs if (r.get("action") or "").lower() == "sell"]
-        buys = [r for r in all_recs if (r.get("action") or "").lower() != "sell"]
-        raw_recs = (sells + buys)[:3]
-        dropped = [r for r in all_recs if r not in raw_recs]
+    raw_recs = all_recs
+    if len(all_recs) > 8:
         logger.warning(
-            "Claude returned %d recs (max 3) — dropped: %s",
+            "Claude returned %d recs in one session — unusually high, review for over-trading: %s",
             len(all_recs),
-            [(r.get("action"), r.get("symbol")) for r in dropped],
+            [(r.get("action"), r.get("symbol")) for r in all_recs],
         )
-    else:
-        raw_recs = all_recs
 
     # DIAG: dump every rec Call 2 returned so silent drops downstream are visible.
     logger.info("Call 2 parsed %d recommendations:", len(raw_recs))
