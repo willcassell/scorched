@@ -72,11 +72,11 @@ def _print_metrics(label: str, m: BacktestMetrics, trades: list[SimTrade]) -> No
 
 async def _load_buy_entries() -> list[dict]:
     """Pull buy trades from the live DB."""
-    from scorched.database import async_session
+    from scorched.database import AsyncSessionLocal
     from scorched.models import TradeHistory
     from sqlalchemy import select
 
-    async with async_session() as db:
+    async with AsyncSessionLocal() as db:
         rows = (
             await db.execute(
                 select(TradeHistory).where(TradeHistory.action == "buy").order_by(TradeHistory.executed_at)
