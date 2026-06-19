@@ -33,13 +33,15 @@ The declared strategy is **2–6 week swing/position trading** with two entry st
 1. **Qualifying setup**: EITHER a confirmed breakout above a prior resistance on >1.5× average volume (1.0–1.5× acceptable only with a tier-1 catalyst — see analyst_guidance.md volume tiers), OR a mean-reversion entry — RSI 25–48 inside a larger uptrend (25–40 deep oversold; 40–48 shallow pullback requires tier-1 catalyst or pullback-to-rising-MA geometry). Do not mix the two at entry.
 2. **Named catalyst**: Specific, verifiable event (earnings beat, analyst upgrade, product launch, FDA approval, contract win, sector rotation). "The stock looks strong" is NOT a catalyst.
 3. **Not overextended**: For breakouts, prefer a controlled consolidation over a parabolic vertical spike. For mean-reversion, the broader trend must still be up — no catching knives in a downtrend.
-4. **Sector concentration**: No single sector > 40% of portfolio. With the 33% max-position cap, one full-size position consumes most of a sector's budget — this rule is code-enforced (buys that would breach it are rejected).
+4. **Sector concentration**: No single sector > 40% of portfolio. This rule is code-enforced (buys that would breach it are rejected).
+
+> **⚠️ EXPERIMENT OVERRIDE (B-momentum-discipline, 2026-06-18):** breakout entries only (mean-reversion suspended); 15% max position (not 33%); factor alignment is a code-enforced hard gate (negative-own-momentum buys rejected in momentum regimes); winners exit on the trailing stop, no +15%/+25% fixed targets. The detailed mean-reversion and sizing guidance below is dormant reference during the experiment.
 
 ### Step 3: Apply Position Sizing Rules
 
 | Condition | Position Size |
 |-----------|--------------|
-| Normal market (VIX <20, SPY uptrend) | 15–33% of portfolio (conviction-weighted; 33% is the hard cap in `strategy.json`) |
+| Normal market (VIX <20, SPY uptrend) | up to 15% of portfolio (conviction-weighted; 15% is the experiment hard cap in `strategy.json`) |
 | Elevated volatility (VIX 20–30) | 10–20% of portfolio |
 | Portfolio down >12% from starting capital | Half normal size until recovery |
 | Max simultaneous positions | 10 (hard cap — enforced by code) |

@@ -6,15 +6,18 @@
 
 ## Current strategy snapshot
 
+> **⚠️ ACTIVE EXPERIMENT (B-momentum-discipline, 2026-06-18 → ~2026-09-12):** breakout-only entries, code-enforced factor gate, 15% max size, trailing-stop exits (no fixed profit targets). Kill criterion: retire unless it beats SPY net AND profit factor > 1.0 over 60 trading days. See `.handovers/2026-06-18-experiment-B.md`.
+
 - **Horizon:** 2–6 week holds (swing/position)
-- **Entry styles:** Breakout + Mean reversion
-- **Sell discipline:** Scale out
+- **Entry styles:** Breakout only (mean-reversion suspended for the experiment)
+- **Sell discipline:** Trailing stop (let winners run — no fixed profit target)
 - **Loss management:** Hybrid (time-based + price-based)
-- **Position sizing:** conviction-weighted, up to 33% of portfolio per position (hard cap in `strategy.json`)
+- **Position sizing:** conviction-weighted, up to 15% of portfolio per position (hard cap in `strategy.json`; reduced from 33% for the experiment)
 - **Cash floor:** 10% of total portfolio value (hard-enforced in code)
 - **Max positions:** 10 simultaneous (hard cap in `strategy.json`)
 - **Max sector exposure:** 40% of portfolio (code-enforced — buys that breach this cap are rejected in `recommender.py`)
-- **Stop loss:** -8% from entry
+- **Factor gate:** code-enforced — in a momentum-led regime, buys with negative own 20-day return are rejected (`recommender.py:check_factor_alignment`)
+- **Stop loss:** -8% from entry (catastrophe backstop)
 - **Time stop:** 30 calendar days flat/down with no fresh catalyst
 
 ## How the bot applies this

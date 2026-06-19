@@ -331,6 +331,49 @@ def check_sector_exposure(
     return True
 
 
+def check_factor_alignment(
+    candidate_20d_return: float | None,
+    factor_returns: dict,
+    config: dict,
+) -> tuple[bool, str | None]:
+    """Experiment gate (B-momentum-discipline, 2026-06-18): code-enforced
+    version of analyst_guidance hard rule #9.
+
+    In a momentum-led regime, block buys that lack their own positive momentum —
+    the falling-knife / mean-reversion entries that produced the ~$5.8k
+    energy/commodity loss bucket. Backtest finding: our discretionary entries
+    lose under every exit policy, so the lever is entry quality, not exits.
+
+    Momentum regime := a momentum factor (MTUM/SPMO/QQQ) leads SPY by
+    >= min_factor_lead_pts over the trailing 20 trading days. When that holds,
+    the candidate's own 20-day return must be >= min_candidate_mom_pct.
+
+    Returns (passed, reason). Missing factor/candidate data => pass: the
+    experiment targets discretion, and we don't fail-closed on a data gap here.
+    """
+    if not config.get("enabled", False):
+        return True, None
+    spy = (factor_returns.get("SPY") or {}).get("20d")
+    momentum_leaders = [
+        (factor_returns.get(f) or {}).get("20d") for f in ("MTUM", "SPMO", "QQQ")
+    ]
+    momentum_leaders = [x for x in momentum_leaders if x is not None]
+    if spy is None or not momentum_leaders:
+        return True, None
+    lead = max(momentum_leaders) - spy
+    if lead < float(config.get("min_factor_lead_pts", 3.0)):
+        return True, None  # no clear momentum regime — gate is inactive
+    if candidate_20d_return is None:
+        return True, None  # unknown own-momentum — don't block on missing data
+    floor = float(config.get("min_candidate_mom_pct", 0.0))
+    if candidate_20d_return < floor:
+        return False, (
+            f"momentum regime (factor lead {lead:.1f}pts) but candidate's own "
+            f"20d return {candidate_20d_return:.1f}% < {floor:.1f}% floor"
+        )
+    return True, None
+
+
 def _compute_portfolio_total_value(
     cash: Decimal, positions, price_data: dict
 ) -> Decimal:
@@ -1141,6 +1184,39 @@ async def generate_recommendations(
                 await send_telegram(
                     f"TRADEBOT // Sector gate: {symbol} BUY skipped — "
                     f"would breach {max_sector_pct:.0f}% {sector_label} cap"
+                )
+                continue
+
+            # Factor-alignment gate (experiment B-momentum-discipline) —
+            # code-enforced hard rule #9. In a momentum-led regime, reject buys
+            # with negative own-momentum: the falling-knife entries that made up
+            # the energy/commodity loss bucket. Prompt rule #9 was advisory and
+            # Claude overrode it repeatedly; this enforces it.
+            factor_cfg = strategy_json.get("factor_gate", {})
+            candidate_20d = (price_data.get(symbol) or {}).get("month_change_pct")
+            factor_passed, factor_reason = check_factor_alignment(
+                candidate_20d, factor_returns, factor_cfg
+            )
+            await record_gate_decision(
+                db,
+                use_caller_session=True,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="factor_alignment",
+                passed=factor_passed,
+                reason=factor_reason,
+                details={
+                    "candidate_20d_return": candidate_20d,
+                    "min_factor_lead_pts": factor_cfg.get("min_factor_lead_pts"),
+                    "min_candidate_mom_pct": factor_cfg.get("min_candidate_mom_pct"),
+                },
+            )
+            if not factor_passed:
+                logger.warning("Skipping %s buy — factor gate: %s", symbol, factor_reason)
+                await send_telegram(
+                    f"TRADEBOT // Factor gate: {symbol} BUY skipped — {factor_reason}"
                 )
                 continue
 

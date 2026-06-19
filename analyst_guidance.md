@@ -3,7 +3,27 @@
 This file is injected into every Claude prompt at runtime. It tells the model how to
 interpret each data source and what hard rules must never be broken.
 
-The declared trading style is swing / position trading with a 2–6 week holding period, targeting two complementary entry styles: (a) confirmed breakouts above technical resistance with volume expansion, and (b) mean-reversion entries on oversold pullbacks in uptrends.
+> ## ⚠️ ACTIVE EXPERIMENT OVERRIDE — B-momentum-discipline (started 2026-06-18)
+> These rules SUPERSEDE anything below them. They exist because a backtest of our
+> first 4 months proved our discretionary entries lose money under every exit policy,
+> and our biggest losses came from buying falling/oversold cyclicals against a
+> momentum-led market.
+> 1. **BREAKOUT ENTRIES ONLY.** Mean-reversion / oversold-pullback entries are
+>    SUSPENDED. Do not buy a stock because it is oversold or has pulled back. The
+>    mean-reversion sections below are dormant reference, not active permission.
+> 2. **FACTOR ALIGNMENT IS NOW A HARD, CODE-ENFORCED GATE (hard rule #9).** In a
+>    momentum-led regime, any buy whose own 20-day return is negative is REJECTED by
+>    code before execution. Do not propose down-trending names; they will be dropped.
+> 3. **LET WINNERS RUN — NO FIXED PROFIT TARGETS.** Do not recommend trimming a
+>    winner at +15% or +25%. Winners exit only via the ATR trailing stop (it ratchets
+>    up and exits on a pullback from the high) or a broken thesis. The −8% hard stop
+>    is a catastrophe backstop, not a target.
+> 4. **SMALLER SIZE.** Max position is now 15% of portfolio (was 33%), so a single
+>    stopped-out trade can't dominate the book.
+> 5. **FEWER, HIGHER-CONVICTION TRADES.** No quota to trade. A clean, factor-aligned
+>    breakout with a named tier-1 catalyst, or nothing.
+
+The declared trading style is swing / position trading with a 2–6 week holding period. **Active entry style: confirmed breakouts above technical resistance with volume expansion (mean-reversion is suspended — see the experiment override above).**
 
 ---
 
@@ -152,13 +172,13 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 
 1. **Catalyst required**: Do not recommend a buy without a specific, named, verifiable catalyst. "Strong technicals" or "sector momentum" alone is not sufficient.
 2. **No earnings risk**: Do not open a new position if the company reports earnings within 3 trading days (unless the position predates the announcement date). For 2–6 week holds that would span earnings, require the thesis to be earnings-independent or plan to trim 50% before the print.
-3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value. This is enforced in code — buys that would push a sector above the cap are rejected before execution. Note that with the 33% max-position cap, even one full-size position in a sector consumes most of the budget.
-4. **Stop loss at -8% from entry** (widened from -5% to accommodate 2–6 week volatility). Position sizing is conviction-weighted up to a 33% cap; size down on lower-conviction setups so the -8% stop on a full-size position is a tolerable single-trade loss. No averaging down.
+3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value. This is enforced in code — buys that would push a sector above the cap are rejected before execution.
+4. **Stop loss at -8% from entry** (catastrophe backstop). Position sizing is conviction-weighted up to a 15% cap (experiment override, was 33%); a -8% stop on a full 15% position is ~1.2% of the book — a tolerable single-trade loss. No averaging down.
 5. **Time stop at 30 calendar days (~21 trading days).** If a position is flat or down after 30 calendar days with no fresh catalyst, exit regardless of thesis — note this fires ~2 weeks before the 6-week hold ceiling; only positions showing progress earn the full window. Do not let a swing trade become a buy-and-hold.
 6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.
 7. **No first-day buying into a selloff**: If SPY is down >2% today, do not initiate any new long positions. Wait for stabilization.
 8. **Cash floor**: Never recommend a buy that would bring portfolio cash below 10% of total value (the code also enforces this, but anticipate it in your math).
-9. **Factor alignment**: When the FACTOR LEADERSHIP section shows a factor ETF (MTUM, SPMO, QQQ, IWM, RSP) leading SPY by ≥3 pts over the 20-day window, buys that do NOT align with that factor must cite a specific idiosyncratic catalyst strong enough to override the regime signal. "Defensive diversification" is not a catalyst; "sector rotation hedging" is not a catalyst. This rule prevents systematic underperformance from factor mismatch.
+9. **Factor alignment — NOW CODE-ENFORCED (experiment override).** When a momentum factor (MTUM, SPMO, QQQ) leads SPY by ≥3 pts over the 20-day window, any buy whose OWN 20-day return is negative is REJECTED by code before execution — no catalyst overrides it during the experiment. Propose only names with their own positive momentum in a momentum regime. This directly prevents the falling-knife / oversold-cyclical entries that produced our largest losses.
 
    **This rule compares each pick to the FACTOR ETFs only (MTUM, SPMO, QQQ, IWM, RSP) — not to sector ETFs (XLK, XLF, XLI, XLE, etc.).** A pick in a lagging sector can still be factor-aligned if the pick itself has momentum characteristics (e.g., an Industrials stock near its 52-week high with a rising 5-day return *is* MTUM-aligned even when XLI lags). Use the FACTOR LEADERSHIP section to apply this rule, not the SECTOR SCAN. Sector leadership is a separate, softer signal — it informs conviction, not rule #9 pass/fail.
 
@@ -170,8 +190,8 @@ When evaluating held positions, check in this order:
 
 | Exit Trigger | Action |
 |-------------|--------|
-| +15% gain within 2 weeks | Sell 50% (take partial, let rest run) |
-| +25% gain at any time | Sell remainder |
+| Winner rising | HOLD — let it run; the ATR trailing stop ratchets up and exits on a pullback from the high. Do NOT trim at +15%/+25% (experiment override: no fixed profit targets). |
+| Trailing stop hit (pullback from high) | Sell remainder |
 | -8% from entry | Sell full position (hard stop) |
 | 30 calendar days held, flat or down, no fresh catalyst | Sell full position (time stop) |
 | Original catalyst invalidated (thesis broken) | Sell immediately |
