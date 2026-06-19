@@ -30,6 +30,10 @@ services:
       - ./logs:/app/logs
       - ./strategy.json:/app/strategy.json
       - ./analyst_guidance.md:/app/analyst_guidance.md
+      # Read-only scripts so operational tools (backtest, experiment eval) are
+      # runnable via `docker compose exec` without a rebuild. Read-only — the
+      # container runs them, it doesn't edit them.
+      - ./scripts:/app/scripts:ro
       # Read-only .git so the /guidance panel can render edit history.
       # Read-only on purpose — container must not be able to commit.
       - ./.git:/app/.git:ro
