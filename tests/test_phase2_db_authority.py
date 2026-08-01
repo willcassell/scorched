@@ -14,12 +14,14 @@ rec the file pipeline dropped.
 """
 from __future__ import annotations
 
+import json
 from datetime import date
 from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import cron.tradebot_phase2 as tradebot_phase2
 from cron.tradebot_phase2 import gate_blocked_keys, merge_pending
 from scorched.api.deps import require_owner_pin
 from scorched.database import get_db
@@ -158,8 +160,7 @@ def _override_db(db_session):
     app.dependency_overrides.clear()
 
 
-@pytest.mark.asyncio
-async def test_get_recommendations_nests_recs_with_status(db_session, _override_db):
+async def _seed_one_amzn_session(db_session):
     session = RecommendationSession(session_date=date(2026, 7, 31))
     db_session.add(session)
     await db_session.flush()
@@ -170,8 +171,18 @@ async def test_get_recommendations_nests_recs_with_status(db_session, _override_
     ))
     await db_session.commit()
 
+
+@pytest.mark.asyncio
+async def test_get_recommendations_include_recs_nests_status(db_session, _override_db):
+    """include_recs=true (what Phase 2's DB rescue passes) nests full
+    recommendation detail with status."""
+    await _seed_one_amzn_session(db_session)
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.get("/api/v1/recommendations", params={"session_date": "2026-07-31", "limit": 1})
+        r = await ac.get(
+            "/api/v1/recommendations",
+            params={"session_date": "2026-07-31", "limit": 1, "include_recs": "true"},
+        )
 
     assert r.status_code == 200
     body = r.json()
@@ -180,3 +191,215 @@ async def test_get_recommendations_nests_recs_with_status(db_session, _override_
     assert len(recs) == 1
     assert recs[0]["symbol"] == "AMZN"
     assert recs[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_get_recommendations_default_omits_recs_payload(db_session, _override_db):
+    """Default (no include_recs): dashboard.html and analysis.html only ever
+    read `.id`/`.session_date` off this list endpoint and fetch full detail
+    separately via GET /{session_id} — nesting full reasoning/key_risks text
+    here by default would be pure unused payload bloat for every list/nav
+    call they make (dashboard.html up to limit=5, analysis.html limit=30)."""
+    await _seed_one_amzn_session(db_session)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        r = await ac.get("/api/v1/recommendations", params={"session_date": "2026-07-31", "limit": 1})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["recommendations"] == []
+    assert body[0]["recommendation_count"] == 1  # count is still accurate even though detail is omitted
+
+
+# ── main() integration: DB-only rescue when the Phase 1 file is unusable ──
+#
+# Phase 1 persists recs to the DB via the API BEFORE the cron writes the
+# JSON file. A crash between those two steps — or a stale/incomplete file
+# left over from a prior run — used to just skip Phase 2 entirely, dropping
+# any DB-pending recs on the floor. These tests drive `main()` end-to-end
+# (with http_get/http_post/send_telegram/check_expected_hour faked out) to
+# confirm the DB-only rescue path fires instead.
+
+def _make_http_get(rules):
+    """rules: list of (substring, response-or-callable) checked in order."""
+    def _get(path, timeout=60):
+        for needle, resp in rules:
+            if needle in path:
+                return resp() if callable(resp) else resp
+        raise AssertionError(f"unexpected http_get path: {path}")
+    return _get
+
+
+def _make_http_post(rules):
+    def _post(path, payload, timeout=60):
+        for needle, resp in rules:
+            if needle in path:
+                return resp() if callable(resp) else resp
+        raise AssertionError(f"unexpected http_post path: {path}")
+    return _post
+
+
+@pytest.fixture
+def _phase2_env(tmp_path, monkeypatch):
+    """Point Phase 2's file paths at an empty tmp dir and stub out
+    check_expected_hour/send_telegram so main() can run without a real
+    cron environment or network access. Returns the list send_telegram
+    messages are appended to."""
+    monkeypatch.setattr(tradebot_phase2, "GATED_FILE", str(tmp_path / "gated.json"))
+    monkeypatch.setattr(tradebot_phase2, "ORIGINAL_FILE", str(tmp_path / "original.json"))
+    monkeypatch.setattr(tradebot_phase2, "check_expected_hour", lambda *a, **k: None)
+
+    sent = []
+    monkeypatch.setattr(tradebot_phase2, "send_telegram", lambda msg: sent.append(msg))
+    return sent
+
+
+def _db_session_response(recs):
+    """Shape of GET /api/v1/recommendations?session_date=...&limit=1."""
+    return [{"id": 1, "session_date": "2026-01-01", "recommendation_count": len(recs),
+             "created_at": "2026-01-01T00:00:00", "recommendations": recs}]
+
+
+def test_missing_file_with_db_pending_executes_with_warning(_phase2_env, monkeypatch):
+    """No Phase 1/1.5 file at all, but the DB has a pending buy for today's
+    session (Phase 1's API call persisted it before the cron process died
+    before writing the JSON). Phase 2 must rescue and execute it, loudly."""
+    sent = _phase2_env
+    db_recs = [{"id": 42, "symbol": "AMZN", "action": "buy", "status": "pending",
+                "suggested_price": "230.00", "quantity": "10"}]
+
+    get_rules = [
+        ("recommendations?session_date=", _db_session_response(db_recs)),
+        ("broker/status", {"broker_mode": "paper"}),
+        ("current-prices", {"current_prices": {"AMZN": 235.0}}),
+        ("opening-prices", {"opening_prices": {"AMZN": 233.0}}),
+        ("/api/v1/portfolio", {"total_value": 100000.0, "all_time_return_pct": 1.2,
+                                "cash_balance": 5000.0, "positions": []}),
+    ]
+    post_rules = [
+        ("trades/confirm", {"trade_id": 555, "execution_price": "235.70", "realized_gain": None}),
+    ]
+    monkeypatch.setattr(tradebot_phase2, "http_get", _make_http_get(get_rules))
+    monkeypatch.setattr(tradebot_phase2, "http_post", _make_http_post(post_rules))
+
+    tradebot_phase2.main()
+
+    assert any("no usable Phase 1 file" in m and "no Phase 1 data found" in m for m in sent)
+    assert any("executing 1 DB-pending recs directly" in m for m in sent)
+    final = sent[-1]
+    assert "PHASE 2 FILE/DB MISMATCH" in final
+    assert "buy AMZN" in final
+    assert "ungated" in final
+    assert "AMZN" in final and "Trades Executed" in final
+
+
+def test_missing_file_with_no_db_pending_is_clean_skip(_phase2_env, monkeypatch):
+    """No file, no DB-pending recs either — this is a genuinely quiet day,
+    not a dropped trade. Must fall back to the original skip message, and
+    must never attempt to execute anything."""
+    sent = _phase2_env
+
+    def _no_post(path, payload, timeout=60):
+        raise AssertionError(f"http_post should not be called on a clean skip: {path}")
+
+    monkeypatch.setattr(tradebot_phase2, "http_get", _make_http_get([
+        ("recommendations?session_date=", _db_session_response([])),
+    ]))
+    monkeypatch.setattr(tradebot_phase2, "http_post", _no_post)
+
+    tradebot_phase2.main()
+
+    assert len(sent) == 1
+    assert "Phase 2 skipped: no Phase 1 data found." in sent[0]
+    assert "⚠️" not in sent[0]  # no rescue/mismatch warning markers on a genuinely quiet day
+
+
+def test_date_mismatch_with_db_pending_executes_with_warning(_phase2_env, monkeypatch, tmp_path):
+    """A stale ORIGINAL_FILE (from a prior session) is on disk, but the DB
+    has a pending buy for today. The stale file must not block the rescue."""
+    sent = _phase2_env
+    stale_file = tmp_path / "original.json"
+    stale_file.write_text(json.dumps({
+        "date": "2020-01-01", "status": "complete", "recommendations": [], "symbols": [],
+    }))
+    monkeypatch.setattr(tradebot_phase2, "ORIGINAL_FILE", str(stale_file))
+
+    db_recs = [{"id": 43, "symbol": "GS", "action": "buy", "status": "pending",
+                "suggested_price": "1090.00", "quantity": "9"}]
+    get_rules = [
+        ("recommendations?session_date=", _db_session_response(db_recs)),
+        ("broker/status", {"broker_mode": "paper"}),
+        ("current-prices", {"current_prices": {"GS": 1095.0}}),
+        ("opening-prices", {"opening_prices": {"GS": 1092.0}}),
+        ("/api/v1/portfolio", {"total_value": 100000.0, "all_time_return_pct": 1.2,
+                                "cash_balance": 5000.0, "positions": []}),
+    ]
+    post_rules = [
+        ("trades/confirm", {"trade_id": 556, "execution_price": "1096.20", "realized_gain": None}),
+    ]
+    monkeypatch.setattr(tradebot_phase2, "http_get", _make_http_get(get_rules))
+    monkeypatch.setattr(tradebot_phase2, "http_post", _make_http_post(post_rules))
+
+    tradebot_phase2.main()
+
+    assert any("no usable Phase 1 file" in m and "not today" in m for m in sent)
+    assert any("executing 1 DB-pending recs directly" in m for m in sent)
+    final = sent[-1]
+    assert "PHASE 2 FILE/DB MISMATCH" in final
+    assert "buy GS" in final
+    # Stale file must be cleaned up, not left to confuse tomorrow's run.
+    assert not stale_file.exists()
+
+
+def test_fail_closed_merge_skip_alerts_via_telegram(_phase2_env, monkeypatch, tmp_path):
+    """GATED_FILE exists (circuit breaker ran) but ORIGINAL_FILE (needed to
+    diff out circuit-breaker-blocked buys) is missing. The DB-authority
+    merge must fail closed (skip, don't guess) AND alert — silently
+    executing file-only recs with no explanation is exactly the kind of
+    degraded-mode-nobody-notices bug this task is about."""
+    sent = _phase2_env
+    gated_file = tmp_path / "gated.json"
+    gated_file.write_text(json.dumps({
+        "date": tradebot_phase2.now_et()[1],
+        "status": "complete",
+        "recommendations": [{"id": 1, "symbol": "AAPL", "action": "buy",
+                              "status": "pending", "suggested_price": "200.00", "quantity": "5"}],
+        "symbols": ["AAPL"],
+    }))
+    monkeypatch.setattr(tradebot_phase2, "GATED_FILE", str(gated_file))
+    # ORIGINAL_FILE left pointing at the (nonexistent) tmp_path default from
+    # _phase2_env — i.e. genuinely missing.
+
+    get_rules = [
+        ("broker/status", {"broker_mode": "paper"}),
+        ("current-prices", {"current_prices": {"AAPL": 201.0}}),
+        ("opening-prices", {"opening_prices": {"AAPL": 200.5}}),
+        ("/api/v1/portfolio", {"total_value": 100000.0, "all_time_return_pct": 1.2,
+                                "cash_balance": 5000.0, "positions": []}),
+    ]
+    post_rules = [
+        ("trades/confirm", {"trade_id": 999, "execution_price": "201.60", "realized_gain": None}),
+    ]
+
+    def _get_no_db_recs_call(path, timeout=60):
+        assert "recommendations?session_date=" not in path, (
+            "fail-closed skip must not fetch DB-pending recs at all"
+        )
+        return _make_http_get(get_rules)(path, timeout)
+
+    monkeypatch.setattr(tradebot_phase2, "http_get", _get_no_db_recs_call)
+    monkeypatch.setattr(tradebot_phase2, "http_post", _make_http_post(post_rules))
+
+    tradebot_phase2.main()
+
+    assert any(
+        "DB-authority merge SKIPPED" in m and "original (pre-gate) file missing" in m
+        and "will not be rescued today" in m
+        for m in sent
+    )
+    # Execution still proceeds with the file's own rec — fail-closed means
+    # "don't guess about the merge," not "abort the whole session."
+    final = sent[-1]
+    assert "AAPL" in final and "Trades Executed" in final
+    assert "PHASE 2 FILE/DB MISMATCH" not in final  # nothing was merged in

@@ -27,6 +27,17 @@ async def generate_recommendations(
 async def list_sessions(
     session_date: date | None = Query(None),
     limit: int = Query(10, ge=1, le=100),
+    include_recs: bool = Query(
+        False,
+        description=(
+            "Nest full recommendation detail (id/symbol/action/status/suggested_price/"
+            "reasoning/key_risks) per session. Off by default — the dashboard and analysis "
+            "pages only ever read `.id`/`.session_date` off the list response and fetch full "
+            "detail separately via GET /{session_id}; nesting it here for them would just be "
+            "unused payload bloat. Phase 2's DB-authority rescue needs it, so it passes "
+            "include_recs=true explicitly."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     from decimal import Decimal
@@ -39,21 +50,25 @@ async def list_sessions(
             session_date=r.session_date,
             recommendation_count=len(r.recommendations),
             created_at=r.created_at,
-            recommendations=[
-                RecommendationItem(
-                    id=rec.id,
-                    symbol=rec.symbol,
-                    action=rec.action,
-                    suggested_price=rec.suggested_price,
-                    quantity=rec.quantity,
-                    estimated_cost=(rec.suggested_price * rec.quantity).quantize(Decimal("0.01")),
-                    reasoning=rec.reasoning,
-                    confidence=rec.confidence,
-                    key_risks=rec.key_risks,
-                    status=rec.status,
-                )
-                for rec in r.recommendations
-            ],
+            recommendations=(
+                [
+                    RecommendationItem(
+                        id=rec.id,
+                        symbol=rec.symbol,
+                        action=rec.action,
+                        suggested_price=rec.suggested_price,
+                        quantity=rec.quantity,
+                        estimated_cost=(rec.suggested_price * rec.quantity).quantize(Decimal("0.01")),
+                        reasoning=rec.reasoning,
+                        confidence=rec.confidence,
+                        key_risks=rec.key_risks,
+                        status=rec.status,
+                    )
+                    for rec in r.recommendations
+                ]
+                if include_recs
+                else []
+            ),
         )
         for r in rows
     ]

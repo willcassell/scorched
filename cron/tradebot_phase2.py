@@ -30,18 +30,42 @@ GATED_FILE = str(LOGS_DIR / "tradebot_recommendations_gated.json")
 ORIGINAL_FILE = str(LOGS_DIR / "tradebot_recommendations.json")
 
 
-def _cleanup_recs_file(path):
+def _cleanup_recs_file(path=None):
     """Remove the recommendations file, ignoring if already gone.
 
     Also clears the *other* file (gated vs original) — Phase 2 only reads
     the preferred one, so the unused sibling can sit around as a stale
-    leftover that confuses the next session's date-mismatch check.
+    leftover that confuses the next session's date-mismatch check. `path`
+    is optional: the DB-only rescue path has no file at all, so callers may
+    pass None and just get the fixed GATED_FILE/ORIGINAL_FILE cleanup.
     """
-    for p in (path, GATED_FILE, ORIGINAL_FILE):
+    paths = {GATED_FILE, ORIGINAL_FILE}
+    if path:
+        paths.add(path)
+    for p in paths:
         try:
             os.remove(p)
         except FileNotFoundError:
             pass
+
+
+def fetch_db_pending_recs(today_str: str, http_get_fn) -> list[dict]:
+    """Fetch today's session recs from the DB and filter to status=='pending'.
+
+    Pure-ish helper (only side effect is the injected http_get call) so it's
+    reusable by both the DB-authority merge and the DB-only rescue path
+    below. Returns [] on any fetch failure — callers treat that as "nothing
+    to rescue", never as a reason to block.
+    """
+    try:
+        db_sessions = http_get_fn(
+            f"/api/v1/recommendations?session_date={today_str}&limit=1&include_recs=true"
+        )
+        db_recs = db_sessions[0]["recommendations"] if db_sessions else []
+    except Exception as e:
+        print(f"DB-pending fetch failed: {e}")
+        return []
+    return [r for r in db_recs if r.get("status") == "pending"]
 
 
 def merge_pending(file_recs: list[dict], db_recs: list[dict]) -> tuple[list[dict], list[str]]:
@@ -87,83 +111,100 @@ def main():
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 2: confirming trades for {today_str}")
 
     # Prefer gated file (Phase 1.5 output); fall back to original (circuit breaker disabled/not run)
+    recs_file = None
+    stored = None
+    no_file_reason = None
     if os.path.exists(GATED_FILE):
         recs_file = GATED_FILE
     elif os.path.exists(ORIGINAL_FILE):
         recs_file = ORIGINAL_FILE
     else:
-        send_telegram(f"TRADEBOT // {today_str} - Phase 2 skipped: no Phase 1 data found.")
-        print("No recommendations file found.")
-        return
+        no_file_reason = "no Phase 1 data found"
 
-    with open(recs_file) as f:
-        stored = json.load(f)
+    if recs_file is not None:
+        with open(recs_file) as f:
+            stored = json.load(f)
+        if stored["date"] != today_str:
+            no_file_reason = f"recommendations are for {stored['date']}, not today"
+        elif stored.get("status") != "complete":
+            no_file_reason = f"Phase 1 did not complete successfully (status={stored.get('status')})"
 
-    if stored["date"] != today_str:
-        send_telegram(
-            f"TRADEBOT // {today_str} - Phase 2 skipped: "
-            f"recommendations are for {stored['date']}, not today."
-        )
-        _cleanup_recs_file(recs_file)
-        print(f"Date mismatch: {stored['date']} != {today_str}")
-        return
-
-    if stored.get("status") != "complete":
-        send_telegram(
-            f"TRADEBOT // {today_str} - Phase 2 skipped: "
-            f"Phase 1 did not complete successfully (status={stored.get('status')})"
-        )
-        _cleanup_recs_file(recs_file)
-        print(f"Phase 1 incomplete: status={stored.get('status')}")
-        return
-
-    recs = stored["recommendations"]
-
-    # DB is the source of truth: union file recs with today's DB-pending recs
-    # so a rec that survived risk review but never made it into the Phase
-    # 1/1.5 file (pipeline bug, crash, etc.) still gets a confirm attempt
-    # instead of silently expiring (see ABBV 6/23, GS 7/14, AMZN 7/31).
-    # Circuit-breaker-blocked buys are excluded via gate_blocked_keys — they
-    # were deliberately rejected at 9:55, not lost by the plumbing, and
-    # Phase 1.5 never updates their DB status so they'd otherwise look
-    # identical to a dropped rec.
     mismatch_warning = ""
-    blocked_keys: set[tuple[str, str]] = set()
-    db_merge_skip_reason = ""
-    if recs_file == GATED_FILE:
-        try:
-            with open(ORIGINAL_FILE) as f:
-                original_stored = json.load(f)
-            if original_stored.get("date") == today_str:
-                blocked_keys = gate_blocked_keys(original_stored.get("recommendations", []), recs)
-            else:
-                db_merge_skip_reason = "original (pre-gate) file date mismatch"
-        except FileNotFoundError:
-            db_merge_skip_reason = "original (pre-gate) file missing"
-        except Exception as e:
-            db_merge_skip_reason = f"original (pre-gate) file unreadable ({e})"
 
-    if db_merge_skip_reason:
-        # Fail closed: without the original file we can't tell a
-        # circuit-breaker rejection from a plumbing drop, so skip the DB
-        # merge entirely rather than risk resurrecting a blocked buy ungated.
-        print(f"DB-pending merge skipped (fail-closed): {db_merge_skip_reason}")
+    if no_file_reason is not None:
+        # The Phase 1/1.5 file is missing, stale, or incomplete. Phase 1
+        # persists recs to the DB via the API BEFORE the cron writes the
+        # file, so a crash between those two steps (or a corrupt/stale
+        # file) is exactly the dropped-trade class this task exists to
+        # close. Check today's DB session for pending recs before giving up
+        # — there is no gated file to diff here, so nothing to exclude via
+        # gate_blocked_keys (blocked_keys is correctly empty: no circuit
+        # breaker ran against a file that was never usable).
+        rescue_recs = fetch_db_pending_recs(today_str, http_get)
+        if not rescue_recs:
+            send_telegram(f"TRADEBOT // {today_str} - Phase 2 skipped: {no_file_reason}.")
+            print(f"Phase 2 skipped, no DB rescue available: {no_file_reason}")
+            _cleanup_recs_file(recs_file)
+            return
+
+        send_telegram(
+            f"⚠️ PHASE 2: no usable Phase 1 file ({no_file_reason}) — "
+            f"executing {len(rescue_recs)} DB-pending recs directly"
+        )
+        print(f"DB-only rescue ({no_file_reason}): executing {len(rescue_recs)} DB-pending rec(s)")
+        recs = rescue_recs
+        mismatch_warning = (
+            "⚠️ PHASE 2 FILE/DB MISMATCH — executing from DB: "
+            + ", ".join(f"{r['action']} {r['symbol']}" for r in rescue_recs)
+            + f" ({no_file_reason}; ungated — no circuit-breaker check)\n\n"
+        )
+        _cleanup_recs_file(recs_file)
+        recs_file = None  # nothing left on disk to clean up again later
     else:
-        try:
-            db_sessions = http_get(f"/api/v1/recommendations?session_date={today_str}&limit=1")
-            db_recs = db_sessions[0]["recommendations"] if db_sessions else []
-        except Exception as e:
-            print(f"DB-pending fetch failed (continuing with file recs only): {e}")
-            db_recs = []
+        recs = stored["recommendations"]
 
-        db_recs = [r for r in db_recs if (r["symbol"], r["action"]) not in blocked_keys]
-        recs, missing = merge_pending(recs, db_recs)
-        if missing:
-            mismatch_warning = (
-                "⚠️ PHASE 2 FILE/DB MISMATCH — executing from DB: " + ", ".join(missing) +
-                " (DB-pending, missing from Phase 1/1.5 file; ungated — no circuit-breaker check)\n\n"
+        # DB is the source of truth: union file recs with today's DB-pending recs
+        # so a rec that survived risk review but never made it into the Phase
+        # 1/1.5 file (pipeline bug, crash, etc.) still gets a confirm attempt
+        # instead of silently expiring (see ABBV 6/23, GS 7/14, AMZN 7/31).
+        # Circuit-breaker-blocked buys are excluded via gate_blocked_keys — they
+        # were deliberately rejected at 9:55, not lost by the plumbing, and
+        # Phase 1.5 never updates their DB status so they'd otherwise look
+        # identical to a dropped rec.
+        blocked_keys: set[tuple[str, str]] = set()
+        db_merge_skip_reason = ""
+        if recs_file == GATED_FILE:
+            try:
+                with open(ORIGINAL_FILE) as f:
+                    original_stored = json.load(f)
+                if original_stored.get("date") == today_str:
+                    blocked_keys = gate_blocked_keys(original_stored.get("recommendations", []), recs)
+                else:
+                    db_merge_skip_reason = "original (pre-gate) file date mismatch"
+            except FileNotFoundError:
+                db_merge_skip_reason = "original (pre-gate) file missing"
+            except Exception as e:
+                db_merge_skip_reason = f"original (pre-gate) file unreadable ({e})"
+
+        if db_merge_skip_reason:
+            # Fail closed: without the original file we can't tell a
+            # circuit-breaker rejection from a plumbing drop, so skip the DB
+            # merge entirely rather than risk resurrecting a blocked buy ungated.
+            print(f"DB-pending merge skipped (fail-closed): {db_merge_skip_reason}")
+            send_telegram(
+                f"⚠️ PHASE 2: DB-authority merge SKIPPED ({db_merge_skip_reason}) — "
+                f"DB-pending recs will not be rescued today."
             )
-            print(f"DB/file mismatch: {missing}")
+        else:
+            db_recs = fetch_db_pending_recs(today_str, http_get)
+            db_recs = [r for r in db_recs if (r["symbol"], r["action"]) not in blocked_keys]
+            recs, missing = merge_pending(recs, db_recs)
+            if missing:
+                mismatch_warning = (
+                    "⚠️ PHASE 2 FILE/DB MISMATCH — executing from DB: " + ", ".join(missing) +
+                    " (DB-pending, missing from Phase 1/1.5 file; ungated — no circuit-breaker check)\n\n"
+                )
+                print(f"DB/file mismatch: {missing}")
 
     symbols = sorted({r["symbol"] for r in recs})
     pending = recs
