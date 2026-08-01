@@ -99,6 +99,14 @@ _PROVENANCE_MAP: dict[int, str] = {
     7: "prompt-only",  # circuit_breaker is a different (open-gap) check
     8: "both",         # recommender enforces cash floor pre-execution
     9: "both",         # recommender.check_factor_alignment() also enforces (Task 5)
+    # 10 is advisory-but-loud, not a blocking gate: code computes the verdict
+    # and writes a gate_decisions row every session (assess_exposure, Task 8),
+    # but nothing rejects a trade — only Claude reading the prompt can act on
+    # it. That's neither "prompt-only" (there IS a code-derived signal behind
+    # it) nor "both" (no code enforcement blocks anything), so it gets its own
+    # badge value. The dashboard CSS (static/guidance.html) has a matching
+    # data-prov="prompt+telemetry" rule; update both together if this changes.
+    10: "prompt+telemetry",
 }
 
 

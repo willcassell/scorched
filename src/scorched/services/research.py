@@ -1173,6 +1173,48 @@ def _format_factor_leadership(factor_returns: dict[str, dict[str, float]] | None
     return lines
 
 
+def _format_exposure_status(exposure_status: dict | None) -> list[str]:
+    """Render the EXPOSURE STATUS section. Returns lines (may be empty).
+
+    Advisory-but-loud: code cannot force good buys, so an underinvested
+    verdict is surfaced here (ahead of any per-stock data) plus a pointer to
+    analyst_guidance.md hard rule #10, which Claude must answer to. The
+    ceiling (`overinvested`) is informational only — it's already enforced
+    by the position/cash/holdings/sector gates.
+    """
+    if not exposure_status:
+        return []
+
+    status = exposure_status.get("status")
+    invested_pct = exposure_status.get("invested_pct")
+    target_min = exposure_status.get("target_min")
+    target_max = exposure_status.get("target_max")
+    if status is None or invested_pct is None or target_min is None or target_max is None:
+        return []
+
+    lines = ["=== EXPOSURE STATUS ==="]
+    lines.append(
+        f"EXPOSURE STATUS: {invested_pct:.1f}% invested (target {target_min:.0f}-"
+        f"{target_max:.0f}% when SPY > 20d MA and drawdown gate clear)."
+    )
+    status_lines = {
+        "underinvested": "STATUS: UNDERINVESTED — hard rule #10 applies.",
+        "defensive_ok": (
+            "STATUS: DEFENSIVE_OK — below target floor, but SPY is below its "
+            "20d MA or the drawdown gate is active. Reduced exposure is "
+            "appropriate; hard rule #10 does not apply."
+        ),
+        "in_range": "STATUS: IN_RANGE.",
+        "overinvested": (
+            "STATUS: OVERINVESTED — above target ceiling. Existing position/"
+            "cash/sector gates already bound this; no new action required."
+        ),
+    }
+    lines.append(status_lines.get(status, f"STATUS: {str(status).upper()}."))
+    lines.append("")
+    return lines
+
+
 def _format_portfolio_risk(portfolio_risk) -> list[str]:
     """Render the PORTFOLIO RISK section. Returns lines (may be empty).
 
@@ -1310,6 +1352,7 @@ def build_research_context(
     portfolio_risk=None,
     failed_exits: list[dict] | None = None,
     mean_reversion_symbols: list[str] | None = None,
+    exposure_status: dict | None = None,
 ) -> str:
     # Pre-filter: score all symbols, keep top N + held positions.
     # Mean-reversion picks score LOW on _score_symbol (it rewards up-momentum
@@ -1338,6 +1381,11 @@ def build_research_context(
     )
 
     lines = []
+
+    # Exposure status — emitted first, ahead of every other section (including
+    # failed exits), so an underinvested verdict is the very first thing
+    # Claude reads. Advisory-but-loud: see analyst_guidance.md hard rule #10.
+    lines.extend(_format_exposure_status(exposure_status))
 
     # Failed-exit retry signal — emitted BEFORE everything else so Claude
     # cannot miss it. Without this section Phase 1 has no memory of yesterday's
@@ -1659,7 +1707,11 @@ _FACTOR_ETFS = ["SPY", "QQQ", "MTUM", "SPMO", "RSP", "IWM"]
 def _fetch_factor_returns_sync(tracker=None) -> dict[str, dict[str, float]]:
     """Fetch 5-day and 20-day returns for factor/benchmark ETFs using Alpaca bars.
 
-    Returns {etf: {"5d": pct, "20d": pct}}. Missing ETFs are omitted.
+    Returns {etf: {"5d": pct, "20d": pct}}, plus for SPY only:
+    {"ma20": float, "above_20dma": bool} — SPY's close vs the mean of its
+    trailing 20 closes (same bars already fetched here; no extra API call).
+    Used by the exposure-management regime check (Task 8) instead of a
+    separate SPY-vs-MA fetch. Missing ETFs are omitted.
     """
     from .alpaca_data import fetch_bars_sync
 
@@ -1677,6 +1729,11 @@ def _fetch_factor_returns_sync(tracker=None) -> dict[str, dict[str, float]]:
                 entry["5d"] = round((current - bars[-6]["close"]) / bars[-6]["close"] * 100, 2)
             if len(bars) >= 21:
                 entry["20d"] = round((current - bars[-21]["close"]) / bars[-21]["close"] * 100, 2)
+            if etf == "SPY" and len(bars) >= 20:
+                last_20_closes = [b["close"] for b in bars[-20:]]
+                ma20 = sum(last_20_closes) / len(last_20_closes)
+                entry["ma20"] = round(ma20, 2)
+                entry["above_20dma"] = current > ma20
             if entry:
                 result[etf] = entry
     except Exception:

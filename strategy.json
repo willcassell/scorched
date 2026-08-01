@@ -66,6 +66,11 @@
     "enabled": true,
     "max_drawdown_pct": 8.0
   },
+  "exposure": {
+    "target_min_invested_pct": 60,
+    "target_max_invested_pct": 90,
+    "regime_condition": "spy_above_20dma_and_no_drawdown_gate"
+  },
   "trailing_stop": {
     "atr_multiplier": 2.0,
     "floor_pct": 5.0

@@ -417,6 +417,49 @@ def resolve_candidate_20d_momentum(symbol: str, price_row: dict | None) -> float
     return None
 
 
+def assess_exposure(
+    invested_pct: float,
+    spy_above_20dma: bool,
+    drawdown_gate_active: bool,
+    cfg: dict,
+) -> dict:
+    """Exposure-management advisory target (Task 8).
+
+    Code cannot force good buys, so the floor is advisory-but-loud: this
+    verdict feeds a context section + analyst_guidance.md hard rule #10 that
+    Claude must answer to, plus a `gate_decisions` telemetry row every
+    session for auditability. The ceiling stays enforced by the existing
+    position/cash/holdings/sector gates — `overinvested` here is
+    informational, not a new block.
+
+    Regime condition (`spy_above_20dma_and_no_drawdown_gate`): being below
+    the target floor is only flagged `underinvested` when the regime is
+    healthy (SPY above its 20-day MA AND the drawdown gate is clear). If
+    either condition fails, low exposure is appropriate defensive behavior,
+    not a shortfall — status is `defensive_ok`.
+
+    Returns {"status": "underinvested"|"in_range"|"overinvested"|"defensive_ok",
+             "invested_pct": float, "target_min": float, "target_max": float}.
+    """
+    target_min = float(cfg.get("target_min_invested_pct", 60))
+    target_max = float(cfg.get("target_max_invested_pct", 90))
+    regime_healthy = spy_above_20dma and not drawdown_gate_active
+
+    if invested_pct > target_max:
+        status = "overinvested"
+    elif invested_pct < target_min:
+        status = "underinvested" if regime_healthy else "defensive_ok"
+    else:
+        status = "in_range"
+
+    return {
+        "status": status,
+        "invested_pct": invested_pct,
+        "target_min": target_min,
+        "target_max": target_max,
+    }
+
+
 def _compute_portfolio_total_value(
     cash: Decimal, positions, price_data: dict
 ) -> Decimal:
@@ -629,6 +672,33 @@ async def generate_recommendations(
             drawdown_result.current_drawdown_pct, drawdown_result.threshold_pct,
         )
 
+    # ── Exposure management (Task 8: advisory target + telemetry) ──────────
+    # Code cannot force good buys, so the floor is advisory-but-loud: a
+    # context section + analyst_guidance.md hard rule #10 Claude must answer
+    # to. The ceiling stays enforced by the existing position/cash/holdings/
+    # sector gates — this never blocks a trade itself.
+    exposure_cfg = strategy_json.get("exposure", {
+        "target_min_invested_pct": 60,
+        "target_max_invested_pct": 90,
+        "regime_condition": "spy_above_20dma_and_no_drawdown_gate",
+    })
+    total_value = portfolio_dict["total_value"]
+    invested_pct = (
+        (total_value - portfolio_dict["cash_balance"]) / total_value * 100
+        if total_value else 0.0
+    )
+    # SPY vs its 20-day MA is derived from the same Alpaca bars already
+    # fetched for factor_returns (close vs mean of last 20 closes) — no new
+    # external API call. See _fetch_factor_returns_sync in research.py.
+    spy_above_20dma = bool((factor_returns.get("SPY") or {}).get("above_20dma", False))
+    exposure_status = assess_exposure(invested_pct, spy_above_20dma, drawdown_blocked, exposure_cfg)
+    logger.info(
+        "Exposure check: %.1f%% invested (target %.0f-%.0f%%), spy_above_20dma=%s, "
+        "drawdown_gate_active=%s -> %s",
+        invested_pct, exposure_status["target_min"], exposure_status["target_max"],
+        spy_above_20dma, drawdown_blocked, exposure_status["status"],
+    )
+
     # Twelvedata RSI and economic calendar — from Phase 0 cache (or None on inline fallback)
     twelvedata_rsi = cache.get("twelvedata_rsi") if cache else None
     economic_calendar_context = cache.get("economic_calendar_context") if cache else None
@@ -717,6 +787,7 @@ async def generate_recommendations(
         portfolio_risk=portfolio_risk,
         failed_exits=failed_exits,
         mean_reversion_symbols=mean_reversion_symbols,
+        exposure_status=exposure_status,
     )
 
     # Persist session row early so we have an ID for token_usage FK
@@ -726,6 +797,29 @@ async def generate_recommendations(
     )
     db.add(session_row)
     await db.flush()
+
+    # Exposure-check telemetry row — every session, regardless of verdict, so
+    # operators can audit "underinvested while regime healthy" days without
+    # parsing logs. use_caller_session=True: session_id references session_row,
+    # which is flushed but not yet committed in this transaction.
+    await record_gate_decision(
+        db,
+        use_caller_session=True,
+        session_id=session_row.id,
+        symbol="PORTFOLIO",
+        action="none",
+        phase=PHASE_FILTER,
+        gate="exposure_check",
+        passed=exposure_status["status"] in ("in_range", "defensive_ok"),
+        reason=exposure_status["status"],
+        details={
+            "invested_pct": round(invested_pct, 2),
+            "target_min": exposure_status["target_min"],
+            "target_max": exposure_status["target_max"],
+            "spy_above_20dma": spy_above_20dma,
+            "drawdown_gate_active": drawdown_blocked,
+        },
+    )
 
     # ── Daily cost ceiling check ────────────────────────────────────────────
     await check_daily_cost_ceiling(db)
