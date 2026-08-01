@@ -43,14 +43,14 @@ from .research import (
     fetch_factor_returns,
     fetch_fred_macro,
     fetch_market_context,
-    fetch_mean_reversion_screener,
-    fetch_momentum_screener,
     fetch_news,
     fetch_options_data,
     fetch_detailed_news,
     fetch_premarket_prices,
     fetch_price_data,
+    fetch_screeners,
     fetch_sector_returns,
+    gate_cached_mean_reversion,
 )
 
 logger = logging.getLogger(__name__)
@@ -480,6 +480,10 @@ async def generate_recommendations(
     # guidance helper bakes in any strategy.json.rule_overrides toggles.
     strategy = load_strategy()
     guidance = load_effective_guidance()
+    # Raw dict form, needed early to gate the mean-reversion screener fetch
+    # below (both here and in Phase 0 prefetch.py) — see fetch_screeners()
+    # in research.py for why this is a code-level gate, not prompt-only.
+    strategy_json = load_strategy_json()
 
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]
@@ -509,7 +513,10 @@ async def generate_recommendations(
         analyst_consensus = cache["analyst_consensus"]
         research_symbols = cache["research_symbols"]
         screener_symbols = cache["screener_symbols"]
-        mean_reversion_symbols = cache.get("mean_reversion_symbols", [])
+        # Re-gate on read, not just on Phase 0's write — see
+        # gate_cached_mean_reversion() docstring for why a stale cache can't
+        # be trusted to already reflect the current entry_style.
+        mean_reversion_symbols = gate_cached_mean_reversion(cache, strategy_json)
         relative_strength = cache.get("relative_strength", {})
         premarket_data = cache.get("premarket_data", {})
         factor_returns = cache.get("factor_returns", {})
@@ -522,13 +529,11 @@ async def generate_recommendations(
             import finnhub
             finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
 
-        # Run both screeners concurrently so research_symbols includes both
-        # momentum and mean-reversion picks before parallel data fetch.
-        screener_symbols, mean_reversion_symbols = await asyncio.gather(
-            fetch_momentum_screener(n=20, tracker=tracker),
-            fetch_mean_reversion_screener(n=10, tracker=tracker),
+        # Run momentum screener always; mean-reversion only when entry_style
+        # includes it (fetch_screeners is the shared gate with Phase 0).
+        screener_symbols, mean_reversion_symbols = await fetch_screeners(
+            strategy_json, tracker=tracker
         )
-        mean_reversion_symbols = [s for s in mean_reversion_symbols if s not in set(screener_symbols)]
         logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
         logger.info(
             "Mean-reversion screener added %d symbols: %s",
@@ -607,7 +612,8 @@ async def generate_recommendations(
     }
 
     # ── Drawdown gate check ────────────────────────────────────────────────
-    strategy_json = load_strategy_json()
+    # strategy_json was already loaded above (needed earlier to gate the
+    # mean-reversion screener fetch) — reused here, not re-read from disk.
     drawdown_config = strategy_json.get("drawdown_gate", {"enabled": True, "max_drawdown_pct": 8.0})
     drawdown_result = await update_peak_and_check(db, price_data, drawdown_config)
     drawdown_blocked = drawdown_result.blocked

@@ -1772,6 +1772,57 @@ async def fetch_mean_reversion_screener(
     )
 
 
+async def fetch_screeners(strategy_json: dict, tracker=None) -> tuple[list[str], list[str]]:
+    """Run the momentum screener always; run the mean-reversion screener only
+    when the declared strategy's entry_style includes "mean_reversion".
+
+    This is a code-level gate, not just a prompt instruction: Experiment B
+    (2026-06-18) suspended mean-reversion entries by editing
+    analyst_guidance.md prose only, but fetch_mean_reversion_screener kept
+    running every session and kept feeding candidates into Claude's context.
+    Both Phase 0 prefetch and the recommender's inline fallback call this
+    single helper so the gate can't drift out of sync between the two.
+
+    Returns ([], ...) for mean_reversion_symbols when disabled — not the key
+    omitted — so callers writing this straight into the Phase 0 cache dict
+    and callers reading it back via cache.get("mean_reversion_symbols", [])
+    both see the same shape either way.
+    """
+    entry_styles = strategy_json.get("entry_style", [])
+    if "mean_reversion" in entry_styles:
+        screener_symbols, mean_reversion_symbols = await asyncio.gather(
+            fetch_momentum_screener(n=20, tracker=tracker),
+            fetch_mean_reversion_screener(n=10, tracker=tracker),
+        )
+        mean_reversion_symbols = [
+            s for s in mean_reversion_symbols if s not in set(screener_symbols)
+        ]
+    else:
+        logger.info(
+            "Mean-reversion screener SKIPPED (entry_style=%s does not include mean_reversion)",
+            entry_styles,
+        )
+        screener_symbols = await fetch_momentum_screener(n=20, tracker=tracker)
+        mean_reversion_symbols = []
+    return screener_symbols, mean_reversion_symbols
+
+
+def gate_cached_mean_reversion(cache: dict, strategy_json: dict) -> list[str]:
+    """Re-apply the entry_style gate when reading mean_reversion_symbols back
+    from a Phase 0 cache, instead of trusting whatever the cache happens to
+    contain.
+
+    A cache file can be stale relative to the current strategy.json — written
+    by an older container before a rebuild, or from earlier the same day
+    before a strategy.json edit flips entry_style. Without re-gating on read,
+    a disabled mean-reversion config would still get fed to Claude whenever
+    the cache was written while it was enabled.
+    """
+    if "mean_reversion" not in strategy_json.get("entry_style", []):
+        return []
+    return cache.get("mean_reversion_symbols", [])
+
+
 async def fetch_factor_returns(tracker=None) -> dict[str, dict[str, float]]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: _fetch_factor_returns_sync(tracker=tracker))
