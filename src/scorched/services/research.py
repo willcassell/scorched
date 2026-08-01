@@ -1209,6 +1209,12 @@ def _format_exposure_status(exposure_status: dict | None) -> list[str]:
             "STATUS: OVERINVESTED — above target ceiling. Existing position/"
             "cash/sector gates already bound this; no new action required."
         ),
+        "data_unavailable": (
+            "STATUS: DATA_UNAVAILABLE — below target floor but SPY/20d-MA "
+            "regime data is missing this session, so the regime cannot be "
+            "judged. Hard rule #10 is not triggered; do not treat this as "
+            "confirmation that defensiveness is appropriate."
+        ),
     }
     lines.append(status_lines.get(status, f"STATUS: {str(status).upper()}."))
     lines.append("")

@@ -189,6 +189,39 @@ DEFAULT_JSON = {
         "min_rel_volume": 1.0,
         "require_above_20dma": True,
     },
+    # Remaining safety sections (final review 2026-08-01) — same rationale:
+    # a missing/corrupt strategy.json must not silently disable the circuit
+    # breaker (Phase 1.5/2 read strategy.get("circuit_breaker", {"enabled":
+    # False})), the factor gate, the intraday monitor, or exposure telemetry.
+    "circuit_breaker": {
+        "enabled": True,
+        "stock_gap_down_pct": 2.0,
+        "stock_price_drift_pct": 1.5,
+        "spy_gap_down_pct": 1.0,
+        "vix_absolute_max": 30,
+        "vix_spike_pct": 20,
+        "stock_gap_up_pct": 5.0,
+    },
+    "factor_gate": {
+        "enabled": True,
+        "min_factor_lead_pts": 3.0,
+        "min_candidate_mom_pct": 0.0,
+    },
+    "intraday_monitor": {
+        "enabled": True,
+        "position_drop_from_entry_pct": 5.0,
+        "position_drop_from_open_pct": 3.0,
+        "spy_intraday_drop_pct": 2.0,
+        "volume_surge_multiplier": 3.0,
+        "hard_stop_pct": 8.0,
+        "emergency_sell_buffer_pct": 1.0,
+        "emergency_sell_buffer_floor_usd": 0.05,
+    },
+    "exposure": {
+        "target_min_invested_pct": 60,
+        "target_max_invested_pct": 90,
+        "regime_condition": "spy_above_20dma_and_no_drawdown_gate",
+    },
 }
 
 

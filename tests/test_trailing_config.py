@@ -258,6 +258,19 @@ class TestDefaultJsonMirrorsLiveStrategy:
         assert "trailing_stop" in live
         assert DEFAULT_JSON["trailing_stop"] == live["trailing_stop"]
 
+    def test_default_json_mirrors_remaining_safety_sections(self):
+        """Final review 2026-08-01: circuit_breaker, factor_gate,
+        intraday_monitor, and exposure must not silently disable on a
+        missing/corrupt strategy.json — Phase 1.5/2 read
+        strategy.get("circuit_breaker", {"enabled": False})."""
+        from scorched.services.strategy import DEFAULT_JSON
+
+        live = json.loads((_REPO_ROOT / "strategy.json").read_text())
+
+        for section in ("circuit_breaker", "factor_gate", "intraday_monitor", "exposure"):
+            assert section in DEFAULT_JSON, section
+            assert DEFAULT_JSON[section] == live[section], section
+
 
 class TestStrategyJsonTrailingStopSection:
     def test_live_strategy_json_has_trailing_stop_section(self):

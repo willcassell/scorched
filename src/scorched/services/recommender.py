@@ -627,6 +627,24 @@ def check_mechanical_entry(
     return True, None
 
 
+def format_data_missing_banner(blocked_symbols: list[str]) -> str:
+    """Telegram/summary banner when BUY candidates were blocked for MISSING
+    data (factor_data_missing / mechanical_data_missing) rather than failing
+    a real criterion. A data outage blocking every candidate must read as an
+    outage, not as conservatism — that ambiguity already cost a
+    multi-session diagnosis once (project_call2_conservatism_diagnosis).
+
+    Returns "" when nothing was blocked for missing data.
+    """
+    if not blocked_symbols:
+        return ""
+    unique = sorted(set(blocked_symbols))
+    return (
+        f"⚠️ {len(unique)} candidate(s) blocked by MISSING DATA "
+        f"({', '.join(unique)}) — possible data outage, not conservatism.\n\n"
+    )
+
+
 # The only regime condition assess_exposure's hardcoded logic actually
 # implements. There is no config DSL — see the warning below.
 _SUPPORTED_REGIME_CONDITION = "spy_above_20dma_and_no_drawdown_gate"
@@ -634,7 +652,7 @@ _SUPPORTED_REGIME_CONDITION = "spy_above_20dma_and_no_drawdown_gate"
 
 def assess_exposure(
     invested_pct: float,
-    spy_above_20dma: bool,
+    spy_above_20dma: bool | None,
     drawdown_gate_active: bool,
     cfg: dict,
 ) -> dict:
@@ -660,7 +678,13 @@ def assess_exposure(
     nothing — so this logs a warning and proceeds with the hardcoded logic
     rather than pretending to honor an unsupported value.
 
-    Returns {"status": "underinvested"|"in_range"|"overinvested"|"defensive_ok",
+    `spy_above_20dma is None` means the SPY/20dma data was unavailable this
+    session. That must NOT fold into `defensive_ok` (which would silently
+    suppress hard rule #10 on a genuinely underinvested day) — a below-floor
+    session with unknown regime data reports `data_unavailable` instead.
+
+    Returns {"status": "underinvested"|"in_range"|"overinvested"|"defensive_ok"
+                       |"data_unavailable",
              "invested_pct": float, "target_min": float, "target_max": float}.
     """
     target_min = float(cfg.get("target_min_invested_pct", 60))
@@ -673,12 +697,18 @@ def assess_exposure(
             regime_condition, _SUPPORTED_REGIME_CONDITION,
         )
 
-    regime_healthy = spy_above_20dma and not drawdown_gate_active
-
     if invested_pct > target_max:
         status = "overinvested"
     elif invested_pct < target_min:
-        status = "underinvested" if regime_healthy else "defensive_ok"
+        if spy_above_20dma is None:
+            logger.warning(
+                "assess_exposure: SPY 20dma data unavailable — cannot judge "
+                "regime for a below-floor session; emitting data_unavailable"
+            )
+            status = "data_unavailable"
+        else:
+            regime_healthy = spy_above_20dma and not drawdown_gate_active
+            status = "underinvested" if regime_healthy else "defensive_ok"
     else:
         status = "in_range"
 
@@ -920,7 +950,11 @@ async def generate_recommendations(
     # SPY vs its 20-day MA is derived from the same Alpaca bars already
     # fetched for factor_returns (close vs mean of last 20 closes) — no new
     # external API call. See _fetch_factor_returns_sync in research.py.
-    spy_above_20dma = bool((factor_returns.get("SPY") or {}).get("above_20dma", False))
+    # None (data unavailable) must stay distinct from False (SPY genuinely
+    # below its MA) — folding them together mislabels an underinvested
+    # session as defensive_ok and silently suppresses hard rule #10.
+    _spy_raw = (factor_returns.get("SPY") or {}).get("above_20dma")
+    spy_above_20dma = None if _spy_raw is None else bool(_spy_raw)
     exposure_status = assess_exposure(invested_pct, spy_above_20dma, drawdown_blocked, exposure_cfg)
     logger.info(
         "Exposure check: %.1f%% invested (target %.0f-%.0f%%), spy_above_20dma=%s, "
@@ -1040,7 +1074,7 @@ async def generate_recommendations(
         action="none",
         phase=PHASE_FILTER,
         gate="exposure_check",
-        passed=exposure_status["status"] in ("in_range", "defensive_ok"),
+        passed=exposure_status["status"] in ("in_range", "defensive_ok", "data_unavailable"),
         reason=exposure_status["status"],
         details={
             "invested_pct": round(invested_pct, 2),
@@ -1386,6 +1420,13 @@ async def generate_recommendations(
         for pos in held_positions_for_sector
     }
 
+    # Symbols whose BUY was blocked by a *_data_missing gate reason (factor /
+    # mechanical). A data outage blocking every candidate must be readable as
+    # an outage in the Telegram summary, not mistaken for conservatism —
+    # non-participation ambiguity already cost a multi-session diagnosis once
+    # (see project_call2_conservatism_diagnosis).
+    data_missing_blocks: list[str] = []
+
     recommendation_rows = []
     for rec in raw_recs:
         action = rec.get("action", "").lower()
@@ -1599,6 +1640,8 @@ async def generate_recommendations(
             )
             if not factor_passed:
                 logger.warning("Skipping %s buy — factor gate: %s", symbol, factor_reason)
+                if factor_reason == "factor_data_missing":
+                    data_missing_blocks.append(symbol)
                 await send_telegram(
                     f"TRADEBOT // Factor gate: {symbol} BUY skipped — {factor_reason}"
                 )
@@ -1676,6 +1719,8 @@ async def generate_recommendations(
                 logger.warning(
                     "Skipping %s buy — mechanical entry gate: %s", symbol, mech_reason,
                 )
+                if mech_reason == "mechanical_data_missing":
+                    data_missing_blocks.append(symbol)
                 await send_telegram(
                     f"TRADEBOT // Mechanical entry gate: {symbol} BUY skipped — {mech_reason}"
                 )
@@ -1785,6 +1830,8 @@ async def generate_recommendations(
         )
         for row in recommendation_rows
     ]
+
+    research_summary = format_data_missing_banner(data_missing_blocks) + research_summary
 
     return RecommendationsResponse(
         session_id=session_row.id,

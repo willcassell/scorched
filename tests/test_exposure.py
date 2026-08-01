@@ -125,3 +125,47 @@ def test_format_defensive_ok_does_not_demand_buys():
 def test_format_returns_empty_list_when_no_status():
     assert _format_exposure_status(None) == []
     assert _format_exposure_status({}) == []
+
+
+# ── data_unavailable (final review 2026-08-01, Important 7) ─────────────────
+
+def test_missing_spy_data_emits_data_unavailable_not_defensive_ok(caplog):
+    """None (SPY data unavailable) must not fold into defensive_ok — that
+    would silently suppress hard rule #10 on a genuinely underinvested day."""
+    with caplog.at_level(logging.WARNING):
+        result = assess_exposure(12.0, spy_above_20dma=None, drawdown_gate_active=False, cfg=CFG)
+    assert result["status"] == "data_unavailable"
+    assert any("data unavailable" in r.message.lower() for r in caplog.records)
+
+
+def test_missing_spy_data_irrelevant_when_in_range():
+    """SPY regime only disambiguates below-floor sessions — in-range and
+    overinvested verdicts don't depend on it and must stay determinable."""
+    assert assess_exposure(70.0, spy_above_20dma=None, drawdown_gate_active=False, cfg=CFG)["status"] == "in_range"
+    assert assess_exposure(95.0, spy_above_20dma=None, drawdown_gate_active=False, cfg=CFG)["status"] == "overinvested"
+
+
+def test_format_data_unavailable_does_not_trigger_rule_10():
+    status = assess_exposure(12.0, spy_above_20dma=None, drawdown_gate_active=False, cfg=CFG)
+    text = "\n".join(_format_exposure_status(status))
+    assert "DATA_UNAVAILABLE" in text
+    assert "hard rule #10 applies" not in text
+    assert "not triggered" in text.lower() or "is not triggered" in text.lower()
+
+
+# ── data-missing banner (final review 2026-08-01, Important 6) ──────────────
+
+def test_data_missing_banner_names_symbols_and_outage():
+    from scorched.services.recommender import format_data_missing_banner
+
+    banner = format_data_missing_banner(["NVDA", "AAPL", "NVDA"])
+    assert "2 candidate(s)" in banner
+    assert "AAPL, NVDA" in banner
+    assert "data outage" in banner
+    assert "not conservatism" in banner
+
+
+def test_data_missing_banner_empty_when_nothing_blocked():
+    from scorched.services.recommender import format_data_missing_banner
+
+    assert format_data_missing_banner([]) == ""

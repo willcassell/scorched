@@ -418,6 +418,8 @@ async def call_decision(
             messages=[{"role": "user", "content": user_content}],
         )
     _refusal_guard(response)
+    if response.stop_reason == "max_tokens":
+        logger.warning("Call 2 hit max_tokens — JSON output may be truncated")
 
     decision_raw = extract_text(response.content)
     parsed = parse_json_response(decision_raw)
@@ -476,6 +478,8 @@ async def call_risk_review(user_content: str, tracker=None):
             messages=[{"role": "user", "content": user_content}],
         )
     _refusal_guard(response)
+    if response.stop_reason == "max_tokens":
+        logger.warning("Call 3 hit max_tokens — JSON output may be truncated")
 
     return response, extract_text(response.content)
 
