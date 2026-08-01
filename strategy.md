@@ -17,6 +17,7 @@
 - **Max positions:** 10 simultaneous (hard cap in `strategy.json`)
 - **Max sector exposure:** 40% of portfolio (code-enforced — buys that breach this cap are rejected in `recommender.py`)
 - **Factor gate:** code-enforced — in a momentum-led regime, buys with negative own 20-day return are rejected (`recommender.py:check_factor_alignment`)
+- **Re-entry cooldown:** code-enforced — a BUY is rejected if the same symbol has a SELL in trade history within the last 3 NYSE trading days (`reentry_cooldown_days` in `strategy.json`, `recommender.py:check_reentry_cooldown`); blocks whipsaw churn (sell then re-buy days later)
 - **Stop loss:** -8% from entry (catastrophe backstop)
 - **Time stop:** 30 calendar days flat/down with no fresh catalyst
 - **Exposure target:** 60–90% invested when SPY is above its 20-day MA and the drawdown gate is clear (advisory, not code-blocking — see below)

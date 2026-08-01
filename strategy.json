@@ -21,6 +21,7 @@
     "min_factor_lead_pts": 3.0,
     "min_candidate_mom_pct": 0.0
   },
+  "reentry_cooldown_days": 3,
   "experiment": {
     "name": "B-momentum-discipline",
     "start_date": "2026-06-18",

@@ -173,6 +173,11 @@ DEFAULT_JSON = {
         "atr_multiplier": 2.0,
         "floor_pct": 5.0,
     },
+    # Re-entry cooldown gate (Task 9, 2026-08-01) — blocks a BUY within N NYSE
+    # trading days of a SELL on the same symbol (whipsaw guard). A missing/
+    # corrupt strategy.json must not silently disable this safety gate, so
+    # it's mirrored here like trailing_stop/drawdown_gate above.
+    "reentry_cooldown_days": 3,
 }
 
 

@@ -221,6 +221,7 @@ class TestDefaultJsonMirrorsLiveStrategy:
         ("entry_style", None),
         ("sell_discipline", None),
         ("partial_sell", None),
+        ("reentry_cooldown_days", None),
     ]
 
     def test_default_json_matches_live_for_named_keys(self):
@@ -236,6 +237,17 @@ class TestDefaultJsonMirrorsLiveStrategy:
             DEFAULT_JSON["concentration"]["max_position_pct"]
             == live["concentration"]["max_position_pct"]
         )
+
+    def test_default_json_reentry_cooldown_days_matches_live(self):
+        """Task 9: a missing/corrupt strategy.json must not silently disable
+        the re-entry cooldown gate — the fallback value must match live."""
+        from scorched.services.strategy import DEFAULT_JSON
+
+        live = json.loads((_REPO_ROOT / "strategy.json").read_text())
+
+        assert "reentry_cooldown_days" in DEFAULT_JSON
+        assert "reentry_cooldown_days" in live
+        assert DEFAULT_JSON["reentry_cooldown_days"] == live["reentry_cooldown_days"]
 
     def test_default_json_has_trailing_stop_section_matching_live(self):
         from scorched.services.strategy import DEFAULT_JSON

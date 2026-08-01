@@ -417,6 +417,77 @@ def resolve_candidate_20d_momentum(symbol: str, price_row: dict | None) -> float
     return None
 
 
+async def check_reentry_cooldown(
+    db: AsyncSession, symbol: str, cooldown_days: int
+) -> tuple[bool, str | None]:
+    """Block a BUY if `symbol` has a SELL in trade_history within the last
+    `cooldown_days` NYSE trading days (Task 9: whipsaw re-entry guard).
+
+    Motivation: whipsaw churn (e.g. CVX sold 6/11, re-bought 6/15) cost real
+    money that Experiment B deferred fixing. This is a pure cooldown timer —
+    it has no opinion on thesis quality, only on how recently we exited.
+
+    Trading-day math uses `pandas_market_calendars`, same library/pattern as
+    `_is_market_open` above, so weekends/holidays don't inflate or shrink the
+    window versus a naive calendar-day count. A sell exactly `cooldown_days`
+    trading days ago is ALLOWED (strictly-greater-than passes) — only sells
+    strictly more recent than that boundary block the buy.
+
+    Returns (allowed, reason). Fails OPEN (allowed=True) ONLY on a DB error,
+    which is logged at ERROR level — consistent with the project's
+    best-effort gate-recording convention (telemetry/read failures must never
+    block a trade that would otherwise clear), but distinct from the
+    fail-CLOSED posture used for missing market data in check_factor_alignment
+    / check_sector_exposure (a DB outage here isn't evidence of anything
+    about the candidate, whereas missing momentum/sector data is).
+    """
+    if cooldown_days <= 0:
+        return True, None
+    try:
+        import pandas_market_calendars as mcal
+        from datetime import timedelta
+
+        today = market_today()
+        nyse = mcal.get_calendar("NYSE")
+        # Generous lookback so we always resolve >= cooldown_days sessions
+        # even across long holiday clusters (e.g. Thanksgiving + Christmas).
+        window_start = today - timedelta(days=cooldown_days * 3 + 15)
+        sessions = [
+            d.date() for d in nyse.valid_days(start_date=window_start, end_date=today)
+        ]
+        if len(sessions) < cooldown_days:
+            # Shouldn't happen with the buffer above; fail safe by treating
+            # the earliest available session as the cutoff.
+            cutoff_date = sessions[0] if sessions else today
+        else:
+            cutoff_date = sessions[-cooldown_days]
+        cutoff_dt = datetime.combine(cutoff_date, datetime.min.time())
+
+        result = await db.execute(
+            select(TradeHistory)
+            .where(
+                TradeHistory.symbol == symbol.upper(),
+                TradeHistory.action == "sell",
+                TradeHistory.executed_at >= cutoff_dt,
+            )
+            .order_by(TradeHistory.executed_at.desc())
+            .limit(1)
+        )
+        recent_sell = result.scalars().first()
+        if recent_sell is not None:
+            sell_date = recent_sell.executed_at.date()
+            return False, (
+                f"{symbol} sold {sell_date.isoformat()} — within the "
+                f"{cooldown_days}-NYSE-trading-day re-entry cooldown"
+            )
+        return True, None
+    except Exception as e:
+        logger.error(
+            "reentry_cooldown check DB error for %s: %s — failing open", symbol, e
+        )
+        return True, f"reentry_cooldown check failed ({e}) — failing open"
+
+
 # The only regime condition assess_exposure's hardcoded logic actually
 # implements. There is no config DSL — see the warning below.
 _SUPPORTED_REGIME_CONDITION = "spy_above_20dma_and_no_drawdown_gate"
@@ -1391,6 +1462,39 @@ async def generate_recommendations(
                 logger.warning("Skipping %s buy — factor gate: %s", symbol, factor_reason)
                 await send_telegram(
                     f"TRADEBOT // Factor gate: {symbol} BUY skipped — {factor_reason}"
+                )
+                continue
+
+            # Re-entry cooldown gate (Task 9) — block a whipsaw re-buy of a
+            # symbol we sold within the last N NYSE trading days. Motivated by
+            # real losses (e.g. CVX sold 6/11, re-bought 6/15) that Experiment
+            # B deliberately deferred fixing.
+            cooldown_days = strategy_json.get("reentry_cooldown_days", 3)
+            cooldown_passed, cooldown_reason = await check_reentry_cooldown(
+                db, symbol, cooldown_days
+            )
+            await record_gate_decision(
+                db,
+                use_caller_session=True,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="reentry_cooldown",
+                passed=cooldown_passed,
+                # Not conditioned on `not cooldown_passed` like the sibling
+                # gates above — check_reentry_cooldown returns a non-None
+                # reason even on a passing (fail-open) DB-error verdict, and
+                # that diagnostic is exactly what an operator needs to see.
+                reason=cooldown_reason,
+                details={"cooldown_days": cooldown_days},
+            )
+            if not cooldown_passed:
+                logger.warning(
+                    "Skipping %s buy — reentry cooldown: %s", symbol, cooldown_reason,
+                )
+                await send_telegram(
+                    f"TRADEBOT // Re-entry cooldown: {symbol} BUY skipped — {cooldown_reason}"
                 )
                 continue
 

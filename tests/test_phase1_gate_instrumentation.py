@@ -295,3 +295,98 @@ async def test_exposure_check_passed_when_in_range(db_session):
     assert row is not None
     assert row.passed is True
     assert row.reason == "in_range"
+
+
+@pytest.mark.asyncio
+async def test_reentry_cooldown_blocked_records_decision(db_session, monkeypatch):
+    """Task 9: recommender.py's real call site pattern — check_reentry_cooldown
+    runs against the caller's own `db` session and use_caller_session=True
+    writes into the same flushed-but-uncommitted transaction as session_row
+    (same reasoning as the exposure_check tests above, since this gate is
+    wired into the same per-buy loop as cash_floor/position_cap/etc., which
+    also use the caller's session — see recommender.py's real gate chain)."""
+    from datetime import date as _date, datetime as _datetime
+
+    from scorched.models import TradeHistory
+    from scorched.services import recommender as rec_module
+
+    fixed_today = _date(2026, 6, 22)
+    monkeypatch.setattr(rec_module, "market_today", lambda: fixed_today)
+
+    s = await _seed_session(db_session)
+    db_session.add(
+        TradeHistory(
+            symbol="CVX",
+            action="sell",
+            shares=Decimal("10"),
+            execution_price=Decimal("100.00"),
+            total_value=Decimal("1000.00"),
+            executed_at=_datetime(2026, 6, 18),  # 1 NYSE trading day before fixed_today
+        )
+    )
+    await db_session.commit()
+
+    allowed, reason = await rec_module.check_reentry_cooldown(db_session, "CVX", 3)
+    assert allowed is False
+
+    await gd.record_gate_decision(
+        db_session,
+        use_caller_session=True,
+        session_id=s.id,
+        symbol="CVX",
+        action="buy",
+        phase=gd.PHASE_FILTER,
+        gate="reentry_cooldown",
+        passed=allowed,
+        reason=reason,
+        details={"cooldown_days": 3},
+    )
+
+    row = (await db_session.execute(
+        select(GateDecision).where(GateDecision.gate == "reentry_cooldown")
+    )).scalars().first()
+    assert row is not None
+    assert row.symbol == "CVX"
+    assert row.action == "buy"
+    assert row.passed is False
+    assert row.reason is not None
+    assert row.session_id == s.id
+    assert row.details["cooldown_days"] == 3
+
+
+@pytest.mark.asyncio
+async def test_reentry_cooldown_passed_records_decision(db_session, monkeypatch):
+    """No qualifying sell -> passed=True row still written (audit trail for
+    the common case, not just blocks)."""
+    from datetime import date as _date
+
+    from scorched.services import recommender as rec_module
+
+    fixed_today = _date(2026, 6, 22)
+    monkeypatch.setattr(rec_module, "market_today", lambda: fixed_today)
+
+    s = await _seed_session(db_session)
+
+    allowed, reason = await rec_module.check_reentry_cooldown(db_session, "NVDA", 3)
+    assert allowed is True
+    assert reason is None
+
+    await gd.record_gate_decision(
+        db_session,
+        use_caller_session=True,
+        session_id=s.id,
+        symbol="NVDA",
+        action="buy",
+        phase=gd.PHASE_FILTER,
+        gate="reentry_cooldown",
+        passed=allowed,
+        reason=reason,
+        details={"cooldown_days": 3},
+    )
+
+    row = (await db_session.execute(
+        select(GateDecision).where(GateDecision.gate == "reentry_cooldown")
+    )).scalars().first()
+    assert row is not None
+    assert row.passed is True
+    assert row.reason is None
