@@ -6,7 +6,7 @@
 
 ## Current strategy snapshot
 
-> **⚠️ ACTIVE EXPERIMENT (B-momentum-discipline, 2026-06-18 → ~2026-09-12):** breakout-only entries, code-enforced factor gate, 15% max size, trailing-stop exits (no fixed profit targets). Kill criterion: retire unless it beats SPY net AND profit factor > 1.0 over 60 trading days. See `.handovers/2026-06-18-experiment-B.md`.
+> **⚠️ ACTIVE EXPERIMENT (C-best-in-class, 2026-08-03 → ~2026-10-27):** Opus 5 + all Experiment B carryovers (breakout-only entries, code-enforced factor gate, 15% max size, trailing-stop exits — no fixed profit targets) PLUS the new mechanical entry gate, re-entry cooldown, and exposure discipline. Kill criterion: retire unless window return beats SPY's window return AND window profit factor > 1.0 over 60 trading days. Experiment B was reset here (was passing its own criterion at reset time — see `.handovers/2026-08-01-experiment-C.md` for the why and the evidence trail).
 
 - **Horizon:** 2–6 week holds (swing/position)
 - **Entry styles:** Breakout only (mean-reversion suspended for the experiment)

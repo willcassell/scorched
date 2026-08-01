@@ -3,25 +3,40 @@
 This file is injected into every Claude prompt at runtime. It tells the model how to
 interpret each data source and what hard rules must never be broken.
 
-> ## ⚠️ ACTIVE EXPERIMENT OVERRIDE — B-momentum-discipline (started 2026-06-18)
-> These rules SUPERSEDE anything below them. They exist because a backtest of our
-> first 4 months proved our discretionary entries lose money under every exit policy,
-> and our biggest losses came from buying falling/oversold cyclicals against a
-> momentum-led market.
+> ## ⚠️ ACTIVE EXPERIMENT OVERRIDE — C-best-in-class (started 2026-08-03)
+> These rules SUPERSEDE anything below them. Experiment B (2026-06-18 → 2026-08-01)
+> was reset here — lifetime return was +1.8% vs SPY +8.6%, and a deep-dive traced the
+> shortfall to entry quality and chronic underinvestment, not the B-era exit/sizing
+> rules (which were themselves testing fine — see `.handovers/2026-08-01-experiment-C.md`
+> for the full evidence trail). All B carryovers (1–5 below) stay in force; items 6–8
+> are new for C, and analysis now runs on Claude Opus 5.
 > 1. **BREAKOUT ENTRIES ONLY.** Mean-reversion / oversold-pullback entries are
 >    SUSPENDED. Do not buy a stock because it is oversold or has pulled back. The
 >    mean-reversion sections below are dormant reference, not active permission.
-> 2. **FACTOR ALIGNMENT IS NOW A HARD, CODE-ENFORCED GATE (hard rule #9).** In a
+> 2. **FACTOR ALIGNMENT IS A HARD, CODE-ENFORCED GATE (hard rule #9).** In a
 >    momentum-led regime, any buy whose own 20-day return is negative is REJECTED by
 >    code before execution. Do not propose down-trending names; they will be dropped.
 > 3. **LET WINNERS RUN — NO FIXED PROFIT TARGETS.** Do not recommend trimming a
 >    winner at +15% or +25%. Winners exit only via the ATR trailing stop (it ratchets
 >    up and exits on a pullback from the high) or a broken thesis. The −8% hard stop
 >    is a catastrophe backstop, not a target.
-> 4. **SMALLER SIZE.** Max position is now 15% of portfolio (was 33%), so a single
->    stopped-out trade can't dominate the book.
+> 4. **SMALLER SIZE.** Max position is 15% of portfolio (was 33% pre-experiment), so a
+>    single stopped-out trade can't dominate the book.
 > 5. **FEWER, HIGHER-CONVICTION TRADES.** No quota to trade. A clean, factor-aligned
 >    breakout with a named tier-1 catalyst, or nothing.
+> 6. **MECHANICAL ENTRY GATE — CODE-ENFORCED (hard rule #12, new for C).** Every BUY
+>    must already clear 5-day momentum > 0%, relative volume ≥ 1.0x, and price above
+>    the 20-day MA before Claude ever proposes it. This targets the entry-quality gap
+>    the B deep-dive found — your job is selection/veto among qualifying names, not
+>    exception-making.
+> 7. **RE-ENTRY COOLDOWN — CODE-ENFORCED (hard rule #11, new for C).** A BUY is
+>    rejected if the same symbol had a SELL within the last 3 NYSE trading days
+>    (`reentry_cooldown_days`). Do not propose re-buying a name you just exited.
+> 8. **EXPOSURE DISCIPLINE (hard rule #10, new for C).** Chronic underinvestment was
+>    a root cause of the B shortfall. When EXPOSURE STATUS is UNDERINVESTED, propose
+>    enough qualifying breakout buys to move toward the target floor, or name exactly
+>    which entry criterion the best remaining candidates failed. Never lower entry
+>    standards to fill the target.
 
 The declared trading style is swing / position trading with a 2–6 week holding period. **Active entry style: confirmed breakouts above technical resistance with volume expansion (mean-reversion is suspended — see the experiment override above).**
 
@@ -175,7 +190,7 @@ Screener picks have already cleared: price > 20d MA, avg volume > 1M shares/day,
 3. **Sector concentration limit**: No single sector may exceed 40% of total portfolio value. This is enforced in code — buys that would push a sector above the cap are rejected before execution.
 4. **Stop loss at -8% from entry** (catastrophe backstop). Position sizing is conviction-weighted up to a 15% cap (experiment override, was 33%); a -8% stop on a full 15% position is ~1.2% of the book — a tolerable single-trade loss. No averaging down.
 5. **Time stop at 30 calendar days (~21 trading days).** If a position is flat or down after 30 calendar days with no fresh catalyst, exit regardless of thesis — note this fires ~2 weeks before the 6-week hold ceiling; only positions showing progress earn the full window. Do not let a swing trade become a buy-and-hold.
-6. **100% gain rule**: If a position is up 100% or more, sell at least half immediately.
+6. **100% gain rule — DISABLED (`rule_overrides.gain_trigger.enabled: false`).** Historically: if a position is up 100% or more, sell at least half immediately. This forced partial sell now contradicts `partial_sell: never` and is superseded — large winners exit only via the ATR trailing stop (rule retained under this number, disabled via override, so the toggle can re-enable a fixed gain-trigger partial sell without a code change if the trailing-stop-only policy is ever revisited).
 7. **No first-day buying into a selloff**: If SPY is down >2% today, do not initiate any new long positions. Wait for stabilization.
 8. **Cash floor**: Never recommend a buy that would bring portfolio cash below 10% of total value (the code also enforces this, but anticipate it in your math).
 9. **Factor alignment — NOW CODE-ENFORCED (experiment override).** When a momentum factor (MTUM, SPMO, QQQ) leads SPY by ≥3 pts over the 20-day window, any buy whose OWN 20-day return is negative is REJECTED by code before execution — no catalyst overrides it during the experiment. Propose only names with their own positive momentum in a momentum regime. This directly prevents the falling-knife / oversold-cyclical entries that produced our largest losses.

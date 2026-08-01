@@ -35,7 +35,7 @@ The declared strategy is **2–6 week swing/position trading** with two entry st
 3. **Not overextended**: For breakouts, prefer a controlled consolidation over a parabolic vertical spike. For mean-reversion, the broader trend must still be up — no catching knives in a downtrend.
 4. **Sector concentration**: No single sector > 40% of portfolio. This rule is code-enforced (buys that would breach it are rejected).
 
-> **⚠️ EXPERIMENT OVERRIDE (B-momentum-discipline, 2026-06-18):** breakout entries only (mean-reversion suspended); 15% max position (not 33%); factor alignment is a code-enforced hard gate (negative-own-momentum buys rejected in momentum regimes); winners exit on the trailing stop, no +15%/+25% fixed targets. The detailed mean-reversion and sizing guidance below is dormant reference during the experiment.
+> **⚠️ EXPERIMENT OVERRIDE (C-best-in-class, 2026-08-03, running on Claude Opus 5):** breakout entries only (mean-reversion suspended); 15% max position (not 33%); factor alignment is a code-enforced hard gate (negative-own-momentum buys rejected in momentum regimes); winners exit on the trailing stop, no +15%/+25% fixed targets — all carried over from Experiment B. New for C: mechanical entry gate (5-day momentum > 0%, relative volume ≥ 1.0x, price above 20-day MA, code-enforced), re-entry cooldown (3 NYSE days after a same-symbol sell, code-enforced), and exposure discipline (fill toward the invested-% target or document why not). Experiment B was reset 2026-08-01 (+1.8% lifetime vs SPY +8.6% — see `.handovers/2026-08-01-experiment-C.md`). The detailed mean-reversion and sizing guidance below is dormant reference during the experiment.
 
 ### Step 3: Apply Position Sizing Rules
 
@@ -54,6 +54,7 @@ The declared strategy is **2–6 week swing/position trading** with two entry st
 #### Price Data (yfinance)
 - `week_change_pct`: Primary trend signal. Context for breakout vs. mean-reversion — positive recent return with a clean break of resistance supports breakout; negative recent return inside a rising 50-day MA supports mean-reversion.
 - `month_change_pct`: Context. >+20%/mo may be parabolic — prefer a pullback entry over chasing. Persistently negative is only acceptable if the longer-term uptrend is intact.
+- `trailing_20d_return_pct` (rendered as `20d:` in the price line): true 20-trading-day return; this is the value the factor gate (hard rule #9) checks a candidate's own momentum against, not `week_change_pct` or `month_change_pct` — use it when reasoning about factor alignment.
 - `52w range`: Near a 52-week high with a confirmed breakout = breakout candidate. 10–20% off the high inside an uptrend = mean-reversion candidate. Near 52w low with no uptrend = avoid.
 - `short_ratio` / `short_percent_float`: High short % (>10% of float) + positive catalyst = short squeeze potential (amplifies upside). But high short ratio alone is not a catalyst.
 - `pe_ratio` / `forward_pe`: Context only — use to flag extreme overvaluation (>100x fwd PE with no growth story = risk factor), not as primary filter.
