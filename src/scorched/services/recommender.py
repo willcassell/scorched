@@ -417,6 +417,11 @@ def resolve_candidate_20d_momentum(symbol: str, price_row: dict | None) -> float
     return None
 
 
+# The only regime condition assess_exposure's hardcoded logic actually
+# implements. There is no config DSL — see the warning below.
+_SUPPORTED_REGIME_CONDITION = "spy_above_20dma_and_no_drawdown_gate"
+
+
 def assess_exposure(
     invested_pct: float,
     spy_above_20dma: bool,
@@ -438,11 +443,26 @@ def assess_exposure(
     either condition fails, low exposure is appropriate defensive behavior,
     not a shortfall — status is `defensive_ok`.
 
+    `cfg["regime_condition"]` is currently a single hardcoded logic path
+    (there is no config DSL to interpret alternate conditions). If the value
+    is present and doesn't match the one supported string, that's a false
+    affordance — editing strategy.json to something else would silently do
+    nothing — so this logs a warning and proceeds with the hardcoded logic
+    rather than pretending to honor an unsupported value.
+
     Returns {"status": "underinvested"|"in_range"|"overinvested"|"defensive_ok",
              "invested_pct": float, "target_min": float, "target_max": float}.
     """
     target_min = float(cfg.get("target_min_invested_pct", 60))
     target_max = float(cfg.get("target_max_invested_pct", 90))
+
+    regime_condition = cfg.get("regime_condition")
+    if regime_condition is not None and regime_condition != _SUPPORTED_REGIME_CONDITION:
+        logger.warning(
+            "assess_exposure: unsupported regime_condition %r, using %s",
+            regime_condition, _SUPPORTED_REGIME_CONDITION,
+        )
+
     regime_healthy = spy_above_20dma and not drawdown_gate_active
 
     if invested_pct > target_max:

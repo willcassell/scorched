@@ -211,3 +211,87 @@ async def test_risk_review_records_approve_and_reject_separately(
     risk_row = next(r for r in summary if r.gate == "risk_review")
     assert risk_row.passed_count == 2
     assert risk_row.blocked_count == 1
+
+
+@pytest.mark.asyncio
+async def test_exposure_check_records_decision_every_session(db_session):
+    """Task 8: generate_recommendations() writes an `exposure_check` row every
+    session, regardless of verdict — this is portfolio-level telemetry, not a
+    per-buy gate, so it uses the PORTFOLIO/none sentinels (there is no single
+    symbol or buy/sell action to attach it to).
+
+    Matches the real call site (recommender.py), which passes
+    use_caller_session=True and session_id=session_row.id from the same
+    flushed-but-uncommitted transaction — not the patched-AsyncSessionLocal
+    pattern used by the other gates in this file (those go through the
+    default own-session path).
+    """
+    s = await _seed_session(db_session)
+
+    await gd.record_gate_decision(
+        db_session,
+        use_caller_session=True,
+        session_id=s.id,
+        symbol="PORTFOLIO",
+        action="none",
+        phase=gd.PHASE_FILTER,
+        gate="exposure_check",
+        passed=False,
+        reason="underinvested",
+        details={
+            "invested_pct": 11.9,
+            "target_min": 60.0,
+            "target_max": 90.0,
+            "spy_above_20dma": True,
+            "drawdown_gate_active": False,
+        },
+    )
+
+    row = (await db_session.execute(
+        select(GateDecision).where(GateDecision.gate == "exposure_check")
+    )).scalars().first()
+    assert row is not None
+    assert row.symbol == "PORTFOLIO"
+    assert row.action == "none"
+    assert row.passed is False
+    assert row.reason == "underinvested"
+    assert row.session_id == s.id
+    assert row.details["invested_pct"] == pytest.approx(11.9)
+    assert row.details["target_min"] == 60.0
+    assert row.details["target_max"] == 90.0
+    assert row.details["spy_above_20dma"] is True
+    assert row.details["drawdown_gate_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_exposure_check_passed_when_in_range(db_session):
+    """A healthy session (in_range/defensive_ok) still writes a row —
+    passed=True — so the audit trail has a positive record, not just
+    failures."""
+    s = await _seed_session(db_session)
+
+    await gd.record_gate_decision(
+        db_session,
+        use_caller_session=True,
+        session_id=s.id,
+        symbol="PORTFOLIO",
+        action="none",
+        phase=gd.PHASE_FILTER,
+        gate="exposure_check",
+        passed=True,
+        reason="in_range",
+        details={
+            "invested_pct": 70.0,
+            "target_min": 60.0,
+            "target_max": 90.0,
+            "spy_above_20dma": True,
+            "drawdown_gate_active": False,
+        },
+    )
+
+    row = (await db_session.execute(
+        select(GateDecision).where(GateDecision.gate == "exposure_check")
+    )).scalars().first()
+    assert row is not None
+    assert row.passed is True
+    assert row.reason == "in_range"
