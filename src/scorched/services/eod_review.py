@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cost import record_usage
 from ..models import Position, RecommendationSession, TradeHistory, TradeRecommendation
-from .claude_client import HAIKU_MODEL, MODEL, call_eod_review as _call_eod_review, call_position_review as _call_position_review
+from .claude_client import MODEL, call_eod_review as _call_eod_review, call_position_review as _call_position_review
 from .playbook import _check_playbook_drift, _persist_rejected_playbook, get_playbook
 from .telegram import send_telegram
 from .position_mgmt import build_position_review_prompt
@@ -192,7 +192,7 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
         db,
         session_id=session.id,
         call_type="eod_review",
-        model=HAIKU_MODEL,
+        model=MODEL,
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
     )
