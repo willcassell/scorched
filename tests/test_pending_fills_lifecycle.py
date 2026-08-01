@@ -154,6 +154,36 @@ async def test_write_pending_fill_dedups_on_same_client_oid(db_session):
 
 
 @pytest.mark.asyncio
+async def test_write_pending_fill_dedup_refreshes_exit_reason(db_session):
+    """Intraday client_order_ids are day-scoped per symbol, not per-event: a Claude
+    exit at 10:05 and a hard stop at 11:30 for the same symbol collide on the same
+    key. The second write must overwrite the stale label — otherwise the hard-stop
+    sell gets reconciled with the Claude exit's exit_reason, corrupting the loss
+    engine's attribution data."""
+    first = await write_pending_fill(
+        db_session, client_order_id="scorched-intraday-NVDA-2026-05-18",
+        symbol="NVDA", action="sell", qty=Decimal("10"),
+        limit_price=Decimal("200.00"), recommendation_id=None,
+        exit_reason="intraday_claude_exit", exit_trigger="volume_surge",
+    )
+    second = await write_pending_fill(
+        db_session, client_order_id="scorched-intraday-NVDA-2026-05-18",
+        symbol="NVDA", action="sell", qty=Decimal("6"),
+        limit_price=Decimal("190.00"), recommendation_id=None,
+        exit_reason="intraday_hard_stop", exit_trigger="position_drop_from_entry",
+    )
+
+    assert first.id == second.id
+    assert second.exit_reason == "intraday_hard_stop"
+    assert second.exit_trigger == "position_drop_from_entry"
+    # qty/limit_price also refreshed to match the order actually being submitted
+    # in this call — the stale first-write values would misrepresent the in-flight
+    # order.
+    assert second.qty == Decimal("6")
+    assert second.limit_price == Decimal("190.00")
+
+
+@pytest.mark.asyncio
 async def test_write_pending_fill_still_inserts_when_client_oid_is_none(db_session):
     """Null client_order_id (rec-less PaperBroker fallback path) cannot be
     deduped — should still insert distinct rows."""

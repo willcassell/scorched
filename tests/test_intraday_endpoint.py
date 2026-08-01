@@ -49,10 +49,11 @@ def _override_db(db_session):
 
 
 def _make_trigger(symbol="TEST", entry_price="100.00", current_price="93.00",
-                  shares="10", trigger_reasons=None):
+                  shares="10", trigger_reasons=None, trigger_types=None):
     return {
         "symbol": symbol,
         "trigger_reasons": trigger_reasons or ["position_drop_from_entry"],
+        "trigger_types": trigger_types if trigger_types is not None else ["position_drop_from_entry"],
         "current_price": current_price,
         "entry_price": entry_price,
         "today_open": "99.00",
@@ -115,6 +116,12 @@ async def test_hard_stop_triggers_sell_without_claude(db_session, _override_db):
         mock_claude.assert_not_called()
         # Broker sell must have been called
         mock_broker.submit_sell.assert_called_once()
+        # Hard stop always labels as intraday_hard_stop / position_drop_from_entry —
+        # regardless of what trigger_types the caller sent — since _is_hard_stop()
+        # itself only ever checks drop-from-entry.
+        call_kwargs = mock_broker.submit_sell.call_args.kwargs
+        assert call_kwargs["exit_reason"] == "intraday_hard_stop"
+        assert call_kwargs["exit_trigger"] == "position_drop_from_entry"
 
 
 @pytest.mark.asyncio
@@ -160,6 +167,55 @@ async def test_normal_trigger_goes_through_claude(db_session, _override_db):
 
         # Claude MUST have been called
         mock_claude.assert_called_once()
+        # Claude-decided exits must be labeled intraday_claude_exit with the
+        # first fired trigger_type (position_drop_from_entry, per _make_trigger's
+        # default) carried through to the broker call.
+        mock_broker.submit_sell.assert_called_once()
+        call_kwargs = mock_broker.submit_sell.call_args.kwargs
+        assert call_kwargs["exit_reason"] == "intraday_claude_exit"
+        assert call_kwargs["exit_trigger"] == "position_drop_from_entry"
+
+
+@pytest.mark.asyncio
+async def test_claude_exit_skips_blank_trigger_type(db_session, _override_db):
+    """trigger_types can legitimately contain a blank placeholder (GateResult with no
+    trigger_type set) — exit_trigger must pick the first NON-blank entry, not index 0.
+    """
+    trigger = _make_trigger(
+        entry_price="100.00", current_price="97.00",
+        trigger_reasons=["some untagged gate", "Volume surge 4.0x average"],
+        trigger_types=["", "volume_surge"],
+    )
+    body = _make_request([trigger])
+
+    mock_broker = AsyncMock()
+    mock_broker.submit_sell.return_value = {
+        "status": "filled",
+        "trade_id": 101,
+        "filled_avg_price": Decimal("97.00"),
+        "realized_gain": Decimal("-3.00"),
+    }
+
+    mock_response = MagicMock()
+    mock_response.model = "claude-sonnet-4-6"
+    mock_response.usage.input_tokens = 100
+    mock_response.usage.output_tokens = 50
+    raw_text = json.dumps({"action": "exit_full", "reasoning": "Volume spike", "partial_pct": None})
+
+    with patch("scorched.api.intraday.get_broker", return_value=mock_broker), \
+         patch("scorched.api.intraday.call_intraday_exit", return_value=(mock_response, raw_text)), \
+         patch("scorched.api.intraday.record_usage", new_callable=AsyncMock), \
+         patch("scorched.api.intraday._load_hard_stop_pct", return_value=5.0):
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post("/api/v1/intraday/evaluate", json=body)
+
+        assert resp.status_code == 200
+        call_kwargs = mock_broker.submit_sell.call_args.kwargs
+        assert call_kwargs["exit_reason"] == "intraday_claude_exit"
+        assert call_kwargs["exit_trigger"] == "volume_surge"
 
 
 @pytest.mark.asyncio

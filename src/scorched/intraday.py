@@ -135,7 +135,14 @@ def check_intraday_triggers(
     config: dict,
     trailing_stop_price: Decimal | None = None,
 ) -> list[GateResult]:
-    """Run all position-level checks + include market triggers. Returns FIRED only."""
+    """Run all position-level checks + include market triggers. Returns FIRED only.
+
+    Insertion order below (entry -> open -> volume -> trailing-stop -> market) is
+    load-bearing: callers (api/intraday.py's Claude-exit path) treat the first
+    element of the returned list as the primary/dominant trigger for exit_trigger
+    telemetry when multiple triggers fire simultaneously. Don't reorder without
+    checking that consumer.
+    """
     fired: list[GateResult] = []
 
     entry_result = check_position_drop_from_entry(

@@ -337,8 +337,14 @@ def main():
         if triggers:
             triggered_positions.append({
                 "symbol": symbol,
+                # Built from the same comprehension so the two lists stay
+                # index-parallel by construction, not by accident — a filtered
+                # trigger_types would desync from trigger_reasons the moment any
+                # GateResult in the fired list doesn't carry a trigger_type.
+                # trigger_type defaults to "" (see GateResult), which is a
+                # deliberate empty-placeholder, not a dropped entry.
                 "trigger_reasons": [t.reason for t in triggers],
-                "trigger_types": [t.trigger_type for t in triggers if t.trigger_type],
+                "trigger_types": [t.trigger_type for t in triggers],
                 "current_price": current_price,
                 "entry_price": float(pos["avg_cost_basis"]),
                 "today_open": sym_data["today_open"],

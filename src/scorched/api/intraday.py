@@ -291,7 +291,11 @@ async def evaluate_triggers(
                 sell_qty = (trigger.shares * Decimal(str(partial_pct)) / 100).quantize(Decimal("1"))
                 sell_qty = max(sell_qty, Decimal("1"))
 
-            claude_exit_trigger = trigger.trigger_types[0] if trigger.trigger_types else None
+            # First non-blank trigger_type in fired order (see check_intraday_triggers'
+            # load-bearing insertion order docstring) — trigger_type can legitimately be
+            # "" for a GateResult that doesn't set one, so skip blanks rather than
+            # trusting index 0.
+            claude_exit_trigger = next((t for t in trigger.trigger_types if t), None)
             trade_result, err = await _execute_sell(
                 trigger, sell_qty, db,
                 exit_reason="intraday_claude_exit",
