@@ -349,8 +349,11 @@ def check_factor_alignment(
     >= min_factor_lead_pts over the trailing 20 trading days. When that holds,
     the candidate's own 20-day return must be >= min_candidate_mom_pct.
 
-    Returns (passed, reason). Missing factor/candidate data => pass: the
-    experiment targets discretion, and we don't fail-closed on a data gap here.
+    Returns (passed, reason). FAILS CLOSED on missing data (matching the
+    sector-gate posture, audit M10): missing SPY/factor returns, or an
+    unknown candidate momentum while a momentum regime is active, both
+    return (False, "factor_data_missing") rather than silently passing the
+    buy. A data gap is not evidence the buy is safe.
     """
     if not config.get("enabled", False):
         return True, None
@@ -360,12 +363,20 @@ def check_factor_alignment(
     ]
     momentum_leaders = [x for x in momentum_leaders if x is not None]
     if spy is None or not momentum_leaders:
-        return True, None
+        logger.warning(
+            "Factor gate: missing SPY/factor return data — failing closed "
+            "(factor_returns=%s)", factor_returns,
+        )
+        return False, "factor_data_missing"
     lead = max(momentum_leaders) - spy
     if lead < float(config.get("min_factor_lead_pts", 3.0)):
         return True, None  # no clear momentum regime — gate is inactive
     if candidate_20d_return is None:
-        return True, None  # unknown own-momentum — don't block on missing data
+        logger.warning(
+            "Factor gate: momentum regime active (lead %.1fpts) but candidate's "
+            "own 20d return is unknown — failing closed", lead,
+        )
+        return False, "factor_data_missing"
     floor = float(config.get("min_candidate_mom_pct", 0.0))
     if candidate_20d_return < floor:
         return False, (
@@ -373,6 +384,32 @@ def check_factor_alignment(
             f"20d return {candidate_20d_return:.1f}% < {floor:.1f}% floor"
         )
     return True, None
+
+
+def resolve_candidate_20d_momentum(symbol: str, price_row: dict | None) -> float | None:
+    """Resolve a candidate's own 20-trading-day return for the factor gate.
+
+    Prefers `trailing_20d_return_pct` (true 20-trading-day return computed
+    from Alpaca daily bars: close[-1]/close[-21]-1). Falls back to
+    `month_change_pct` (a calendar-month change vs. live price — a coarser,
+    non-trading-day-aligned proxy) only when the true figure is absent, and
+    logs a warning so a persistently-missing trailing figure is visible in
+    the logs rather than silently degrading data quality forever.
+    """
+    if not price_row:
+        return None
+    trailing = price_row.get("trailing_20d_return_pct")
+    if trailing is not None:
+        return trailing
+    month_change = price_row.get("month_change_pct")
+    if month_change is not None:
+        logger.warning(
+            "Factor gate: trailing_20d_return_pct missing for %s — falling back "
+            "to month_change_pct (calendar-month, not true 20-trading-day return)",
+            symbol,
+        )
+        return month_change
+    return None
 
 
 def _compute_portfolio_total_value(
@@ -1194,10 +1231,20 @@ async def generate_recommendations(
             # the energy/commodity loss bucket. Prompt rule #9 was advisory and
             # Claude overrode it repeatedly; this enforces it.
             factor_cfg = strategy_json.get("factor_gate", {})
-            candidate_20d = (price_data.get(symbol) or {}).get("month_change_pct")
+            symbol_price_row = price_data.get(symbol)
+            candidate_20d = resolve_candidate_20d_momentum(symbol, symbol_price_row)
             factor_passed, factor_reason = check_factor_alignment(
                 candidate_20d, factor_returns, factor_cfg
             )
+            # momentum_source lets a later audit distinguish a real 20d-return
+            # block from one that fell back to the coarser calendar-month proxy
+            # (or had neither, in the fail-closed factor_data_missing case).
+            if symbol_price_row and symbol_price_row.get("trailing_20d_return_pct") is not None:
+                momentum_source = "trailing_20d"
+            elif symbol_price_row and symbol_price_row.get("month_change_pct") is not None:
+                momentum_source = "month_change"
+            else:
+                momentum_source = None
             await record_gate_decision(
                 db,
                 use_caller_session=True,
@@ -1210,6 +1257,7 @@ async def generate_recommendations(
                 reason=factor_reason,
                 details={
                     "candidate_20d_return": candidate_20d,
+                    "momentum_source": momentum_source,
                     "min_factor_lead_pts": factor_cfg.get("min_factor_lead_pts"),
                     "min_candidate_mom_pct": factor_cfg.get("min_candidate_mom_pct"),
                 },

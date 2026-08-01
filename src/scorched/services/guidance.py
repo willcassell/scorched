@@ -98,7 +98,7 @@ _PROVENANCE_MAP: dict[int, str] = {
     6: "prompt-only",
     7: "prompt-only",  # circuit_breaker is a different (open-gap) check
     8: "both",         # recommender enforces cash floor pre-execution
-    9: "prompt-only",
+    9: "both",         # recommender.check_factor_alignment() also enforces (Task 5)
 }
 
 

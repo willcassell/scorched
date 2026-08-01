@@ -84,6 +84,17 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
             high_52w = max(b["high"] for b in bars)
             low_52w = min(b["low"] for b in bars)
 
+            # True 20-trading-day return (close[-1]/close[-21]-1), distinct from
+            # month_change_pct's calendar-month/live-price proxy. Requires >=21
+            # completed daily bars. Used by check_factor_alignment (Task 5,
+            # 2026-07-31) so momentum-regime blocks compare like-for-like
+            # trading-day windows instead of a calendar-month change.
+            trailing_20d_return_pct = (
+                round((closes[-1] / closes[-21] - 1) * 100, 2)
+                if len(closes) >= 21
+                else None
+            )
+
             # Fundamentals from yfinance (PE, market cap, etc.) — Alpaca doesn't have these
             info = {}
             try:
@@ -97,6 +108,7 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
                 "current_price": current_price,
                 "week_change_pct": round((current_price - week_ago_price) / week_ago_price * 100, 2),
                 "month_change_pct": round((current_price - month_ago_price) / month_ago_price * 100, 2),
+                "trailing_20d_return_pct": trailing_20d_return_pct,
                 "high_52w": high_52w,
                 "low_52w": low_52w,
                 "market_cap": info.get("marketCap"),
@@ -1437,7 +1449,9 @@ def build_research_context(
             rs = relative_strength[symbol]
             rs_label = "outperforming" if rs > 0 else "underperforming"
             rs_str = f" | vs sector: {rs:+.1f}% ({rs_label})"
-        lines.append(f"  Price: ${data['current_price']:.2f} | 1wk: {data['week_change_pct']:+.1f}% | 1mo: {data['month_change_pct']:+.1f}%{rs_str}")
+        t20 = data.get("trailing_20d_return_pct")
+        t20_str = f" | 20d: {t20:+.1f}%" if t20 is not None else ""
+        lines.append(f"  Price: ${data['current_price']:.2f} | 1wk: {data['week_change_pct']:+.1f}% | 1mo: {data['month_change_pct']:+.1f}%{t20_str}{rs_str}")
         lines.append(f"  52w range: ${data['low_52w']:.2f} – ${data['high_52w']:.2f}")
         if premarket_data and symbol in premarket_data:
             pm = premarket_data[symbol]
