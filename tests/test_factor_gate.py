@@ -99,6 +99,29 @@ def test_custom_floor_rejects_weak_positive():
     assert ok is False
 
 
+def test_malformed_numeric_config_degrades_to_defaults_and_logs_error(caplog):
+    # A hand-edited strategy.json can put a non-numeric string / None into a
+    # numeric field. That must not raise into the hot path (crashing Phase 1)
+    # — it must degrade to the documented default (3.0 / 0.0) and log an
+    # ERROR naming the key + exception type, matching the Task 9 hardening
+    # applied to check_reentry_cooldown's own config coercion.
+    cfg = {
+        "enabled": True,
+        "min_factor_lead_pts": "not-a-number",
+        "min_candidate_mom_pct": None,
+    }
+    with caplog.at_level(logging.ERROR):
+        # MOMENTUM_REGIME's lead is 6.0pts (MTUM 8.0 - SPY 2.0), well past
+        # the default 3.0pt floor, so the regime is active; candidate's own
+        # momentum of 2.0 clears the degraded-to-default 0.0 floor.
+        ok, reason = check_factor_alignment(2.0, MOMENTUM_REGIME, cfg)
+    assert ok is True
+    assert reason is None
+    error_messages = [rec.message for rec in caplog.records if rec.levelno >= logging.ERROR]
+    assert any("min_factor_lead_pts" in m for m in error_messages)
+    assert any("min_candidate_mom_pct" in m for m in error_messages)
+
+
 # --- resolve_candidate_20d_momentum: true 20-trading-day return preference ---
 
 

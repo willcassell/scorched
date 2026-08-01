@@ -337,6 +337,33 @@ def check_sector_exposure(
     return True
 
 
+def _coerce_gate_float(cfg: dict, key: str, default: float, gate: str) -> float:
+    """Best-effort float coercion for a numeric gate config value.
+
+    A hand-edited strategy.json can put a string, None, a list, etc. in a
+    numeric field. That must not raise into the hot path and abort the
+    whole session's recommendation generation (fix-round-1 finding on
+    check_factor_alignment / check_mechanical_entry: both did a bare
+    `float(config.get(key, default))` that would crash Phase 1 on a
+    malformed value). Log an ERROR naming the key, the bad value, and the
+    exception type, then degrade to the documented default — this is a
+    narrower, more targeted version of the fail-open posture
+    check_reentry_cooldown uses for its own config coercion (Task 9): here
+    only the single malformed *value* degrades, not the whole gate's
+    fail-closed stance on missing data.
+    """
+    raw = cfg.get(key, default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as e:
+        logger.error(
+            "%s gate: malformed config value for %r (%r, %s: %s) — "
+            "degrading to default %s",
+            gate, key, raw, type(e).__name__, e, default,
+        )
+        return default
+
+
 def check_factor_alignment(
     candidate_20d_return: float | None,
     factor_returns: dict,
@@ -374,7 +401,8 @@ def check_factor_alignment(
         )
         return False, "factor_data_missing"
     lead = max(momentum_leaders) - spy
-    if lead < float(config.get("min_factor_lead_pts", 3.0)):
+    min_factor_lead_pts = _coerce_gate_float(config, "min_factor_lead_pts", 3.0, "factor_alignment")
+    if lead < min_factor_lead_pts:
         return True, None  # no clear momentum regime — gate is inactive
     if candidate_20d_return is None:
         logger.warning(
@@ -382,7 +410,7 @@ def check_factor_alignment(
             "own 20d return is unknown — failing closed", lead,
         )
         return False, "factor_data_missing"
-    floor = float(config.get("min_candidate_mom_pct", 0.0))
+    floor = _coerce_gate_float(config, "min_candidate_mom_pct", 0.0, "factor_alignment")
     if candidate_20d_return < floor:
         return False, (
             f"momentum regime (factor lead {lead:.1f}pts) but candidate's own "
@@ -546,7 +574,7 @@ def check_mechanical_entry(
 
     # --- Criterion 1: 5-day momentum > floor (strict) ---
     momentum = row.get("week_change_pct")
-    min_momentum = float(cfg.get("min_momentum_5d_pct", 0.0))
+    min_momentum = _coerce_gate_float(cfg, "min_momentum_5d_pct", 0.0, "mechanical_entry")
     if momentum is None:
         if not fail_open:
             logger.warning(
@@ -563,7 +591,7 @@ def check_mechanical_entry(
 
     # --- Criterion 2: relative volume >= floor (non-strict) ---
     rel_volume = volume.get("relative_volume")
-    min_rel_volume = float(cfg.get("min_rel_volume", 1.0))
+    min_rel_volume = _coerce_gate_float(cfg, "min_rel_volume", 1.0, "mechanical_entry")
     if rel_volume is None:
         if not fail_open:
             logger.warning(

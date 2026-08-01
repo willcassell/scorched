@@ -166,6 +166,30 @@ def test_missing_cfg_keys_use_defaults():
     assert reason == "mechanical_momentum"
 
 
+def test_malformed_numeric_config_degrades_to_defaults_and_logs_error(caplog):
+    # A hand-edited strategy.json can put a non-numeric string / None into a
+    # numeric field. That must not raise into the hot path (crashing Phase 1)
+    # — it must degrade to the documented default (0.0 / 1.0) and log an
+    # ERROR naming the key + exception type.
+    cfg = {
+        "enabled": True,
+        "min_momentum_5d_pct": "not-a-number",
+        "min_rel_volume": None,
+        "require_above_20dma": True,
+    }
+    with caplog.at_level(logging.ERROR):
+        ok, reason = check_mechanical_entry(
+            "AAPL", _price_data(2.0, 105.0), _technicals(1.4, 100.0), cfg
+        )
+    # Defaults applied (0.0 / 1.0) -> momentum 2.0 > 0.0 and rel_vol 1.4 >=
+    # 1.0 both clear, so the buy is allowed rather than the run crashing.
+    assert ok is True
+    assert reason is None
+    error_messages = [rec.message for rec in caplog.records if rec.levelno >= logging.ERROR]
+    assert any("min_momentum_5d_pct" in m for m in error_messages)
+    assert any("min_rel_volume" in m for m in error_messages)
+
+
 def test_custom_thresholds_respected():
     cfg = {
         "enabled": True,
