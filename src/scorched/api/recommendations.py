@@ -29,6 +29,9 @@ async def list_sessions(
     limit: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
+    from decimal import Decimal
+    from ..schemas import RecommendationItem
+
     rows = await recommender_svc.list_sessions(db, session_date=session_date, limit=limit)
     return [
         SessionListItem(
@@ -36,6 +39,21 @@ async def list_sessions(
             session_date=r.session_date,
             recommendation_count=len(r.recommendations),
             created_at=r.created_at,
+            recommendations=[
+                RecommendationItem(
+                    id=rec.id,
+                    symbol=rec.symbol,
+                    action=rec.action,
+                    suggested_price=rec.suggested_price,
+                    quantity=rec.quantity,
+                    estimated_cost=(rec.suggested_price * rec.quantity).quantize(Decimal("0.01")),
+                    reasoning=rec.reasoning,
+                    confidence=rec.confidence,
+                    key_risks=rec.key_risks,
+                    status=rec.status,
+                )
+                for rec in r.recommendations
+            ],
         )
         for r in rows
     ]
@@ -80,6 +98,7 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
             reasoning=r.reasoning,
             confidence=r.confidence,
             key_risks=r.key_risks,
+            status=r.status,
         )
         for r in row.recommendations
     ]

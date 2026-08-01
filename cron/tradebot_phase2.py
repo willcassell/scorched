@@ -44,6 +44,42 @@ def _cleanup_recs_file(path):
             pass
 
 
+def merge_pending(file_recs: list[dict], db_recs: list[dict]) -> tuple[list[dict], list[str]]:
+    """Union file recs with today's DB-pending recs. Returns (merged, missing_from_file_symbols).
+    DB rec shape comes from GET /api/v1/recommendations (id, symbol, action, status, suggested_price...).
+    Only status == 'pending' DB recs are added; file entries win on duplicates (they carry gate results)."""
+    by_symbol = {(r["symbol"], r["action"]): r for r in file_recs}
+    missing = []
+    merged = list(file_recs)
+    for r in db_recs:
+        if r.get("status") != "pending":
+            continue
+        key = (r["symbol"], r["action"])
+        if key not in by_symbol:
+            merged.append(r)
+            missing.append(f"{r['action']} {r['symbol']}")
+    return merged, missing
+
+
+def gate_blocked_keys(original_recs: list[dict], gated_recs: list[dict]) -> set[tuple[str, str]]:
+    """Return (symbol, action) keys present in the pre-circuit-breaker file
+    but absent from the post-circuit-breaker (gated) file — i.e. deliberately
+    blocked at 9:55, not lost by the pipeline.
+
+    Phase 1.5 never updates DB status for blocked recs (they stay
+    status='pending' in trade_recommendations), so without this exclusion
+    `merge_pending` would treat a circuit-breaker rejection identically to a
+    rec the file pipeline silently dropped, and Phase 2 would execute it
+    ungated — exactly what the circuit breaker exists to prevent.
+    """
+    gated_keys = {(r["symbol"], r["action"]) for r in gated_recs}
+    return {
+        (r["symbol"], r["action"])
+        for r in original_recs
+        if (r["symbol"], r["action"]) not in gated_keys
+    }
+
+
 def main():
     now_est, today_str = now_et()
     check_expected_hour(10, "Phase 2")
@@ -82,7 +118,54 @@ def main():
         return
 
     recs = stored["recommendations"]
-    symbols = stored["symbols"]
+
+    # DB is the source of truth: union file recs with today's DB-pending recs
+    # so a rec that survived risk review but never made it into the Phase
+    # 1/1.5 file (pipeline bug, crash, etc.) still gets a confirm attempt
+    # instead of silently expiring (see ABBV 6/23, GS 7/14, AMZN 7/31).
+    # Circuit-breaker-blocked buys are excluded via gate_blocked_keys — they
+    # were deliberately rejected at 9:55, not lost by the plumbing, and
+    # Phase 1.5 never updates their DB status so they'd otherwise look
+    # identical to a dropped rec.
+    mismatch_warning = ""
+    blocked_keys: set[tuple[str, str]] = set()
+    db_merge_skip_reason = ""
+    if recs_file == GATED_FILE:
+        try:
+            with open(ORIGINAL_FILE) as f:
+                original_stored = json.load(f)
+            if original_stored.get("date") == today_str:
+                blocked_keys = gate_blocked_keys(original_stored.get("recommendations", []), recs)
+            else:
+                db_merge_skip_reason = "original (pre-gate) file date mismatch"
+        except FileNotFoundError:
+            db_merge_skip_reason = "original (pre-gate) file missing"
+        except Exception as e:
+            db_merge_skip_reason = f"original (pre-gate) file unreadable ({e})"
+
+    if db_merge_skip_reason:
+        # Fail closed: without the original file we can't tell a
+        # circuit-breaker rejection from a plumbing drop, so skip the DB
+        # merge entirely rather than risk resurrecting a blocked buy ungated.
+        print(f"DB-pending merge skipped (fail-closed): {db_merge_skip_reason}")
+    else:
+        try:
+            db_sessions = http_get(f"/api/v1/recommendations?session_date={today_str}&limit=1")
+            db_recs = db_sessions[0]["recommendations"] if db_sessions else []
+        except Exception as e:
+            print(f"DB-pending fetch failed (continuing with file recs only): {e}")
+            db_recs = []
+
+        db_recs = [r for r in db_recs if (r["symbol"], r["action"]) not in blocked_keys]
+        recs, missing = merge_pending(recs, db_recs)
+        if missing:
+            mismatch_warning = (
+                "⚠️ PHASE 2 FILE/DB MISMATCH — executing from DB: " + ", ".join(missing) +
+                " (DB-pending, missing from Phase 1/1.5 file; ungated — no circuit-breaker check)\n\n"
+            )
+            print(f"DB/file mismatch: {missing}")
+
+    symbols = sorted({r["symbol"] for r in recs})
     pending = recs
 
     # Load execution config from strategy.json
@@ -252,7 +335,7 @@ def main():
             positions = []
 
         mode_label = {"paper": "PAPER", "alpaca_paper": "ALPACA-PAPER", "alpaca_live": "LIVE"}.get(broker_mode, broker_mode.upper())
-        msg = f"TRADEBOT [{mode_label}] // {today_str} - Executed at open\n"
+        msg = mismatch_warning + f"TRADEBOT [{mode_label}] // {today_str} - Executed at open\n"
         if pre_recon_warning:
             msg += "\n" + pre_recon_warning
         msg += f"Portfolio: ${total:,.2f} ({fmt_pct(ret_pct)})\n\n"

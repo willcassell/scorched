@@ -21,6 +21,7 @@ class RecommendationItem(BaseModel):
     reasoning: str
     confidence: str
     key_risks: str | None = None
+    status: str = "pending"  # 'pending' | 'submitted' | 'confirmed' | 'rejected'
 
 
 class PortfolioSummary(BaseModel):
@@ -171,6 +172,7 @@ class SessionListItem(BaseModel):
     session_date: date
     recommendation_count: int
     created_at: datetime
+    recommendations: list[RecommendationItem] = []
 
 
 class SessionDetail(BaseModel):

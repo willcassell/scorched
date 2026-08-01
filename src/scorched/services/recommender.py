@@ -219,6 +219,7 @@ async def _build_cached_response(
             reasoning=r.reasoning,
             confidence=r.confidence,
             key_risks=r.key_risks,
+            status=r.status,
         )
         for r in session.recommendations
     ]
@@ -1320,6 +1321,7 @@ async def generate_recommendations(
             reasoning=row.reasoning,
             confidence=row.confidence,
             key_risks=row.key_risks,
+            status=row.status,
         )
         for row in recommendation_rows
     ]
