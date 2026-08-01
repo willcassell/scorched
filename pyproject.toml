@@ -9,7 +9,7 @@ description = "AI-powered stock trading assistant — Claude analyzes markets, m
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [
-    "mcp[cli]>=1.9.0",
+    "mcp[cli]>=1.9.0,<2.0.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "sqlalchemy[asyncio]>=2.0.0",
