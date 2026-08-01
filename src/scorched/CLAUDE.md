@@ -110,7 +110,7 @@ RSI interpretation depends on entry style:
 
 1. **No earnings holds**: Do not buy a position if an earnings report is scheduled within the next 3 trading days, unless the position was opened before the earnings date was announced. For 2–6 week holds that would span earnings, require the thesis to be earnings-independent or plan to trim 50% before the print.
 2. **Sector concentration**: No single sector may exceed 40% of total portfolio value. Code-enforced — buys that would push a sector above the cap are rejected before execution.
-3. **100% gain rule**: If any position is up 100%+, sell at least half immediately.
+3. **Large-winner management**: Exits, including for large winners, follow the trailing stop (HWM − 2×ATR, −5% floor); no forced partial sells (`partial_sell: never`).
 4. **No buying into a first-day selloff**: If SPY is down >2% today, do not initiate new long positions. Wait for stabilization.
 5. **Stop loss at -8% from entry**: Any position down 8% from the buy price should be exited in full. No averaging down. (Widened from -5% to accommodate 2–6 week volatility; position sizing scales for this.)
 6. **Time stop at 30 calendar days**: If a position is flat or down after ~30 calendar days with no fresh catalyst, exit regardless of thesis. Do not let a swing trade drift into buy-and-hold.
