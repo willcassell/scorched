@@ -115,6 +115,11 @@ _PROVENANCE_MAP: dict[int, str] = {
     # rather than "both", since there's no belt-and-suspenders prompt logic
     # here for the code to be a backstop for.
     11: "code-enforced",
+    # Purely code-enforced (Task 10): recommender.check_mechanical_entry()
+    # rejects any BUY that fails 5-day momentum > 0, relative volume >= 1.0x,
+    # or price above the 20-day MA — no prompt-side judgment call, same
+    # provenance shape as rule 11.
+    12: "code-enforced",
 }
 
 
