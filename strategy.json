@@ -21,14 +21,28 @@
     "min_factor_lead_pts": 3.0,
     "min_candidate_mom_pct": 0.0
   },
+  "reentry_cooldown_days": 3,
+  "rule_overrides": {
+    "gain_trigger": {
+      "enabled": false
+    }
+  },
+  "mechanical_entry": {
+    "enabled": true,
+    "min_momentum_5d_pct": 0.0,
+    "min_rel_volume": 1.0,
+    "require_above_20dma": true
+  },
   "experiment": {
-    "name": "B-momentum-discipline",
-    "start_date": "2026-06-18",
+    "name": "C-best-in-class",
+    "start_date": "2026-08-03",
     "deadline_trading_days": 60,
-    "deadline_approx_date": "2026-09-12",
-    "kill_unless": "net_return > SPY AND profit_factor > 1.0",
-    "fallback": "retire (Option A) — no extension",
-    "thesis": "Backtest showed discretionary entries lose under every exit policy and the LLM picks worse than a mechanical breakout rule. Changes: breakout-only + code factor gate (kill falling-knife entries), size 33->15% (cap single-trade damage), trailing-stop exits + no early profit-trim (stop choking winners)."
+    "deadline_approx_date": "2026-10-27",
+    "baseline_portfolio_value": 101798.53,
+    "baseline_spy": 746.79,
+    "kill_unless": "window_return > SPY_window_return AND window_profit_factor > 1.0",
+    "fallback": "retire (turn off crons)",
+    "thesis": "Opus 5 + mechanical entry gate + exposure discipline + cooldown + exit telemetry fix the entry-quality and underexposure failures; Experiment B carryovers (breakout-only, factor gate, 15% size, trailing exits) retained."
   },
   "add_vs_rotate": "adaptive",
   "risk_guardrails": [],
@@ -65,5 +79,14 @@
   "drawdown_gate": {
     "enabled": true,
     "max_drawdown_pct": 8.0
+  },
+  "exposure": {
+    "target_min_invested_pct": 60,
+    "target_max_invested_pct": 90,
+    "regime_condition": "spy_above_20dma_and_no_drawdown_gate"
+  },
+  "trailing_stop": {
+    "atr_multiplier": 2.0,
+    "floor_pct": 5.0
   }
 }

@@ -99,6 +99,8 @@ def update_trailing_stop(
     current_price: float,
     atr: float,
     entry_price: float,
+    atr_multiplier: float = 2.0,
+    min_stop_pct: float = 5.0,
 ) -> dict:
     """Ratchet high_water_mark and trailing stop on a new price tick.
 
@@ -118,6 +120,12 @@ def update_trailing_stop(
         the function will fall back to the fixed-percentage floor.
     entry_price : float
         Original entry price (avg cost basis) for the position.
+    atr_multiplier : float
+        Forwarded to ``compute_trailing_stop`` (default 2.0 — see
+        ``strategy.json`` -> ``trailing_stop.atr_multiplier``).
+    min_stop_pct : float
+        Forwarded to ``compute_trailing_stop`` as the fixed-pct floor
+        (default 5.0 — see ``strategy.json`` -> ``trailing_stop.floor_pct``).
 
     Returns
     -------
@@ -131,9 +139,32 @@ def update_trailing_stop(
         current_price=Decimal(str(current_price)),
         high_water_mark=Decimal(str(prev_hwm)) if prev_hwm is not None else None,
         atr=float(atr) if atr else None,
+        atr_multiplier=atr_multiplier,
+        min_stop_pct=min_stop_pct,
         previous_stop=Decimal(str(prev_stop)) if prev_stop is not None else None,
     )
     return {
         "high_water_mark": float(result["high_water_mark"]),
         "trailing_stop_price": float(result["trailing_stop_price"]),
     }
+
+
+def initial_stop_price(entry_price: Decimal, min_stop_pct: float = 5.0) -> Decimal:
+    """Fixed-percentage stop for a brand-new position (no ATR/HWM history yet).
+
+    Used by ``services/portfolio.py:apply_buy`` and
+    ``services/reconciliation.py`` when a position is first created — mirrors
+    the same ``min_stop_pct`` floor ``compute_trailing_stop`` uses, so a
+    position's day-one stop is consistent with its ongoing trailing-stop
+    floor. Default (5.0) is unchanged from the previous hardcoded
+    ``price * Decimal("0.95")``.
+
+    Deliberately quantizes with the ambient decimal context's rounding mode
+    (ROUND_HALF_EVEN by default) rather than an explicit mode — the old
+    inline formula this replaces (``(execution_price *
+    Decimal("0.95")).quantize(Decimal("0.0001"))``) never passed a rounding
+    mode either, so an explicit ROUND_HALF_UP here would be a (if tiny)
+    behavior change at exact-tie values.
+    """
+    _q4 = Decimal("0.0001")
+    return (entry_price * (Decimal("1") - Decimal(str(min_stop_pct)) / Decimal("100"))).quantize(_q4)

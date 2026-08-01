@@ -28,13 +28,13 @@ from ..services.research import (
     fetch_factor_returns,
     fetch_fred_macro,
     fetch_market_context,
-    fetch_mean_reversion_screener,
-    fetch_momentum_screener,
     fetch_news,
     fetch_premarket_prices,
     fetch_price_data,
+    fetch_screeners,
     fetch_sector_returns,
 )
+from ..services.strategy import load_strategy_json
 from ..services.technicals import compute_technicals
 
 logger = logging.getLogger(__name__)
@@ -102,20 +102,18 @@ async def prefetch_research(db: AsyncSession = Depends(get_db)):
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]
 
-    # 1. Screeners — momentum (top 5-day gainers) and mean-reversion
-    # (pullbacks inside uptrends). Run in parallel; they hit the same Alpaca
-    # bars endpoint but with independent filter logic, so there's no shared
-    # state to coordinate. Mean-reversion excludes momentum picks to avoid
-    # double-surfacing (in practice they rarely overlap — momentum picks have
-    # RSI > 55, mean-reversion requires RSI ≤ 40 — but defensive dedup is cheap).
+    # 1. Screeners — momentum (top 5-day gainers) always; mean-reversion
+    # (pullbacks inside uptrends) only when the declared strategy's
+    # entry_style includes "mean_reversion" (fetch_screeners in research.py
+    # is the single gate shared with the recommender's inline fallback path
+    # — see there for why this is code-enforced, not just prompt-level).
+    # When run, both screeners hit the same Alpaca bars endpoint but with
+    # independent filter logic, so there's no shared state to coordinate.
+    strategy_json = load_strategy_json()
     with _timed("screeners", timing):
-        screener_symbols, mean_reversion_symbols = await asyncio.gather(
-            fetch_momentum_screener(n=20, tracker=tracker),
-            fetch_mean_reversion_screener(n=10, tracker=tracker),
+        screener_symbols, mean_reversion_symbols = await fetch_screeners(
+            strategy_json, tracker=tracker
         )
-    # Dedup mean-reversion against momentum in case both surfaced the same
-    # ticker on an RSI-boundary day.
-    mean_reversion_symbols = [s for s in mean_reversion_symbols if s not in set(screener_symbols)]
     logger.info(
         "Phase 0: momentum screener returned %d symbols: %s",
         len(screener_symbols), screener_symbols,

@@ -116,6 +116,13 @@ class TradeHistory(Base):
     executed_at: Mapped[datetime] = mapped_column(server_default=func.now())
     realized_gain: Mapped[Decimal | None] = mapped_column(Numeric(15, 4))
     tax_category: Mapped[str | None] = mapped_column(String(10))
+    # Exit telemetry (sells only; NULL for buys and for legacy rows predating this column).
+    # Vocabulary: "recommendation" (Phase 2 sell), "intraday_hard_stop", "intraday_claude_exit", "manual".
+    exit_reason: Mapped[str | None] = mapped_column(String(40))
+    # One of the 6 intraday trigger names when exit_reason is intraday_*, else NULL:
+    # position_drop_from_entry, position_drop_from_open, spy_intraday_drop,
+    # vix_above_threshold, volume_surge, trailing_stop_breached.
+    exit_trigger: Mapped[str | None] = mapped_column(String(40))
 
 
 class TokenUsage(Base):
@@ -154,6 +161,11 @@ class PendingFill(Base):
     # Nullable to match migration 0010 (DB column is nullable) — keeps
     # `alembic check` clean so autogenerate doesn't emit a surprise SET NOT NULL.
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), nullable=True)
+    # Exit telemetry pass-through: submit_sell writes these here so they survive
+    # the fire-and-forget window until reconcile_pending_orders() reads them back
+    # into apply_sell(). Always NULL for action="buy".
+    exit_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    exit_trigger: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class GateDecision(Base):

@@ -17,6 +17,7 @@ from ..api_tracker import track_call
 from ..config import settings
 from ..prompts import load_prompt
 from ..retry import claude_call_with_retry
+from ..risk_gates import DEFAULT_MAX_POSITION_PCT
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +140,40 @@ def validate_llm_output(raw_dict: dict, model_class: type[BaseModel]) -> Optiona
         return None
 
 # ── Shared constants ─────────────────────────────────────────────────────────
-MODEL = "claude-sonnet-4-6"
-THINKING_BUDGET = 16000  # tokens; ~$0.048/day (Tier 2 upgrade from 8K)
+MODEL = "claude-opus-5"
+
+# Per-call reasoning effort (Opus 5 adaptive thinking is always on; effort is the depth lever)
+EFFORT = {
+    "analysis": "xhigh",
+    "decision": "high",
+    "risk_review": "high",
+    "position_mgmt": "medium",
+    "intraday_exit": "high",
+    "playbook": "medium",
+    "reflection": "medium",
+    "quick": "low",
+}
+
+# max_tokens headroom for Call 1 (thinking + text combined cap on Opus 5 — this
+# is NOT an API thinking-token-limit parameter; Opus 5 rejects that kind of
+# fixed-ceiling thinking config outright, and depth is controlled via effort).
+THINKING_BUDGET = 16000
+
+
+class ClaudeRefusalError(RuntimeError):
+    """Opus 5 safety classifiers declined the request (stop_reason == 'refusal')."""
+
+
+def _refusal_guard(response) -> None:
+    """Raise if Claude's safety classifiers declined the request.
+
+    Opus 5 returns a normal HTTP 200 with stop_reason == "refusal" (plus a
+    stop_details category) instead of an error — must be checked before any
+    content parsing, since content may be empty or partial on a refusal.
+    """
+    if getattr(response, "stop_reason", None) == "refusal":
+        detail = getattr(response, "stop_details", None)
+        raise ClaudeRefusalError(f"Claude refused request: {detail}")
 
 
 # ── Response helpers ─────────────────────────────────────────────────────────
@@ -298,10 +331,12 @@ async def call_analysis(strategy: str, guidance: str, user_content: str, tracker
             # risks a max_tokens truncation mid-object. 4096 gives headroom.
             model=MODEL,
             max_tokens=THINKING_BUDGET + 4096,
-            thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
+            thinking={"type": "adaptive", "display": "summarized"},
+            output_config={"effort": EFFORT["analysis"]},
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         )
+    _refusal_guard(response)
 
     if response.stop_reason == "max_tokens":
         logger.warning("Call 1 hit max_tokens — JSON output may be truncated")
@@ -320,6 +355,8 @@ async def call_analysis(strategy: str, guidance: str, user_content: str, tracker
             _client(), "Call 1 (analysis JSON fix)",
             model=MODEL,
             max_tokens=2048,
+            thinking={"type": "disabled"},
+            output_config={"effort": "low"},
             system=system_prompt,
             messages=[
                 {"role": "user", "content": user_content},
@@ -327,7 +364,8 @@ async def call_analysis(strategy: str, guidance: str, user_content: str, tracker
                 {"role": "user", "content": _JSON_FIXUP_PROMPT},
             ],
         )
-        analysis_raw = retry_response.content[0].text
+        _refusal_guard(retry_response)
+        analysis_raw = extract_text(retry_response.content)
         parsed = parse_json_response(analysis_raw)
         logger.info("Call 1 JSON fix-up %s", "succeeded" if parsed else "also failed")
 
@@ -352,7 +390,7 @@ async def call_decision(
     min_cash_pct: int,
     user_content: str,
     *,
-    max_position_pct: int = 33,
+    max_position_pct: int = DEFAULT_MAX_POSITION_PCT,
     max_holdings: int = 10,
     tracker=None,
 ):
@@ -373,12 +411,17 @@ async def call_decision(
         response = await claude_call_with_retry(
             _client(), "Call 2 (decision)",
             model=MODEL,
-            max_tokens=2048,
+            max_tokens=8192,
+            thinking={"type": "adaptive", "display": "summarized"},
+            output_config={"effort": EFFORT["decision"]},
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         )
+    _refusal_guard(response)
+    if response.stop_reason == "max_tokens":
+        logger.warning("Call 2 hit max_tokens — JSON output may be truncated")
 
-    decision_raw = response.content[0].text
+    decision_raw = extract_text(response.content)
     parsed = parse_json_response(decision_raw)
 
     # Retry once on parse failure — sends back the bad response and asks for clean JSON
@@ -393,6 +436,8 @@ async def call_decision(
                 _client(), "Call 2 (decision JSON fix)",
                 model=MODEL,
                 max_tokens=2048,
+                thinking={"type": "disabled"},
+                output_config={"effort": "low"},
                 system=system_prompt,
                 messages=[
                     {"role": "user", "content": user_content},
@@ -400,7 +445,8 @@ async def call_decision(
                     {"role": "user", "content": _JSON_FIXUP_PROMPT},
                 ],
             )
-        decision_raw = retry_response.content[0].text
+        _refusal_guard(retry_response)
+        decision_raw = extract_text(retry_response.content)
         parsed = parse_json_response(decision_raw)
         logger.info("Call 2 JSON fix-up %s", "succeeded" if parsed else "also failed")
 
@@ -425,12 +471,17 @@ async def call_risk_review(user_content: str, tracker=None):
         response = await claude_call_with_retry(
             _client(), "Call 3 (risk review)",
             model=MODEL,
-            max_tokens=2048,
+            max_tokens=8192,
+            thinking={"type": "adaptive", "display": "summarized"},
+            output_config={"effort": EFFORT["risk_review"]},
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         )
+    _refusal_guard(response)
+    if response.stop_reason == "max_tokens":
+        logger.warning("Call 3 hit max_tokens — JSON output may be truncated")
 
-    return response, response.content[0].text
+    return response, extract_text(response.content)
 
 
 async def call_position_review(user_content: str):
@@ -442,15 +493,15 @@ async def call_position_review(user_content: str):
     response = await claude_call_with_retry(
         _client(), "Call 4 (position review)",
         model=MODEL,
-        max_tokens=1024,
+        max_tokens=4096,
+        thinking={"type": "adaptive", "display": "summarized"},
+        output_config={"effort": EFFORT["position_mgmt"]},
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
+    _refusal_guard(response)
 
-    return response, response.content[0].text
-
-
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
+    return response, extract_text(response.content)
 
 
 async def call_eod_review(user_content: str):
@@ -461,17 +512,20 @@ async def call_eod_review(user_content: str):
     system_prompt = load_prompt("eod_review")
     response = await claude_call_with_retry(
         _client(), "EOD review",
-        model=HAIKU_MODEL,
-        max_tokens=2048,
+        model=MODEL,
+        max_tokens=1024,
+        thinking={"type": "disabled"},
+        output_config={"effort": EFFORT["quick"]},
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
+    _refusal_guard(response)
 
-    return response, response.content[0].text.strip()
+    return response, extract_text(response.content).strip()
 
 
 async def call_playbook_update(user_content: str):
-    """Playbook update (uses MODEL — sonnet; switched from opus for cost).
+    """Playbook update.
 
     Returns (response, updated_text).
     Raises anthropic.APIStatusError on failure after retries.
@@ -480,12 +534,15 @@ async def call_playbook_update(user_content: str):
     response = await claude_call_with_retry(
         _client(), "Playbook update",
         model=MODEL,
-        max_tokens=2048,
+        max_tokens=8192,
+        thinking={"type": "adaptive", "display": "summarized"},
+        output_config={"effort": EFFORT["playbook"]},
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
+    _refusal_guard(response)
 
-    return response, response.content[0].text.strip()
+    return response, extract_text(response.content).strip()
 
 
 async def call_intraday_exit(user_content: str):
@@ -497,17 +554,20 @@ async def call_intraday_exit(user_content: str):
     logger.info("Intraday exit evaluation call")
     response = await claude_call_with_retry(
         _client(), "Intraday exit",
-        model=HAIKU_MODEL,
-        max_tokens=512,
+        model=MODEL,
+        max_tokens=4096,
+        thinking={"type": "adaptive", "display": "summarized"},
+        output_config={"effort": EFFORT["intraday_exit"]},
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
+    _refusal_guard(response)
 
-    return response, response.content[0].text
+    return response, extract_text(response.content)
 
 
 async def call_weekly_reflection(user_content: str):
-    """Weekly reflection — reviews past trades for learnings. Uses sonnet.
+    """Weekly reflection — reviews past trades for learnings.
 
     Returns (response, raw_text).
     """
@@ -515,9 +575,12 @@ async def call_weekly_reflection(user_content: str):
     response = await claude_call_with_retry(
         _client(), "Weekly reflection",
         model=MODEL,
-        max_tokens=2048,
+        max_tokens=8192,
+        thinking={"type": "adaptive", "display": "summarized"},
+        output_config={"effort": EFFORT["reflection"]},
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
+    _refusal_guard(response)
 
-    return response, response.content[0].text
+    return response, extract_text(response.content)

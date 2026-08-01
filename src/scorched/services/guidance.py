@@ -98,7 +98,28 @@ _PROVENANCE_MAP: dict[int, str] = {
     6: "prompt-only",
     7: "prompt-only",  # circuit_breaker is a different (open-gap) check
     8: "both",         # recommender enforces cash floor pre-execution
-    9: "prompt-only",
+    9: "both",         # recommender.check_factor_alignment() also enforces (Task 5)
+    # 10 is advisory-but-loud, not a blocking gate: code computes the verdict
+    # and writes a gate_decisions row every session (assess_exposure, Task 8),
+    # but nothing rejects a trade — only Claude reading the prompt can act on
+    # it. That's neither "prompt-only" (there IS a code-derived signal behind
+    # it) nor "both" (no code enforcement blocks anything), so it gets its own
+    # badge value. The dashboard CSS (static/guidance.html) has a matching
+    # data-prov="prompt+telemetry" rule; update both together if this changes.
+    10: "prompt+telemetry",
+    # Purely code-enforced (Task 9): recommender.check_reentry_cooldown()
+    # rejects the buy unconditionally — there is no prompt-side judgment
+    # call for Claude to make (unlike rule 9's "both", where Claude is asked
+    # to weigh momentum and code re-validates it). Uses the dashboard's
+    # existing (previously unused) "code-enforced" badge value/CSS rule
+    # rather than "both", since there's no belt-and-suspenders prompt logic
+    # here for the code to be a backstop for.
+    11: "code-enforced",
+    # Purely code-enforced (Task 10): recommender.check_mechanical_entry()
+    # rejects any BUY that fails 5-day momentum > 0, relative volume >= 1.0x,
+    # or price above the 20-day MA — no prompt-side judgment call, same
+    # provenance shape as rule 11.
+    12: "code-enforced",
 }
 
 

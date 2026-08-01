@@ -18,8 +18,9 @@ _PRICING: dict[str, tuple[float, float, float]] = {
     "claude-sonnet-4-6":          (3.0,  15.0,  3.0),
     "claude-opus-4-6":            (15.0, 75.0,  15.0),
     "claude-haiku-4-5-20251001":  (0.8,  4.0,   0.8),
+    "claude-opus-5":              (5.0,  25.0,  5.0),
 }
-_DEFAULT_PRICING = (3.0, 15.0, 3.0)
+_DEFAULT_PRICING = (5.0, 25.0, 5.0)
 
 
 def estimate_cost(

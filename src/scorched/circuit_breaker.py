@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 class GateResult:
     passed: bool
     reason: str = ""
+    # Machine-readable trigger name, set only by intraday.py's check_* functions
+    # (one of the 6 intraday trigger vocabulary strings). Empty for circuit-breaker
+    # gates in this module, which don't need one.
+    trigger_type: str = ""
 
 
 def check_stock_gate(

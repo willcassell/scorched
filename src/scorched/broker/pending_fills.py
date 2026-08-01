@@ -42,6 +42,8 @@ async def write_pending_fill(
     qty: Decimal,
     limit_price: Decimal,
     recommendation_id: int | None,
+    exit_reason: str | None = None,
+    exit_trigger: str | None = None,
 ) -> PendingFill:
     """Write a pending fill BEFORE submitting to Alpaca.
 
@@ -54,15 +56,33 @@ async def write_pending_fill(
     or intraday re-fire would leave two pending_fill rows pointing at the
     same Alpaca order, causing the reconciler to apply the fill twice for
     recommendation_id=None (intraday) sells.
+
+    Intraday client_order_ids are day-scoped per symbol
+    (`scorched-intraday-{symbol}-{date}`), not per-event — a Claude exit at
+    10:05 and a hard stop at 11:30 for the same symbol collide on the same
+    key. The dedup path therefore refreshes exit_reason/exit_trigger (and
+    qty/limit_price) on the existing row to reflect the CURRENT call's
+    intent: this call is about to submit a fresh order to Alpaca with these
+    values, so the local bookkeeping row must match what's actually being
+    submitted, not the stale first-write values. `action`/`symbol`/
+    `recommendation_id` are left untouched — those are identity fields for
+    the same order slot, not per-attempt values.
     """
     if client_order_id:
         existing = (await db.execute(
             select(PendingFill).where(PendingFill.client_order_id == client_order_id)
         )).scalars().first()
         if existing is not None:
+            existing.qty = qty
+            existing.limit_price = limit_price
+            existing.exit_reason = exit_reason
+            existing.exit_trigger = exit_trigger
+            await db.commit()
+            await db.refresh(existing)
             logger.info(
-                "Pending fill already exists for client_oid=%s — reusing row id=%s",
-                client_order_id, existing.id,
+                "Pending fill already exists for client_oid=%s — reusing row id=%s, "
+                "refreshed qty/limit_price/exit_reason/exit_trigger to %s/%s/%s/%s",
+                client_order_id, existing.id, qty, limit_price, exit_reason, exit_trigger,
             )
             return existing
     fill = PendingFill(
@@ -72,6 +92,8 @@ async def write_pending_fill(
         qty=qty,
         limit_price=limit_price,
         recommendation_id=recommendation_id,
+        exit_reason=exit_reason,
+        exit_trigger=exit_trigger,
     )
     db.add(fill)
     await db.commit()
@@ -170,6 +192,8 @@ async def get_pending_fills(db: AsyncSession) -> list[dict]:
             "limit_price": str(f.limit_price),
             "recommendation_id": f.recommendation_id,
             "created_at": f.created_at.isoformat() if f.created_at else None,
+            "exit_reason": f.exit_reason,
+            "exit_trigger": f.exit_trigger,
         }
         for f in result.scalars().all()
     ]

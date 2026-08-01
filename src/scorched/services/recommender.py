@@ -30,7 +30,12 @@ from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync
 from ..drawdown_gate import update_peak_and_check
 from ..correlation import find_high_correlations
-from ..risk_gates import check_cash_floor, check_holdings_cap, check_position_cap
+from ..risk_gates import (
+    DEFAULT_MAX_POSITION_PCT,
+    check_cash_floor,
+    check_holdings_cap,
+    check_position_cap,
+)
 from .telegram import send_telegram
 from .research import (
     WATCHLIST,
@@ -43,14 +48,14 @@ from .research import (
     fetch_factor_returns,
     fetch_fred_macro,
     fetch_market_context,
-    fetch_mean_reversion_screener,
-    fetch_momentum_screener,
     fetch_news,
     fetch_options_data,
     fetch_detailed_news,
     fetch_premarket_prices,
     fetch_price_data,
+    fetch_screeners,
     fetch_sector_returns,
+    gate_cached_mean_reversion,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,6 +224,7 @@ async def _build_cached_response(
             reasoning=r.reasoning,
             confidence=r.confidence,
             key_risks=r.key_risks,
+            status=r.status,
         )
         for r in session.recommendations
     ]
@@ -331,6 +337,33 @@ def check_sector_exposure(
     return True
 
 
+def _coerce_gate_float(cfg: dict, key: str, default: float, gate: str) -> float:
+    """Best-effort float coercion for a numeric gate config value.
+
+    A hand-edited strategy.json can put a string, None, a list, etc. in a
+    numeric field. That must not raise into the hot path and abort the
+    whole session's recommendation generation (fix-round-1 finding on
+    check_factor_alignment / check_mechanical_entry: both did a bare
+    `float(config.get(key, default))` that would crash Phase 1 on a
+    malformed value). Log an ERROR naming the key, the bad value, and the
+    exception type, then degrade to the documented default — this is a
+    narrower, more targeted version of the fail-open posture
+    check_reentry_cooldown uses for its own config coercion (Task 9): here
+    only the single malformed *value* degrades, not the whole gate's
+    fail-closed stance on missing data.
+    """
+    raw = cfg.get(key, default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as e:
+        logger.error(
+            "%s gate: malformed config value for %r (%r, %s: %s) — "
+            "degrading to default %s",
+            gate, key, raw, type(e).__name__, e, default,
+        )
+        return default
+
+
 def check_factor_alignment(
     candidate_20d_return: float | None,
     factor_returns: dict,
@@ -348,8 +381,11 @@ def check_factor_alignment(
     >= min_factor_lead_pts over the trailing 20 trading days. When that holds,
     the candidate's own 20-day return must be >= min_candidate_mom_pct.
 
-    Returns (passed, reason). Missing factor/candidate data => pass: the
-    experiment targets discretion, and we don't fail-closed on a data gap here.
+    Returns (passed, reason). FAILS CLOSED on missing data (matching the
+    sector-gate posture, audit M10): missing SPY/factor returns, or an
+    unknown candidate momentum while a momentum regime is active, both
+    return (False, "factor_data_missing") rather than silently passing the
+    buy. A data gap is not evidence the buy is safe.
     """
     if not config.get("enabled", False):
         return True, None
@@ -359,19 +395,329 @@ def check_factor_alignment(
     ]
     momentum_leaders = [x for x in momentum_leaders if x is not None]
     if spy is None or not momentum_leaders:
-        return True, None
+        logger.warning(
+            "Factor gate: missing SPY/factor return data — failing closed "
+            "(factor_returns=%s)", factor_returns,
+        )
+        return False, "factor_data_missing"
     lead = max(momentum_leaders) - spy
-    if lead < float(config.get("min_factor_lead_pts", 3.0)):
+    min_factor_lead_pts = _coerce_gate_float(config, "min_factor_lead_pts", 3.0, "factor_alignment")
+    if lead < min_factor_lead_pts:
         return True, None  # no clear momentum regime — gate is inactive
     if candidate_20d_return is None:
-        return True, None  # unknown own-momentum — don't block on missing data
-    floor = float(config.get("min_candidate_mom_pct", 0.0))
+        logger.warning(
+            "Factor gate: momentum regime active (lead %.1fpts) but candidate's "
+            "own 20d return is unknown — failing closed", lead,
+        )
+        return False, "factor_data_missing"
+    floor = _coerce_gate_float(config, "min_candidate_mom_pct", 0.0, "factor_alignment")
     if candidate_20d_return < floor:
         return False, (
             f"momentum regime (factor lead {lead:.1f}pts) but candidate's own "
             f"20d return {candidate_20d_return:.1f}% < {floor:.1f}% floor"
         )
     return True, None
+
+
+def resolve_candidate_20d_momentum(symbol: str, price_row: dict | None) -> float | None:
+    """Resolve a candidate's own 20-trading-day return for the factor gate.
+
+    Prefers `trailing_20d_return_pct` (true 20-trading-day return computed
+    from Alpaca daily bars: close[-1]/close[-21]-1). Falls back to
+    `month_change_pct` (a calendar-month change vs. live price — a coarser,
+    non-trading-day-aligned proxy) only when the true figure is absent, and
+    logs a warning so a persistently-missing trailing figure is visible in
+    the logs rather than silently degrading data quality forever.
+    """
+    if not price_row:
+        return None
+    trailing = price_row.get("trailing_20d_return_pct")
+    if trailing is not None:
+        return trailing
+    month_change = price_row.get("month_change_pct")
+    if month_change is not None:
+        logger.warning(
+            "Factor gate: trailing_20d_return_pct missing for %s — falling back "
+            "to month_change_pct (calendar-month, not true 20-trading-day return)",
+            symbol,
+        )
+        return month_change
+    return None
+
+
+async def check_reentry_cooldown(
+    db: AsyncSession, symbol: str, cooldown_days: int
+) -> tuple[bool, str | None]:
+    """Block a BUY if `symbol` has a SELL in trade_history within the last
+    `cooldown_days` NYSE trading days (Task 9: whipsaw re-entry guard).
+
+    Motivation: whipsaw churn (e.g. CVX sold 6/11, re-bought 6/15) cost real
+    money that Experiment B deferred fixing. This is a pure cooldown timer —
+    it has no opinion on thesis quality, only on how recently we exited.
+
+    Trading-day math uses `pandas_market_calendars`, same library/pattern as
+    `_is_market_open` above, so weekends/holidays don't inflate or shrink the
+    window versus a naive calendar-day count. A sell exactly `cooldown_days`
+    trading days ago is ALLOWED (strictly-greater-than passes) — only sells
+    strictly more recent than that boundary block the buy.
+
+    Returns (allowed, reason). Fails OPEN (allowed=True) on a DB error OR a
+    malformed `cooldown_days` (e.g. a hand-edited strategy.json with a string
+    `"3"`, `null`, or a list) — both are logged at ERROR level. Coercing
+    `cooldown_days` to `int` happens inside this same try/except: a
+    misconfigured value must never raise into the hot path and abort the
+    whole session's recommendation generation, consistent with the project's
+    best-effort gate-recording convention (telemetry/config failures must
+    never block a trade that would otherwise clear). This is distinct from
+    the fail-CLOSED posture used for missing market data in
+    check_factor_alignment / check_sector_exposure (a DB/config problem here
+    isn't evidence of anything about the candidate, whereas missing
+    momentum/sector data is).
+    """
+    try:
+        cooldown_days = int(cooldown_days)
+        if cooldown_days <= 0:
+            return True, None
+
+        import pandas_market_calendars as mcal
+        from datetime import timedelta
+
+        today = market_today()
+        nyse = mcal.get_calendar("NYSE")
+        # Generous lookback so we always resolve >= cooldown_days sessions
+        # even across long holiday clusters (e.g. Thanksgiving + Christmas).
+        window_start = today - timedelta(days=cooldown_days * 3 + 15)
+        sessions = [
+            d.date() for d in nyse.valid_days(start_date=window_start, end_date=today)
+        ]
+        if len(sessions) < cooldown_days:
+            # Shouldn't happen with the buffer above; fail safe by treating
+            # the earliest available session as the cutoff.
+            cutoff_date = sessions[0] if sessions else today
+        else:
+            cutoff_date = sessions[-cooldown_days]
+        cutoff_dt = datetime.combine(cutoff_date, datetime.min.time())
+
+        result = await db.execute(
+            select(TradeHistory)
+            .where(
+                TradeHistory.symbol == symbol.upper(),
+                TradeHistory.action == "sell",
+                TradeHistory.executed_at >= cutoff_dt,
+            )
+            .order_by(TradeHistory.executed_at.desc())
+            .limit(1)
+        )
+        recent_sell = result.scalars().first()
+        if recent_sell is not None:
+            sell_date = recent_sell.executed_at.date()
+            return False, (
+                f"{symbol} sold {sell_date.isoformat()} — within the "
+                f"{cooldown_days}-NYSE-trading-day re-entry cooldown"
+            )
+        return True, None
+    except Exception as e:
+        logger.error(
+            "reentry_cooldown check failed for %s (%s: %s) — failing open",
+            symbol, type(e).__name__, e,
+        )
+        return True, f"reentry_cooldown check failed ({e}) — failing open"
+
+
+def check_mechanical_entry(
+    symbol: str, price_data: dict, technicals: dict, cfg: dict
+) -> tuple[bool, str | None]:
+    """Code-enforced mechanical entry minimums for every BUY (Task 10,
+    analyst_guidance.md hard rule #12).
+
+    Backtest finding (6/18, Experiment B): LLM-originated entries lose to a
+    mechanical breakout rule. This makes the three logical minimums named in
+    hard rule #12 non-negotiable in code — Claude's role narrows to
+    selecting/vetoing among names that already qualify, not to
+    exception-making on ones that don't.
+
+    Field mapping (there is no field literally named momentum_5d_pct /
+    rel_volume / above_20dma anywhere in the codebase — those are the
+    *logical* criteria; the real fields backing them are):
+      - momentum    -> price_data[symbol]["week_change_pct"] (the true
+        5-trading-day return, already computed in _fetch_price_data_sync).
+      - rel_volume  -> technicals[symbol]["volume"]["relative_volume"]
+        (calc_volume_profile's latest/avg-20d ratio). The 9:45 AM
+        partial-bar bug that produced rel=0.0x on nearly every symbol was
+        fixed in commit 997c2af (strips today's partial bar before
+        averaging) — verified clean against the live 2026-07-31 Phase-0
+        cache: 78/78 symbols had a real, non-zero value in a plausible
+        0.52x-3.42x range. No systematic gap found, so this criterion gets
+        no special-cased warn+pass — same fail-closed default as the other
+        two.
+      - above_20dma -> price_data[symbol]["current_price"] compared against
+        technicals[symbol]["bollinger"]["middle"] (calc_bollinger_bands' 20
+        -period SMA, reused rather than adding a redundant MA calc).
+
+    Missing an individual field blocks with "mechanical_data_missing" UNLESS
+    cfg["fail_open_on_missing"] is True (default False), in which case that
+    one criterion passes with a logged warning and the others are still
+    evaluated normally.
+
+    Returns (allowed, reason). reason is one of "mechanical_momentum" /
+    "mechanical_volume" / "mechanical_trend" / "mechanical_data_missing", or
+    None on pass.
+    """
+    if not cfg.get("enabled", True):
+        return True, None
+
+    fail_open = bool(cfg.get("fail_open_on_missing", False))
+    row = price_data.get(symbol) or {}
+    tech = technicals.get(symbol) or {}
+    volume = tech.get("volume") or {}
+    bollinger = tech.get("bollinger") or {}
+
+    # --- Criterion 1: 5-day momentum > floor (strict) ---
+    momentum = row.get("week_change_pct")
+    min_momentum = _coerce_gate_float(cfg, "min_momentum_5d_pct", 0.0, "mechanical_entry")
+    if momentum is None:
+        if not fail_open:
+            logger.warning(
+                "Mechanical gate REJECT %s: momentum (week_change_pct) "
+                "missing — failing closed", symbol,
+            )
+            return False, "mechanical_data_missing"
+        logger.warning(
+            "Mechanical gate: %s momentum missing — failing open "
+            "(fail_open_on_missing=True)", symbol,
+        )
+    elif momentum <= min_momentum:
+        return False, "mechanical_momentum"
+
+    # --- Criterion 2: relative volume >= floor (non-strict) ---
+    rel_volume = volume.get("relative_volume")
+    min_rel_volume = _coerce_gate_float(cfg, "min_rel_volume", 1.0, "mechanical_entry")
+    if rel_volume is None:
+        if not fail_open:
+            logger.warning(
+                "Mechanical gate REJECT %s: relative_volume missing — "
+                "failing closed", symbol,
+            )
+            return False, "mechanical_data_missing"
+        logger.warning(
+            "Mechanical gate: %s relative_volume missing — failing open "
+            "(fail_open_on_missing=True)", symbol,
+        )
+    elif rel_volume < min_rel_volume:
+        return False, "mechanical_volume"
+
+    # --- Criterion 3: price above 20-day MA (strict), if required ---
+    if cfg.get("require_above_20dma", True):
+        current_price = row.get("current_price")
+        ma20 = bollinger.get("middle")
+        if current_price is None or ma20 is None:
+            if not fail_open:
+                logger.warning(
+                    "Mechanical gate REJECT %s: 20dma data missing — "
+                    "failing closed", symbol,
+                )
+                return False, "mechanical_data_missing"
+            logger.warning(
+                "Mechanical gate: %s 20dma data missing — failing open "
+                "(fail_open_on_missing=True)", symbol,
+            )
+        elif current_price <= ma20:
+            return False, "mechanical_trend"
+
+    return True, None
+
+
+def format_data_missing_banner(blocked_symbols: list[str]) -> str:
+    """Telegram/summary banner when BUY candidates were blocked for MISSING
+    data (factor_data_missing / mechanical_data_missing) rather than failing
+    a real criterion. A data outage blocking every candidate must read as an
+    outage, not as conservatism — that ambiguity already cost a
+    multi-session diagnosis once (project_call2_conservatism_diagnosis).
+
+    Returns "" when nothing was blocked for missing data.
+    """
+    if not blocked_symbols:
+        return ""
+    unique = sorted(set(blocked_symbols))
+    return (
+        f"⚠️ {len(unique)} candidate(s) blocked by MISSING DATA "
+        f"({', '.join(unique)}) — possible data outage, not conservatism.\n\n"
+    )
+
+
+# The only regime condition assess_exposure's hardcoded logic actually
+# implements. There is no config DSL — see the warning below.
+_SUPPORTED_REGIME_CONDITION = "spy_above_20dma_and_no_drawdown_gate"
+
+
+def assess_exposure(
+    invested_pct: float,
+    spy_above_20dma: bool | None,
+    drawdown_gate_active: bool,
+    cfg: dict,
+) -> dict:
+    """Exposure-management advisory target (Task 8).
+
+    Code cannot force good buys, so the floor is advisory-but-loud: this
+    verdict feeds a context section + analyst_guidance.md hard rule #10 that
+    Claude must answer to, plus a `gate_decisions` telemetry row every
+    session for auditability. The ceiling stays enforced by the existing
+    position/cash/holdings/sector gates — `overinvested` here is
+    informational, not a new block.
+
+    Regime condition (`spy_above_20dma_and_no_drawdown_gate`): being below
+    the target floor is only flagged `underinvested` when the regime is
+    healthy (SPY above its 20-day MA AND the drawdown gate is clear). If
+    either condition fails, low exposure is appropriate defensive behavior,
+    not a shortfall — status is `defensive_ok`.
+
+    `cfg["regime_condition"]` is currently a single hardcoded logic path
+    (there is no config DSL to interpret alternate conditions). If the value
+    is present and doesn't match the one supported string, that's a false
+    affordance — editing strategy.json to something else would silently do
+    nothing — so this logs a warning and proceeds with the hardcoded logic
+    rather than pretending to honor an unsupported value.
+
+    `spy_above_20dma is None` means the SPY/20dma data was unavailable this
+    session. That must NOT fold into `defensive_ok` (which would silently
+    suppress hard rule #10 on a genuinely underinvested day) — a below-floor
+    session with unknown regime data reports `data_unavailable` instead.
+
+    Returns {"status": "underinvested"|"in_range"|"overinvested"|"defensive_ok"
+                       |"data_unavailable",
+             "invested_pct": float, "target_min": float, "target_max": float}.
+    """
+    target_min = float(cfg.get("target_min_invested_pct", 60))
+    target_max = float(cfg.get("target_max_invested_pct", 90))
+
+    regime_condition = cfg.get("regime_condition")
+    if regime_condition is not None and regime_condition != _SUPPORTED_REGIME_CONDITION:
+        logger.warning(
+            "assess_exposure: unsupported regime_condition %r, using %s",
+            regime_condition, _SUPPORTED_REGIME_CONDITION,
+        )
+
+    if invested_pct > target_max:
+        status = "overinvested"
+    elif invested_pct < target_min:
+        if spy_above_20dma is None:
+            logger.warning(
+                "assess_exposure: SPY 20dma data unavailable — cannot judge "
+                "regime for a below-floor session; emitting data_unavailable"
+            )
+            status = "data_unavailable"
+        else:
+            regime_healthy = spy_above_20dma and not drawdown_gate_active
+            status = "underinvested" if regime_healthy else "defensive_ok"
+    else:
+        status = "in_range"
+
+    return {
+        "status": status,
+        "invested_pct": invested_pct,
+        "target_min": target_min,
+        "target_max": target_max,
+    }
 
 
 def _compute_portfolio_total_value(
@@ -442,6 +788,10 @@ async def generate_recommendations(
     # guidance helper bakes in any strategy.json.rule_overrides toggles.
     strategy = load_strategy()
     guidance = load_effective_guidance()
+    # Raw dict form, needed early to gate the mean-reversion screener fetch
+    # below (both here and in Phase 0 prefetch.py) — see fetch_screeners()
+    # in research.py for why this is a code-level gate, not prompt-only.
+    strategy_json = load_strategy_json()
 
     current_positions = (await db.execute(select(Position))).scalars().all()
     current_symbols = [p.symbol for p in current_positions]
@@ -471,7 +821,10 @@ async def generate_recommendations(
         analyst_consensus = cache["analyst_consensus"]
         research_symbols = cache["research_symbols"]
         screener_symbols = cache["screener_symbols"]
-        mean_reversion_symbols = cache.get("mean_reversion_symbols", [])
+        # Re-gate on read, not just on Phase 0's write — see
+        # gate_cached_mean_reversion() docstring for why a stale cache can't
+        # be trusted to already reflect the current entry_style.
+        mean_reversion_symbols = gate_cached_mean_reversion(cache, strategy_json)
         relative_strength = cache.get("relative_strength", {})
         premarket_data = cache.get("premarket_data", {})
         factor_returns = cache.get("factor_returns", {})
@@ -484,13 +837,11 @@ async def generate_recommendations(
             import finnhub
             finnhub_client = finnhub.Client(api_key=settings.finnhub_api_key)
 
-        # Run both screeners concurrently so research_symbols includes both
-        # momentum and mean-reversion picks before parallel data fetch.
-        screener_symbols, mean_reversion_symbols = await asyncio.gather(
-            fetch_momentum_screener(n=20, tracker=tracker),
-            fetch_mean_reversion_screener(n=10, tracker=tracker),
+        # Run momentum screener always; mean-reversion only when entry_style
+        # includes it (fetch_screeners is the shared gate with Phase 0).
+        screener_symbols, mean_reversion_symbols = await fetch_screeners(
+            strategy_json, tracker=tracker
         )
-        mean_reversion_symbols = [s for s in mean_reversion_symbols if s not in set(screener_symbols)]
         logger.info("Momentum screener added %d symbols: %s", len(screener_symbols), screener_symbols)
         logger.info(
             "Mean-reversion screener added %d symbols: %s",
@@ -569,7 +920,8 @@ async def generate_recommendations(
     }
 
     # ── Drawdown gate check ────────────────────────────────────────────────
-    strategy_json = load_strategy_json()
+    # strategy_json was already loaded above (needed earlier to gate the
+    # mean-reversion screener fetch) — reused here, not re-read from disk.
     drawdown_config = strategy_json.get("drawdown_gate", {"enabled": True, "max_drawdown_pct": 8.0})
     drawdown_result = await update_peak_and_check(db, price_data, drawdown_config)
     drawdown_blocked = drawdown_result.blocked
@@ -579,6 +931,37 @@ async def generate_recommendations(
             "Drawdown: %.1f%% (threshold: %.1f%%)",
             drawdown_result.current_drawdown_pct, drawdown_result.threshold_pct,
         )
+
+    # ── Exposure management (Task 8: advisory target + telemetry) ──────────
+    # Code cannot force good buys, so the floor is advisory-but-loud: a
+    # context section + analyst_guidance.md hard rule #10 Claude must answer
+    # to. The ceiling stays enforced by the existing position/cash/holdings/
+    # sector gates — this never blocks a trade itself.
+    exposure_cfg = strategy_json.get("exposure", {
+        "target_min_invested_pct": 60,
+        "target_max_invested_pct": 90,
+        "regime_condition": "spy_above_20dma_and_no_drawdown_gate",
+    })
+    total_value = portfolio_dict["total_value"]
+    invested_pct = (
+        (total_value - portfolio_dict["cash_balance"]) / total_value * 100
+        if total_value else 0.0
+    )
+    # SPY vs its 20-day MA is derived from the same Alpaca bars already
+    # fetched for factor_returns (close vs mean of last 20 closes) — no new
+    # external API call. See _fetch_factor_returns_sync in research.py.
+    # None (data unavailable) must stay distinct from False (SPY genuinely
+    # below its MA) — folding them together mislabels an underinvested
+    # session as defensive_ok and silently suppresses hard rule #10.
+    _spy_raw = (factor_returns.get("SPY") or {}).get("above_20dma")
+    spy_above_20dma = None if _spy_raw is None else bool(_spy_raw)
+    exposure_status = assess_exposure(invested_pct, spy_above_20dma, drawdown_blocked, exposure_cfg)
+    logger.info(
+        "Exposure check: %.1f%% invested (target %.0f-%.0f%%), spy_above_20dma=%s, "
+        "drawdown_gate_active=%s -> %s",
+        invested_pct, exposure_status["target_min"], exposure_status["target_max"],
+        spy_above_20dma, drawdown_blocked, exposure_status["status"],
+    )
 
     # Twelvedata RSI and economic calendar — from Phase 0 cache (or None on inline fallback)
     twelvedata_rsi = cache.get("twelvedata_rsi") if cache else None
@@ -668,6 +1051,7 @@ async def generate_recommendations(
         portfolio_risk=portfolio_risk,
         failed_exits=failed_exits,
         mean_reversion_symbols=mean_reversion_symbols,
+        exposure_status=exposure_status,
     )
 
     # Persist session row early so we have an ID for token_usage FK
@@ -677,6 +1061,29 @@ async def generate_recommendations(
     )
     db.add(session_row)
     await db.flush()
+
+    # Exposure-check telemetry row — every session, regardless of verdict, so
+    # operators can audit "underinvested while regime healthy" days without
+    # parsing logs. use_caller_session=True: session_id references session_row,
+    # which is flushed but not yet committed in this transaction.
+    await record_gate_decision(
+        db,
+        use_caller_session=True,
+        session_id=session_row.id,
+        symbol="PORTFOLIO",
+        action="none",
+        phase=PHASE_FILTER,
+        gate="exposure_check",
+        passed=exposure_status["status"] in ("in_range", "defensive_ok", "data_unavailable"),
+        reason=exposure_status["status"],
+        details={
+            "invested_pct": round(invested_pct, 2),
+            "target_min": exposure_status["target_min"],
+            "target_max": exposure_status["target_max"],
+            "spy_above_20dma": spy_above_20dma,
+            "drawdown_gate_active": drawdown_blocked,
+        },
+    )
 
     # ── Daily cost ceiling check ────────────────────────────────────────────
     await check_daily_cost_ceiling(db)
@@ -768,7 +1175,7 @@ async def generate_recommendations(
     strategy_conc = strategy_json.get("concentration", {})
     call2_response, decision_raw, parsed = await call_decision(
         strategy, guidance, playbook.content, min_cash_pct, call2_user,
-        max_position_pct=strategy_conc.get("max_position_pct", 33),
+        max_position_pct=strategy_conc.get("max_position_pct", DEFAULT_MAX_POSITION_PCT),
         max_holdings=strategy_conc.get("max_holdings", 10),
         tracker=tracker,
     )
@@ -1013,6 +1420,13 @@ async def generate_recommendations(
         for pos in held_positions_for_sector
     }
 
+    # Symbols whose BUY was blocked by a *_data_missing gate reason (factor /
+    # mechanical). A data outage blocking every candidate must be readable as
+    # an outage in the Telegram summary, not mistaken for conservatism —
+    # non-participation ambiguity already cost a multi-session diagnosis once
+    # (see project_call2_conservatism_diagnosis).
+    data_missing_blocks: list[str] = []
+
     recommendation_rows = []
     for rec in raw_recs:
         action = rec.get("action", "").lower()
@@ -1081,7 +1495,7 @@ async def generate_recommendations(
                 existing_market_value=existing_value,
                 buy_notional=estimated_cost,
                 total_portfolio_value=total_value_for_floor,
-                max_position_pct=Decimal(str(strategy_conc.get("max_position_pct", 33))),
+                max_position_pct=Decimal(str(strategy_conc.get("max_position_pct", DEFAULT_MAX_POSITION_PCT))),
             )
             await record_gate_decision(
                 db,
@@ -1193,10 +1607,20 @@ async def generate_recommendations(
             # the energy/commodity loss bucket. Prompt rule #9 was advisory and
             # Claude overrode it repeatedly; this enforces it.
             factor_cfg = strategy_json.get("factor_gate", {})
-            candidate_20d = (price_data.get(symbol) or {}).get("month_change_pct")
+            symbol_price_row = price_data.get(symbol)
+            candidate_20d = resolve_candidate_20d_momentum(symbol, symbol_price_row)
             factor_passed, factor_reason = check_factor_alignment(
                 candidate_20d, factor_returns, factor_cfg
             )
+            # momentum_source lets a later audit distinguish a real 20d-return
+            # block from one that fell back to the coarser calendar-month proxy
+            # (or had neither, in the fail-closed factor_data_missing case).
+            if symbol_price_row and symbol_price_row.get("trailing_20d_return_pct") is not None:
+                momentum_source = "trailing_20d"
+            elif symbol_price_row and symbol_price_row.get("month_change_pct") is not None:
+                momentum_source = "month_change"
+            else:
+                momentum_source = None
             await record_gate_decision(
                 db,
                 use_caller_session=True,
@@ -1209,14 +1633,96 @@ async def generate_recommendations(
                 reason=factor_reason,
                 details={
                     "candidate_20d_return": candidate_20d,
+                    "momentum_source": momentum_source,
                     "min_factor_lead_pts": factor_cfg.get("min_factor_lead_pts"),
                     "min_candidate_mom_pct": factor_cfg.get("min_candidate_mom_pct"),
                 },
             )
             if not factor_passed:
                 logger.warning("Skipping %s buy — factor gate: %s", symbol, factor_reason)
+                if factor_reason == "factor_data_missing":
+                    data_missing_blocks.append(symbol)
                 await send_telegram(
                     f"TRADEBOT // Factor gate: {symbol} BUY skipped — {factor_reason}"
+                )
+                continue
+
+            # Re-entry cooldown gate (Task 9) — block a whipsaw re-buy of a
+            # symbol we sold within the last N NYSE trading days. Motivated by
+            # real losses (e.g. CVX sold 6/11, re-bought 6/15) that Experiment
+            # B deliberately deferred fixing.
+            cooldown_days = strategy_json.get("reentry_cooldown_days", 3)
+            cooldown_passed, cooldown_reason = await check_reentry_cooldown(
+                db, symbol, cooldown_days
+            )
+            await record_gate_decision(
+                db,
+                use_caller_session=True,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="reentry_cooldown",
+                passed=cooldown_passed,
+                # Not conditioned on `not cooldown_passed` like the sibling
+                # gates above — check_reentry_cooldown returns a non-None
+                # reason even on a passing (fail-open) DB-error verdict, and
+                # that diagnostic is exactly what an operator needs to see.
+                reason=cooldown_reason,
+                details={"cooldown_days": cooldown_days},
+            )
+            if not cooldown_passed:
+                logger.warning(
+                    "Skipping %s buy — reentry cooldown: %s", symbol, cooldown_reason,
+                )
+                await send_telegram(
+                    f"TRADEBOT // Re-entry cooldown: {symbol} BUY skipped — {cooldown_reason}"
+                )
+                continue
+
+            # Mechanical entry gate (Task 10) — code-enforced hard rule #12.
+            # Backtest evidence (6/18): LLM-originated entries lose to a
+            # mechanical breakout rule. Every BUY must clear 5-day momentum,
+            # relative volume, and 20dma minimums in code before Claude's
+            # pick can go through. Last in the filter chain per the task
+            # brief (cash_floor -> position_cap -> holdings_cap -> sector_cap
+            # -> factor_alignment -> reentry_cooldown -> mechanical_entry).
+            mech_cfg = strategy_json.get("mechanical_entry", {})
+            mech_row = price_data.get(symbol) or {}
+            mech_tech = technicals.get(symbol) or {}
+            mech_volume = mech_tech.get("volume") or {}
+            mech_bollinger = mech_tech.get("bollinger") or {}
+            mech_passed, mech_reason = check_mechanical_entry(
+                symbol, price_data, technicals, mech_cfg
+            )
+            await record_gate_decision(
+                db,
+                use_caller_session=True,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="mechanical_entry",
+                passed=mech_passed,
+                reason=mech_reason,
+                details={
+                    "week_change_pct": mech_row.get("week_change_pct"),
+                    "relative_volume": mech_volume.get("relative_volume"),
+                    "current_price": mech_row.get("current_price"),
+                    "ma20": mech_bollinger.get("middle"),
+                    "min_momentum_5d_pct": mech_cfg.get("min_momentum_5d_pct", 0.0),
+                    "min_rel_volume": mech_cfg.get("min_rel_volume", 1.0),
+                    "require_above_20dma": mech_cfg.get("require_above_20dma", True),
+                },
+            )
+            if not mech_passed:
+                logger.warning(
+                    "Skipping %s buy — mechanical entry gate: %s", symbol, mech_reason,
+                )
+                if mech_reason == "mechanical_data_missing":
+                    data_missing_blocks.append(symbol)
+                await send_telegram(
+                    f"TRADEBOT // Mechanical entry gate: {symbol} BUY skipped — {mech_reason}"
                 )
                 continue
 
@@ -1320,9 +1826,12 @@ async def generate_recommendations(
             reasoning=row.reasoning,
             confidence=row.confidence,
             key_risks=row.key_risks,
+            status=row.status,
         )
         for row in recommendation_rows
     ]
+
+    research_summary = format_data_missing_banner(data_missing_blocks) + research_summary
 
     return RecommendationsResponse(
         session_id=session_row.id,

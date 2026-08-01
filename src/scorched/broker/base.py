@@ -31,9 +31,16 @@ class BrokerAdapter(ABC):
         limit_price: Decimal,
         recommendation_id: int | None,
         _client_order_id_override: str | None = None,
+        exit_reason: str | None = None,
+        exit_trigger: str | None = None,
     ) -> dict:
         """Submit a sell order. Returns fill info dict with same keys as submit_buy,
         plus realized_gain, tax_category.
+
+        exit_reason/exit_trigger are telemetry-only (never change execution
+        behavior): "recommendation" (Phase 2 sell), "intraday_hard_stop",
+        "intraday_claude_exit", or "manual"; exit_trigger is one of the 6
+        intraday trigger names when applicable, else None.
         """
         ...
 

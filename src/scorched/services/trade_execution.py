@@ -20,7 +20,7 @@ from ..circuit_breaker import run_circuit_breaker
 from ..drawdown_gate import update_peak_and_check
 from ..config import settings
 from ..models import Portfolio, Position, TradeRecommendation
-from ..risk_gates import run_all_buy_gates
+from ..risk_gates import DEFAULT_MAX_POSITION_PCT, run_all_buy_gates
 from ..services.gate_decisions import PHASE_CONFIRM, record_gate_decision
 from ..services.strategy import load_strategy_json
 from ..services.telegram import send_telegram
@@ -179,7 +179,7 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
             held_positions_with_sector=held_with_sector,
             existing_position_value=existing_value,
             reserve_pct=Decimal(str(settings.min_cash_reserve_pct)),
-            max_position_pct=Decimal(str(conc.get("max_position_pct", 33))),
+            max_position_pct=Decimal(str(conc.get("max_position_pct", DEFAULT_MAX_POSITION_PCT))),
             max_sector_pct=float(conc.get("max_sector_pct", 40)),
             max_holdings=int(conc.get("max_holdings", 10)),
         )
@@ -198,7 +198,7 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
                 "effective_cash": effective_cash,
                 "reserved_buy_notional": reserved_buy_notional,
                 "total_value": total_value,
-                "max_position_pct": float(conc.get("max_position_pct", 33)),
+                "max_position_pct": float(conc.get("max_position_pct", DEFAULT_MAX_POSITION_PCT)),
                 "max_sector_pct": float(conc.get("max_sector_pct", 40)),
                 "max_holdings": int(conc.get("max_holdings", 10)),
                 "subgates": (gate_result.details or {}),
@@ -309,6 +309,7 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
                 qty=qty,
                 limit_price=limit_price,
                 recommendation_id=rec_id,
+                exit_reason="recommendation",
             )
     except Exception as exc:
         logger.error(

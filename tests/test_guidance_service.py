@@ -35,6 +35,27 @@ def test_parse_hard_rules_handles_missing_section():
     assert parse_hard_rules("# no hard rules here\n\njust prose") == []
 
 
+def test_parse_hard_rules_live_file_has_twelve_rules_with_rule_12_code_enforced():
+    """Regression test for the Task 10 defect: rule #12 (mechanical entry,
+    added by Task 10) originally lacked the bold **title** prefix required by
+    _RULE_ENTRY_RE, so parse_hard_rules() silently absorbed its text into
+    rule #11's body instead of returning it as its own rule. Reads the real
+    on-disk analyst_guidance.md (not the SAMPLE_GUIDANCE fixture) so a future
+    reshape that reintroduces the same defect is caught here.
+    """
+    from scorched.services.guidance import _GUIDANCE_PATH
+
+    guidance_text = _GUIDANCE_PATH.read_text(encoding="utf-8")
+    rules = parse_hard_rules(guidance_text)
+    assert [r.number for r in rules] == list(range(1, 13))
+
+    rule_12 = rules[-1]
+    assert rule_12.number == 12
+    assert "mechanical entry" in rule_12.title.lower()
+    assert rule_12.provenance == "code-enforced"
+    assert rule_12.body  # not silently absorbed/empty
+
+
 def test_parse_hard_rules_applies_overrides_to_toggle_rules_only():
     rules = parse_hard_rules(
         SAMPLE_GUIDANCE,

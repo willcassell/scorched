@@ -21,6 +21,8 @@ from ..schemas import (
     TaxSummaryResponse,
 )
 from ..tax import classify_gain, estimate_tax, post_tax_gain
+from ..trailing_stops import initial_stop_price
+from .strategy import load_strategy_json
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +211,8 @@ async def apply_buy(
     ).scalars().first()
 
     if pos is None:
-        initial_stop = (execution_price * Decimal("0.95")).quantize(Decimal("0.0001"))
+        floor_pct = load_strategy_json().get("trailing_stop", {}).get("floor_pct", 5.0)
+        initial_stop = initial_stop_price(execution_price, min_stop_pct=floor_pct)
         pos = Position(
             symbol=symbol,
             shares=shares,
@@ -279,6 +282,8 @@ async def apply_sell(
     shares: Decimal,
     execution_price: Decimal,
     executed_at: datetime,
+    exit_reason: str | None = None,
+    exit_trigger: str | None = None,
 ) -> ConfirmTradeResponse:
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     pos = (
@@ -334,6 +339,8 @@ async def apply_sell(
         executed_at=executed_at,
         realized_gain=realized_gain,
         tax_category=tax_cat,
+        exit_reason=exit_reason,
+        exit_trigger=exit_trigger,
     )
     db.add(history)
     await db.commit()

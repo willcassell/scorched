@@ -84,6 +84,17 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
             high_52w = max(b["high"] for b in bars)
             low_52w = min(b["low"] for b in bars)
 
+            # True 20-trading-day return (close[-1]/close[-21]-1), distinct from
+            # month_change_pct's calendar-month/live-price proxy. Requires >=21
+            # completed daily bars. Used by check_factor_alignment (Task 5,
+            # 2026-07-31) so momentum-regime blocks compare like-for-like
+            # trading-day windows instead of a calendar-month change.
+            trailing_20d_return_pct = (
+                round((closes[-1] / closes[-21] - 1) * 100, 2)
+                if len(closes) >= 21
+                else None
+            )
+
             # Fundamentals from yfinance (PE, market cap, etc.) — Alpaca doesn't have these
             info = {}
             try:
@@ -97,6 +108,7 @@ def _fetch_price_data_sync(symbols: list[str], tracker=None) -> dict:
                 "current_price": current_price,
                 "week_change_pct": round((current_price - week_ago_price) / week_ago_price * 100, 2),
                 "month_change_pct": round((current_price - month_ago_price) / month_ago_price * 100, 2),
+                "trailing_20d_return_pct": trailing_20d_return_pct,
                 "high_52w": high_52w,
                 "low_52w": low_52w,
                 "market_cap": info.get("marketCap"),
@@ -1161,6 +1173,54 @@ def _format_factor_leadership(factor_returns: dict[str, dict[str, float]] | None
     return lines
 
 
+def _format_exposure_status(exposure_status: dict | None) -> list[str]:
+    """Render the EXPOSURE STATUS section. Returns lines (may be empty).
+
+    Advisory-but-loud: code cannot force good buys, so an underinvested
+    verdict is surfaced here (ahead of any per-stock data) plus a pointer to
+    analyst_guidance.md hard rule #10, which Claude must answer to. The
+    ceiling (`overinvested`) is informational only — it's already enforced
+    by the position/cash/holdings/sector gates.
+    """
+    if not exposure_status:
+        return []
+
+    status = exposure_status.get("status")
+    invested_pct = exposure_status.get("invested_pct")
+    target_min = exposure_status.get("target_min")
+    target_max = exposure_status.get("target_max")
+    if status is None or invested_pct is None or target_min is None or target_max is None:
+        return []
+
+    lines = ["=== EXPOSURE STATUS ==="]
+    lines.append(
+        f"EXPOSURE STATUS: {invested_pct:.1f}% invested (target {target_min:.0f}-"
+        f"{target_max:.0f}% when SPY > 20d MA and drawdown gate clear)."
+    )
+    status_lines = {
+        "underinvested": "STATUS: UNDERINVESTED — hard rule #10 applies.",
+        "defensive_ok": (
+            "STATUS: DEFENSIVE_OK — below target floor, but SPY is below its "
+            "20d MA or the drawdown gate is active. Reduced exposure is "
+            "appropriate; hard rule #10 does not apply."
+        ),
+        "in_range": "STATUS: IN_RANGE.",
+        "overinvested": (
+            "STATUS: OVERINVESTED — above target ceiling. Existing position/"
+            "cash/sector gates already bound this; no new action required."
+        ),
+        "data_unavailable": (
+            "STATUS: DATA_UNAVAILABLE — below target floor but SPY/20d-MA "
+            "regime data is missing this session, so the regime cannot be "
+            "judged. Hard rule #10 is not triggered; do not treat this as "
+            "confirmation that defensiveness is appropriate."
+        ),
+    }
+    lines.append(status_lines.get(status, f"STATUS: {str(status).upper()}."))
+    lines.append("")
+    return lines
+
+
 def _format_portfolio_risk(portfolio_risk) -> list[str]:
     """Render the PORTFOLIO RISK section. Returns lines (may be empty).
 
@@ -1298,6 +1358,7 @@ def build_research_context(
     portfolio_risk=None,
     failed_exits: list[dict] | None = None,
     mean_reversion_symbols: list[str] | None = None,
+    exposure_status: dict | None = None,
 ) -> str:
     # Pre-filter: score all symbols, keep top N + held positions.
     # Mean-reversion picks score LOW on _score_symbol (it rewards up-momentum
@@ -1326,6 +1387,11 @@ def build_research_context(
     )
 
     lines = []
+
+    # Exposure status — emitted first, ahead of every other section (including
+    # failed exits), so an underinvested verdict is the very first thing
+    # Claude reads. Advisory-but-loud: see analyst_guidance.md hard rule #10.
+    lines.extend(_format_exposure_status(exposure_status))
 
     # Failed-exit retry signal — emitted BEFORE everything else so Claude
     # cannot miss it. Without this section Phase 1 has no memory of yesterday's
@@ -1437,7 +1503,9 @@ def build_research_context(
             rs = relative_strength[symbol]
             rs_label = "outperforming" if rs > 0 else "underperforming"
             rs_str = f" | vs sector: {rs:+.1f}% ({rs_label})"
-        lines.append(f"  Price: ${data['current_price']:.2f} | 1wk: {data['week_change_pct']:+.1f}% | 1mo: {data['month_change_pct']:+.1f}%{rs_str}")
+        t20 = data.get("trailing_20d_return_pct")
+        t20_str = f" | 20d: {t20:+.1f}%" if t20 is not None else ""
+        lines.append(f"  Price: ${data['current_price']:.2f} | 1wk: {data['week_change_pct']:+.1f}% | 1mo: {data['month_change_pct']:+.1f}%{t20_str}{rs_str}")
         lines.append(f"  52w range: ${data['low_52w']:.2f} – ${data['high_52w']:.2f}")
         if premarket_data and symbol in premarket_data:
             pm = premarket_data[symbol]
@@ -1645,7 +1713,11 @@ _FACTOR_ETFS = ["SPY", "QQQ", "MTUM", "SPMO", "RSP", "IWM"]
 def _fetch_factor_returns_sync(tracker=None) -> dict[str, dict[str, float]]:
     """Fetch 5-day and 20-day returns for factor/benchmark ETFs using Alpaca bars.
 
-    Returns {etf: {"5d": pct, "20d": pct}}. Missing ETFs are omitted.
+    Returns {etf: {"5d": pct, "20d": pct}}, plus for SPY only:
+    {"ma20": float, "above_20dma": bool} — SPY's close vs the mean of its
+    trailing 20 closes (same bars already fetched here; no extra API call).
+    Used by the exposure-management regime check (Task 8) instead of a
+    separate SPY-vs-MA fetch. Missing ETFs are omitted.
     """
     from .alpaca_data import fetch_bars_sync
 
@@ -1663,6 +1735,11 @@ def _fetch_factor_returns_sync(tracker=None) -> dict[str, dict[str, float]]:
                 entry["5d"] = round((current - bars[-6]["close"]) / bars[-6]["close"] * 100, 2)
             if len(bars) >= 21:
                 entry["20d"] = round((current - bars[-21]["close"]) / bars[-21]["close"] * 100, 2)
+            if etf == "SPY" and len(bars) >= 20:
+                last_20_closes = [b["close"] for b in bars[-20:]]
+                ma20 = sum(last_20_closes) / len(last_20_closes)
+                entry["ma20"] = round(ma20, 2)
+                entry["above_20dma"] = current > ma20
             if entry:
                 result[etf] = entry
     except Exception:
@@ -1756,6 +1833,57 @@ async def fetch_mean_reversion_screener(
         None,
         lambda: _fetch_mean_reversion_screener_sync(n, exclude=exclude, tracker=tracker),
     )
+
+
+async def fetch_screeners(strategy_json: dict, tracker=None) -> tuple[list[str], list[str]]:
+    """Run the momentum screener always; run the mean-reversion screener only
+    when the declared strategy's entry_style includes "mean_reversion".
+
+    This is a code-level gate, not just a prompt instruction: Experiment B
+    (2026-06-18) suspended mean-reversion entries by editing
+    analyst_guidance.md prose only, but fetch_mean_reversion_screener kept
+    running every session and kept feeding candidates into Claude's context.
+    Both Phase 0 prefetch and the recommender's inline fallback call this
+    single helper so the gate can't drift out of sync between the two.
+
+    Returns ([], ...) for mean_reversion_symbols when disabled — not the key
+    omitted — so callers writing this straight into the Phase 0 cache dict
+    and callers reading it back via cache.get("mean_reversion_symbols", [])
+    both see the same shape either way.
+    """
+    entry_styles = strategy_json.get("entry_style", [])
+    if "mean_reversion" in entry_styles:
+        screener_symbols, mean_reversion_symbols = await asyncio.gather(
+            fetch_momentum_screener(n=20, tracker=tracker),
+            fetch_mean_reversion_screener(n=10, tracker=tracker),
+        )
+        mean_reversion_symbols = [
+            s for s in mean_reversion_symbols if s not in set(screener_symbols)
+        ]
+    else:
+        logger.info(
+            "Mean-reversion screener SKIPPED (entry_style=%s does not include mean_reversion)",
+            entry_styles,
+        )
+        screener_symbols = await fetch_momentum_screener(n=20, tracker=tracker)
+        mean_reversion_symbols = []
+    return screener_symbols, mean_reversion_symbols
+
+
+def gate_cached_mean_reversion(cache: dict, strategy_json: dict) -> list[str]:
+    """Re-apply the entry_style gate when reading mean_reversion_symbols back
+    from a Phase 0 cache, instead of trusting whatever the cache happens to
+    contain.
+
+    A cache file can be stale relative to the current strategy.json — written
+    by an older container before a rebuild, or from earlier the same day
+    before a strategy.json edit flips entry_style. Without re-gating on read,
+    a disabled mean-reversion config would still get fed to Claude whenever
+    the cache was written while it was enabled.
+    """
+    if "mean_reversion" not in strategy_json.get("entry_style", []):
+        return []
+    return cache.get("mean_reversion_symbols", [])
 
 
 async def fetch_factor_returns(tracker=None) -> dict[str, dict[str, float]]:

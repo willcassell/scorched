@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from ..config import settings
+from ..risk_gates import DEFAULT_MAX_POSITION_PCT
 
 logger = logging.getLogger(__name__)
 
@@ -131,21 +132,33 @@ DEFAULT_JSON = {
     # strategy.json injects prose that contradicts analyst_guidance.md (which
     # hardcodes 2–6wk breakout/mean-reversion) and can even trip the playbook
     # drift detector (the old "3-10d" fallback was itself a forbidden pattern).
-    "objective": "balanced",
+    #
+    # objective / entry_style / max_position_pct / sell_discipline /
+    # partial_sell were found stale during a 2026-07-31 review (still the
+    # pre-experiment-B values: balanced objective, mean-reversion enabled,
+    # 33% sizing, scale-out selling, adaptive partials) — synced to match
+    # live strategy.json's experiment-B config.
+    # risk_guardrails / event_risk are intentionally NOT synced to live's
+    # empty lists — a safety-conservative fallback (guardrails ON) is the
+    # correct failure direction even though it technically diverges from
+    # the live experiment config.
+    # tests/test_trailing_config.py::TestDefaultJsonMirrorsLiveStrategy
+    # asserts the synced keys stay in sync.
+    "objective": "growth",
     "rec_style": "adaptive",
     "no_trade_threshold": "adaptive",
     "hold_period": "2-6wk",
-    "entry_style": ["breakout", "mean_reversion"],
-    "sell_discipline": "scale_out",
+    "entry_style": ["breakout"],
+    "sell_discipline": "trailing_stop",
     "loss_management": "time_price_hybrid",
     "sizing_style": "conviction_weighted",
     "concentration": {
-        "max_position_pct": 33,
+        "max_position_pct": 15,
         "max_sector_pct": 40,
         "max_holdings": 10,
     },
     "add_vs_rotate": "adaptive",
-    "partial_sell": "adaptive",
+    "partial_sell": "never",
     "risk_guardrails": ["max_portfolio_dd", "weak_regime_cash"],
     "market_regime": "adaptive",
     "event_risk": ["reduce_before_earnings", "no_new_before_earnings"],
@@ -155,6 +168,59 @@ DEFAULT_JSON = {
     "drawdown_gate": {
         "enabled": True,
         "max_drawdown_pct": 8.0,
+    },
+    "trailing_stop": {
+        "atr_multiplier": 2.0,
+        "floor_pct": 5.0,
+    },
+    # Re-entry cooldown gate (Task 9, 2026-08-01) — blocks a BUY within N NYSE
+    # trading days of a SELL on the same symbol (whipsaw guard). A missing/
+    # corrupt strategy.json must not silently disable this safety gate, so
+    # it's mirrored here like trailing_stop/drawdown_gate above.
+    "reentry_cooldown_days": 3,
+    # Mechanical entry gate (Task 10, 2026-08-01) — code-enforced minimums
+    # (5d momentum > 0, relative volume >= 1.0, price above 20dma) that
+    # every BUY must clear regardless of Claude's thesis. A missing/corrupt
+    # strategy.json must not silently disable this gate either, so it's
+    # mirrored here like the other safety sections above.
+    "mechanical_entry": {
+        "enabled": True,
+        "min_momentum_5d_pct": 0.0,
+        "min_rel_volume": 1.0,
+        "require_above_20dma": True,
+    },
+    # Remaining safety sections (final review 2026-08-01) — same rationale:
+    # a missing/corrupt strategy.json must not silently disable the circuit
+    # breaker (Phase 1.5/2 read strategy.get("circuit_breaker", {"enabled":
+    # False})), the factor gate, the intraday monitor, or exposure telemetry.
+    "circuit_breaker": {
+        "enabled": True,
+        "stock_gap_down_pct": 2.0,
+        "stock_price_drift_pct": 1.5,
+        "spy_gap_down_pct": 1.0,
+        "vix_absolute_max": 30,
+        "vix_spike_pct": 20,
+        "stock_gap_up_pct": 5.0,
+    },
+    "factor_gate": {
+        "enabled": True,
+        "min_factor_lead_pts": 3.0,
+        "min_candidate_mom_pct": 0.0,
+    },
+    "intraday_monitor": {
+        "enabled": True,
+        "position_drop_from_entry_pct": 5.0,
+        "position_drop_from_open_pct": 3.0,
+        "spy_intraday_drop_pct": 2.0,
+        "volume_surge_multiplier": 3.0,
+        "hard_stop_pct": 8.0,
+        "emergency_sell_buffer_pct": 1.0,
+        "emergency_sell_buffer_floor_usd": 0.05,
+    },
+    "exposure": {
+        "target_min_invested_pct": 60,
+        "target_max_invested_pct": 90,
+        "regime_condition": "spy_above_20dma_and_no_drawdown_gate",
     },
 }
 
@@ -277,7 +343,7 @@ def load_strategy() -> str:
     if conc:
         lines.append(
             f"**Concentration limits:** Never allocate more than "
-            f"{conc.get('max_position_pct', 33)}% of the portfolio to a single position; "
+            f"{conc.get('max_position_pct', DEFAULT_MAX_POSITION_PCT)}% of the portfolio to a single position; "
             f"never allocate more than {conc.get('max_sector_pct', 40)}% to any one sector; "
             f"hold no more than {conc.get('max_holdings', 10)} positions simultaneously."
         )

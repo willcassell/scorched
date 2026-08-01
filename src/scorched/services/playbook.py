@@ -52,6 +52,21 @@ _DRIFT_PATTERNS: list[tuple[str, str]] = [
     (r"\bpartial[-\s]sell[^.\n]{0,40}\+?\s*8\s*%", "+8% partial-sell rule"),
     (r"\+8\s*%\s+gain\b[^.\n]{0,40}\b(sell|partial|trim)", "+8% partial-sell rule"),
     (r"\b7[-\s]?day flat\b", "7-day flat-position rule"),
+    # NOTE (Task 11 / Experiment C reset, 2026-08-01): deliberately did NOT add a
+    # pattern for the old "100% gain -> sell half" rule (analyst_guidance.md
+    # rule #6, now disabled via rule_overrides.gain_trigger.enabled: false).
+    # Unlike every pattern above, that phrase is *still legitimately present*
+    # verbatim in analyst_guidance.md (kept for guidance_lint's regex parser)
+    # and in the LIVE RULE OVERRIDES addendum's "Rule #6 ... DISABLED" line —
+    # both of which get injected into this very prompt via
+    # _extract_hard_rules()/build_overrides_addendum(). A playbook update that
+    # correctly explains "rule #6 is disabled, we no longer sell half on a
+    # double" would legitimately contain the trigger words, and several regex
+    # variants were tried and confirmed to false-positive on that legitimate
+    # phrasing (the exact v55 parroting failure this guardrail exists to
+    # avoid — see project_playbook_drift_loop_fix.md). partial_sell: never
+    # plus the prompt's existing "do not install competing numeric rules"
+    # instruction already cover a genuine reintroduction attempt.
 ]
 
 

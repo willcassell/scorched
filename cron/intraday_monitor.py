@@ -241,6 +241,10 @@ def main():
     if not config.get("enabled", True):
         return
 
+    trailing_cfg = strategy.get("trailing_stop", {})
+    ts_atr_multiplier = trailing_cfg.get("atr_multiplier", 2.0)
+    ts_floor_pct = trailing_cfg.get("floor_pct", 5.0)
+
     cooldown_minutes = config.get("cooldown_minutes", 30)
     cooldowns = load_cooldowns()
 
@@ -296,6 +300,8 @@ def main():
                 current_price=float(current_price),
                 atr=float(atr),
                 entry_price=float(pos["avg_cost_basis"]),
+                atr_multiplier=ts_atr_multiplier,
+                min_stop_pct=ts_floor_pct,
             )
             # Only POST to the API if something changed (new high)
             needs_update = (
@@ -337,7 +343,14 @@ def main():
         if triggers:
             triggered_positions.append({
                 "symbol": symbol,
+                # Built from the same comprehension so the two lists stay
+                # index-parallel by construction, not by accident — a filtered
+                # trigger_types would desync from trigger_reasons the moment any
+                # GateResult in the fired list doesn't carry a trigger_type.
+                # trigger_type defaults to "" (see GateResult), which is a
+                # deliberate empty-placeholder, not a dropped entry.
                 "trigger_reasons": [t.reason for t in triggers],
+                "trigger_types": [t.trigger_type for t in triggers],
                 "current_price": current_price,
                 "entry_price": float(pos["avg_cost_basis"]),
                 "today_open": sym_data["today_open"],

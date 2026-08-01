@@ -30,18 +30,151 @@ GATED_FILE = str(LOGS_DIR / "tradebot_recommendations_gated.json")
 ORIGINAL_FILE = str(LOGS_DIR / "tradebot_recommendations.json")
 
 
-def _cleanup_recs_file(path):
+def _cleanup_recs_file(path=None):
     """Remove the recommendations file, ignoring if already gone.
 
     Also clears the *other* file (gated vs original) — Phase 2 only reads
     the preferred one, so the unused sibling can sit around as a stale
-    leftover that confuses the next session's date-mismatch check.
+    leftover that confuses the next session's date-mismatch check. `path`
+    is optional: the DB-only rescue path has no file at all, so callers may
+    pass None and just get the fixed GATED_FILE/ORIGINAL_FILE cleanup.
     """
-    for p in (path, GATED_FILE, ORIGINAL_FILE):
+    paths = {GATED_FILE, ORIGINAL_FILE}
+    if path:
+        paths.add(path)
+    for p in paths:
         try:
             os.remove(p)
         except FileNotFoundError:
             pass
+
+
+def _load_valid_candidate(path: str, today_str: str) -> tuple[dict | None, str]:
+    """Parse a recommendations file and validate it is usable for today.
+
+    Returns (stored, "") when the file exists, parses, is dated today, and
+    has status == "complete"; otherwise (None, reason). Selection must check
+    BOTH candidate files this way — previously a stale gated file from
+    yesterday masked a valid same-day original, forcing the DB-only rescue
+    path and deleting the good file with it.
+    """
+    if not os.path.exists(path):
+        return None, "missing"
+    try:
+        with open(path) as f:
+            stored = json.load(f)
+    except Exception as e:
+        return None, f"unreadable ({e})"
+    if stored.get("date") != today_str:
+        return None, f"stale (dated {stored.get('date')})"
+    if stored.get("status") != "complete":
+        return None, f"incomplete (status={stored.get('status')})"
+    return stored, ""
+
+
+def _apply_circuit_breaker(recs: list[dict]) -> tuple[list[dict], str]:
+    """Run the circuit breaker inline over DB-rescued recs.
+
+    The rescue path executes recs that never went through Phase 1.5, so the
+    gate must run here or gap-down/SPY/VIX protection is silently skipped.
+    Mirrors cron/tradebot_phase1_5.py: sells always pass through
+    run_circuit_breaker; buys are dropped when a gate fails. Fails CLOSED
+    for buys — if the circuit breaker itself errors we cannot verify market
+    conditions, so buys are dropped and sells proceed.
+
+    Returns (surviving_recs, note) where note is a Telegram-ready line ("" if
+    nothing noteworthy).
+    """
+    if not any(r.get("action") == "buy" for r in recs):
+        return recs, ""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        import asyncio
+
+        from scorched.circuit_breaker import run_circuit_breaker
+        from scorched.services.strategy import load_strategy_json
+
+        cb_config = load_strategy_json().get("circuit_breaker", {"enabled": False})
+        if not cb_config.get("enabled", False):
+            return recs, "circuit breaker disabled in strategy.json — rescue recs pass through\n"
+
+        results = asyncio.run(run_circuit_breaker(list(recs), cb_config))
+        passed, blocked = [], []
+        for rec in results:
+            gate = rec.pop("gate_result")
+            if gate.passed:
+                passed.append(rec)
+            else:
+                blocked.append((rec, getattr(gate, "reason", "") or "gate failed"))
+        note = ""
+        if blocked:
+            note = (
+                "CIRCUIT BREAKER blocked during rescue: "
+                + ", ".join(f"{r['action']} {r['symbol']} ({reason})" for r, reason in blocked)
+                + "\n"
+            )
+        return passed, note
+    except Exception as e:
+        sells = [r for r in recs if r.get("action") != "buy"]
+        return sells, (
+            f"⚠️ circuit breaker errored during rescue ({e}) — "
+            f"buys dropped fail-closed, {len(sells)} sell(s) kept\n"
+        )
+
+
+def fetch_db_pending_recs(today_str: str, http_get_fn) -> list[dict]:
+    """Fetch today's session recs from the DB and filter to status=='pending'.
+
+    Pure-ish helper (only side effect is the injected http_get call) so it's
+    reusable by both the DB-authority merge and the DB-only rescue path
+    below. Returns [] on any fetch failure — callers treat that as "nothing
+    to rescue", never as a reason to block.
+    """
+    try:
+        db_sessions = http_get_fn(
+            f"/api/v1/recommendations?session_date={today_str}&limit=1&include_recs=true"
+        )
+        db_recs = db_sessions[0]["recommendations"] if db_sessions else []
+    except Exception as e:
+        print(f"DB-pending fetch failed: {e}")
+        return []
+    return [r for r in db_recs if r.get("status") == "pending"]
+
+
+def merge_pending(file_recs: list[dict], db_recs: list[dict]) -> tuple[list[dict], list[str]]:
+    """Union file recs with today's DB-pending recs. Returns (merged, missing_from_file_symbols).
+    DB rec shape comes from GET /api/v1/recommendations (id, symbol, action, status, suggested_price...).
+    Only status == 'pending' DB recs are added; file entries win on duplicates (they carry gate results)."""
+    by_symbol = {(r["symbol"], r["action"]): r for r in file_recs}
+    missing = []
+    merged = list(file_recs)
+    for r in db_recs:
+        if r.get("status") != "pending":
+            continue
+        key = (r["symbol"], r["action"])
+        if key not in by_symbol:
+            merged.append(r)
+            missing.append(f"{r['action']} {r['symbol']}")
+    return merged, missing
+
+
+def gate_blocked_keys(original_recs: list[dict], gated_recs: list[dict]) -> set[tuple[str, str]]:
+    """Return (symbol, action) keys present in the pre-circuit-breaker file
+    but absent from the post-circuit-breaker (gated) file — i.e. deliberately
+    blocked at 9:55, not lost by the pipeline.
+
+    Phase 1.5 never updates DB status for blocked recs (they stay
+    status='pending' in trade_recommendations), so without this exclusion
+    `merge_pending` would treat a circuit-breaker rejection identically to a
+    rec the file pipeline silently dropped, and Phase 2 would execute it
+    ungated — exactly what the circuit breaker exists to prevent.
+    """
+    gated_keys = {(r["symbol"], r["action"]) for r in gated_recs}
+    return {
+        (r["symbol"], r["action"])
+        for r in original_recs
+        if (r["symbol"], r["action"]) not in gated_keys
+    }
 
 
 def main():
@@ -50,39 +183,120 @@ def main():
 
     print(f"[{now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}] Phase 2: confirming trades for {today_str}")
 
-    # Prefer gated file (Phase 1.5 output); fall back to original (circuit breaker disabled/not run)
-    if os.path.exists(GATED_FILE):
-        recs_file = GATED_FILE
-    elif os.path.exists(ORIGINAL_FILE):
-        recs_file = ORIGINAL_FILE
+    # Prefer gated file (Phase 1.5 output); fall back to original (circuit
+    # breaker disabled/not run). Each candidate is validated for TODAY before
+    # selection — a stale gated file must never mask a valid same-day
+    # original (previously that forced the DB rescue and deleted the good
+    # file).
+    recs_file = None
+    stored = None
+    no_file_reason = None
+    gated_stored, gated_reason = _load_valid_candidate(GATED_FILE, today_str)
+    orig_stored, orig_reason = _load_valid_candidate(ORIGINAL_FILE, today_str)
+    if gated_stored is not None:
+        recs_file, stored = GATED_FILE, gated_stored
+    elif orig_stored is not None:
+        recs_file, stored = ORIGINAL_FILE, orig_stored
+        if gated_reason != "missing":
+            print(f"Gated file unusable ({gated_reason}) — using valid original file")
     else:
-        send_telegram(f"TRADEBOT // {today_str} - Phase 2 skipped: no Phase 1 data found.")
-        print("No recommendations file found.")
-        return
+        if gated_reason == "missing" and orig_reason == "missing":
+            no_file_reason = "no Phase 1 data found"
+        else:
+            no_file_reason = f"gated: {gated_reason}; original: {orig_reason}"
 
-    with open(recs_file) as f:
-        stored = json.load(f)
+    mismatch_warning = ""
 
-    if stored["date"] != today_str:
+    if no_file_reason is not None:
+        # The Phase 1/1.5 file is missing, stale, or incomplete. Phase 1
+        # persists recs to the DB via the API BEFORE the cron writes the
+        # file, so a crash between those two steps (or a corrupt/stale
+        # file) is exactly the dropped-trade class this task exists to
+        # close. Check today's DB session for pending recs before giving up
+        # — there is no gated file to diff here, so nothing to exclude via
+        # gate_blocked_keys (blocked_keys is correctly empty: no circuit
+        # breaker ran against a file that was never usable).
+        rescue_recs = fetch_db_pending_recs(today_str, http_get)
+        if not rescue_recs:
+            send_telegram(f"TRADEBOT // {today_str} - Phase 2 skipped: {no_file_reason}.")
+            print(f"Phase 2 skipped, no DB rescue available: {no_file_reason}")
+            _cleanup_recs_file(recs_file)
+            return
+
+        # Phase 1.5 never saw these recs, so the circuit breaker must run
+        # inline here — otherwise a Phase 1 file failure would submit buys
+        # with gap-down/SPY/VIX protection silently skipped.
+        rescue_recs, cb_note = _apply_circuit_breaker(rescue_recs)
+        if not rescue_recs:
+            send_telegram(
+                f"TRADEBOT // {today_str} - Phase 2: DB rescue found pending recs "
+                f"but none survived the circuit breaker.\n{cb_note}"
+            )
+            print(f"DB rescue: nothing survived circuit breaker ({no_file_reason})")
+            _cleanup_recs_file(recs_file)
+            return
+
         send_telegram(
-            f"TRADEBOT // {today_str} - Phase 2 skipped: "
-            f"recommendations are for {stored['date']}, not today."
+            f"⚠️ PHASE 2: no usable Phase 1 file ({no_file_reason}) — "
+            f"executing {len(rescue_recs)} DB-pending rec(s) (circuit breaker applied inline)\n{cb_note}"
+        )
+        print(f"DB-only rescue ({no_file_reason}): executing {len(rescue_recs)} DB-pending rec(s)")
+        recs = rescue_recs
+        mismatch_warning = (
+            "⚠️ PHASE 2 FILE/DB MISMATCH — executing from DB: "
+            + ", ".join(f"{r['action']} {r['symbol']}" for r in rescue_recs)
+            + f" ({no_file_reason}; circuit breaker applied inline)\n"
+            + cb_note + "\n"
         )
         _cleanup_recs_file(recs_file)
-        print(f"Date mismatch: {stored['date']} != {today_str}")
-        return
+        recs_file = None  # nothing left on disk to clean up again later
+    else:
+        recs = stored["recommendations"]
 
-    if stored.get("status") != "complete":
-        send_telegram(
-            f"TRADEBOT // {today_str} - Phase 2 skipped: "
-            f"Phase 1 did not complete successfully (status={stored.get('status')})"
-        )
-        _cleanup_recs_file(recs_file)
-        print(f"Phase 1 incomplete: status={stored.get('status')}")
-        return
+        # DB is the source of truth: union file recs with today's DB-pending recs
+        # so a rec that survived risk review but never made it into the Phase
+        # 1/1.5 file (pipeline bug, crash, etc.) still gets a confirm attempt
+        # instead of silently expiring (see ABBV 6/23, GS 7/14, AMZN 7/31).
+        # Circuit-breaker-blocked buys are excluded via gate_blocked_keys — they
+        # were deliberately rejected at 9:55, not lost by the plumbing, and
+        # Phase 1.5 never updates their DB status so they'd otherwise look
+        # identical to a dropped rec.
+        blocked_keys: set[tuple[str, str]] = set()
+        db_merge_skip_reason = ""
+        if recs_file == GATED_FILE:
+            try:
+                with open(ORIGINAL_FILE) as f:
+                    original_stored = json.load(f)
+                if original_stored.get("date") == today_str:
+                    blocked_keys = gate_blocked_keys(original_stored.get("recommendations", []), recs)
+                else:
+                    db_merge_skip_reason = "original (pre-gate) file date mismatch"
+            except FileNotFoundError:
+                db_merge_skip_reason = "original (pre-gate) file missing"
+            except Exception as e:
+                db_merge_skip_reason = f"original (pre-gate) file unreadable ({e})"
 
-    recs = stored["recommendations"]
-    symbols = stored["symbols"]
+        if db_merge_skip_reason:
+            # Fail closed: without the original file we can't tell a
+            # circuit-breaker rejection from a plumbing drop, so skip the DB
+            # merge entirely rather than risk resurrecting a blocked buy ungated.
+            print(f"DB-pending merge skipped (fail-closed): {db_merge_skip_reason}")
+            send_telegram(
+                f"⚠️ PHASE 2: DB-authority merge SKIPPED ({db_merge_skip_reason}) — "
+                f"DB-pending recs will not be rescued today."
+            )
+        else:
+            db_recs = fetch_db_pending_recs(today_str, http_get)
+            db_recs = [r for r in db_recs if (r["symbol"], r["action"]) not in blocked_keys]
+            recs, missing = merge_pending(recs, db_recs)
+            if missing:
+                mismatch_warning = (
+                    "⚠️ PHASE 2 FILE/DB MISMATCH — executing from DB: " + ", ".join(missing) +
+                    " (DB-pending, missing from Phase 1/1.5 file; ungated — no circuit-breaker check)\n\n"
+                )
+                print(f"DB/file mismatch: {missing}")
+
+    symbols = sorted({r["symbol"] for r in recs})
     pending = recs
 
     # Load execution config from strategy.json
@@ -252,7 +466,7 @@ def main():
             positions = []
 
         mode_label = {"paper": "PAPER", "alpaca_paper": "ALPACA-PAPER", "alpaca_live": "LIVE"}.get(broker_mode, broker_mode.upper())
-        msg = f"TRADEBOT [{mode_label}] // {today_str} - Executed at open\n"
+        msg = mismatch_warning + f"TRADEBOT [{mode_label}] // {today_str} - Executed at open\n"
         if pre_recon_warning:
             msg += "\n" + pre_recon_warning
         msg += f"Portfolio: ${total:,.2f} ({fmt_pct(ret_pct)})\n\n"

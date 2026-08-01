@@ -9,6 +9,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+# Single source of truth for the max_position_pct fallback used whenever
+# strategy.json is missing the `concentration.max_position_pct` key. Was
+# independently hardcoded to 33 at five call sites (recommender.py x2,
+# trade_execution.py x2, services/strategy.py prose x1) — stale from before
+# the experiment-B size cut (33 -> 15, 2026-06-18). Centralizing here
+# prevents silent re-drift back to the old value.
+DEFAULT_MAX_POSITION_PCT = 15
+
 
 @dataclass
 class CashFloorResult:
