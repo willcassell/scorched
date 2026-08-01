@@ -338,6 +338,7 @@ def main():
             triggered_positions.append({
                 "symbol": symbol,
                 "trigger_reasons": [t.reason for t in triggers],
+                "trigger_types": [t.trigger_type for t in triggers if t.trigger_type],
                 "current_price": current_price,
                 "entry_price": float(pos["avg_cost_basis"]),
                 "today_open": sym_data["today_open"],

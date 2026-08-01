@@ -107,6 +107,8 @@ async def _execute_sell(
     sell_qty: Decimal,
     db: AsyncSession,
     use_emergency_limit: bool = False,
+    exit_reason: str | None = None,
+    exit_trigger: str | None = None,
 ) -> tuple[dict | None, str | None]:
     """Execute a sell via broker. Returns (trade_result, error_msg).
 
@@ -140,6 +142,8 @@ async def _execute_sell(
             limit_price=limit_price,
             recommendation_id=None,
             _client_order_id_override=client_oid,
+            exit_reason=exit_reason,
+            exit_trigger=exit_trigger,
         )
         if result["status"] == "filled":
             trade_result = {
@@ -220,7 +224,11 @@ async def evaluate_triggers(
                 f"Hard stop triggered: position down {drop_pct:.1f}% from entry "
                 f"(>= {hard_stop_pct:.1f}% threshold). Auto-exit without Claude evaluation."
             )
-            trade_result, err = await _execute_sell(trigger, trigger.shares, db, use_emergency_limit=True)
+            trade_result, err = await _execute_sell(
+                trigger, trigger.shares, db, use_emergency_limit=True,
+                exit_reason="intraday_hard_stop",
+                exit_trigger="position_drop_from_entry",
+            )
             action = "exit_full"
             if err:
                 reasoning += f" [SELL FAILED: {err}]"
@@ -283,7 +291,12 @@ async def evaluate_triggers(
                 sell_qty = (trigger.shares * Decimal(str(partial_pct)) / 100).quantize(Decimal("1"))
                 sell_qty = max(sell_qty, Decimal("1"))
 
-            trade_result, err = await _execute_sell(trigger, sell_qty, db)
+            claude_exit_trigger = trigger.trigger_types[0] if trigger.trigger_types else None
+            trade_result, err = await _execute_sell(
+                trigger, sell_qty, db,
+                exit_reason="intraday_claude_exit",
+                exit_trigger=claude_exit_trigger,
+            )
             if err:
                 reasoning += f" [SELL FAILED: {err}]"
                 action = "hold"

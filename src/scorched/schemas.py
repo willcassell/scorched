@@ -186,6 +186,10 @@ class SessionDetail(BaseModel):
 class IntradayTriggerItem(BaseModel):
     symbol: str
     trigger_reasons: list[str]
+    # Machine-readable trigger names parallel to trigger_reasons (one of the 6
+    # intraday vocabulary strings each). Optional/empty for callers that predate
+    # this field — exit telemetry falls back to exit_trigger=None in that case.
+    trigger_types: list[str] = []
     current_price: Decimal
     entry_price: Decimal
     today_open: Decimal

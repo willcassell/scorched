@@ -42,6 +42,8 @@ async def write_pending_fill(
     qty: Decimal,
     limit_price: Decimal,
     recommendation_id: int | None,
+    exit_reason: str | None = None,
+    exit_trigger: str | None = None,
 ) -> PendingFill:
     """Write a pending fill BEFORE submitting to Alpaca.
 
@@ -72,6 +74,8 @@ async def write_pending_fill(
         qty=qty,
         limit_price=limit_price,
         recommendation_id=recommendation_id,
+        exit_reason=exit_reason,
+        exit_trigger=exit_trigger,
     )
     db.add(fill)
     await db.commit()
@@ -170,6 +174,8 @@ async def get_pending_fills(db: AsyncSession) -> list[dict]:
             "limit_price": str(f.limit_price),
             "recommendation_id": f.recommendation_id,
             "created_at": f.created_at.isoformat() if f.created_at else None,
+            "exit_reason": f.exit_reason,
+            "exit_trigger": f.exit_trigger,
         }
         for f in result.scalars().all()
     ]

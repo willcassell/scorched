@@ -309,6 +309,7 @@ async def validate_and_submit_trade(rec_id: int, db: AsyncSession) -> TradeExecu
                 qty=qty,
                 limit_price=limit_price,
                 recommendation_id=rec_id,
+                exit_reason="recommendation",
             )
     except Exception as exc:
         logger.error(

@@ -21,6 +21,7 @@ def check_trailing_stop_breach(
         return GateResult(
             passed=False,
             reason=f"Trailing stop breached: price ${current_price} < stop ${trailing_stop_price}",
+            trigger_type="trailing_stop_breached",
         )
     return GateResult(passed=True)
 
@@ -36,6 +37,7 @@ def check_position_drop_from_entry(
         return GateResult(
             passed=False,
             reason=f"Down {drop_pct:.1f}% from entry ${entry_price} (threshold: {threshold_pct:.1f}%)",
+            trigger_type="position_drop_from_entry",
         )
     return GateResult(passed=True)
 
@@ -51,6 +53,7 @@ def check_position_drop_from_open(
         return GateResult(
             passed=False,
             reason=f"Down {drop_pct:.1f}% from open ${today_open} (threshold: {threshold_pct:.1f}%)",
+            trigger_type="position_drop_from_open",
         )
     return GateResult(passed=True)
 
@@ -66,6 +69,7 @@ def check_spy_intraday_drop(
         return GateResult(
             passed=False,
             reason=f"SPY down {drop_pct:.1f}% intraday (threshold: {threshold_pct:.1f}%)",
+            trigger_type="spy_intraday_drop",
         )
     return GateResult(passed=True)
 
@@ -77,6 +81,7 @@ def check_vix_level(vix_current: Decimal, threshold: float) -> GateResult:
         return GateResult(
             passed=False,
             reason=f"VIX at {vix_val:.1f} exceeds {threshold:.0f}",
+            trigger_type="vix_above_threshold",
         )
     return GateResult(passed=True)
 
@@ -92,6 +97,7 @@ def check_volume_surge(
         return GateResult(
             passed=False,
             reason=f"Volume surge {ratio:.1f}x average (threshold: {threshold_multiplier:.1f}x)",
+            trigger_type="volume_surge",
         )
     return GateResult(passed=True)
 

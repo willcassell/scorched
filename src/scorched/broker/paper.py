@@ -52,6 +52,8 @@ class PaperBroker(BrokerAdapter):
         limit_price: Decimal,
         recommendation_id: int | None,
         _client_order_id_override: str | None = None,
+        exit_reason: str | None = None,
+        exit_trigger: str | None = None,
     ) -> dict:
         result = await apply_sell(
             self.db,
@@ -60,6 +62,8 @@ class PaperBroker(BrokerAdapter):
             shares=qty,
             execution_price=limit_price,
             executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            exit_reason=exit_reason,
+            exit_trigger=exit_trigger,
         )
         return {
             "status": "filled",

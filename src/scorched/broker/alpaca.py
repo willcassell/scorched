@@ -247,6 +247,8 @@ class AlpacaBroker(BrokerAdapter):
         limit_price: Decimal,
         recommendation_id: int | None,
         _client_order_id_override: str | None = None,
+        exit_reason: str | None = None,
+        exit_trigger: str | None = None,
     ) -> dict:
         # Guard: verify position exists on Alpaca to prevent accidental shorts
         loop = asyncio.get_running_loop()
@@ -279,7 +281,10 @@ class AlpacaBroker(BrokerAdapter):
             # Fall back to paper broker for DB-only sell of legacy positions
             from .paper import PaperBroker
             paper = PaperBroker(self.db)
-            return await paper.submit_sell(symbol, qty, limit_price, recommendation_id)
+            return await paper.submit_sell(
+                symbol, qty, limit_price, recommendation_id,
+                exit_reason=exit_reason, exit_trigger=exit_trigger,
+            )
 
         # Cap sell qty at what Alpaca actually holds to prevent partial shorts
         alpaca_qty = Decimal(str(alpaca_pos.qty))
@@ -312,6 +317,8 @@ class AlpacaBroker(BrokerAdapter):
             qty=qty,
             limit_price=limit_price,
             recommendation_id=recommendation_id,
+            exit_reason=exit_reason,
+            exit_trigger=exit_trigger,
         )
 
         start = time.monotonic()
@@ -557,6 +564,8 @@ async def _reconcile_pending_orders_inner(db: AsyncSession) -> list[dict]:
                         shares=filled_qty,
                         execution_price=filled_price,
                         executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        exit_reason=fill.get("exit_reason"),
+                        exit_trigger=fill.get("exit_trigger"),
                     )
                     await remove_pending_fill(db, order_id)
                     await db.commit()
@@ -601,6 +610,8 @@ async def _reconcile_pending_orders_inner(db: AsyncSession) -> list[dict]:
                             shares=filled_qty,
                             execution_price=filled_price,
                             executed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                            exit_reason=fill.get("exit_reason"),
+                            exit_trigger=fill.get("exit_trigger"),
                         )
                     await remove_pending_fill(db, order_id)
                     await db.commit()

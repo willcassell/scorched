@@ -279,6 +279,8 @@ async def apply_sell(
     shares: Decimal,
     execution_price: Decimal,
     executed_at: datetime,
+    exit_reason: str | None = None,
+    exit_trigger: str | None = None,
 ) -> ConfirmTradeResponse:
     portfolio = (await db.execute(select(Portfolio))).scalars().first()
     pos = (
@@ -334,6 +336,8 @@ async def apply_sell(
         executed_at=executed_at,
         realized_gain=realized_gain,
         tax_category=tax_cat,
+        exit_reason=exit_reason,
+        exit_trigger=exit_trigger,
     )
     db.add(history)
     await db.commit()
