@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..broker import get_broker
 from ..config import settings
 from ..models import ApiCallLog, Portfolio, Position
+from ..trailing_stops import initial_stop_price
+from .strategy import load_strategy_json
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +167,9 @@ async def sync_positions(db: AsyncSession) -> dict:
     DB_QTY_PRECISION = Decimal("0.000001")   # Numeric(15,6)
     DB_PRICE_PRECISION = Decimal("0.0001")   # Numeric(15,4)
 
+    # Read once — avoids a file read per new position inside the loop below.
+    floor_pct = load_strategy_json().get("trailing_stop", {}).get("floor_pct", 5.0)
+
     # ── Position loop — fix qty/cost only, DO NOT touch cash here ─────────
     for sym in sorted(all_symbols):
         b = broker_map.get(sym)
@@ -188,7 +193,7 @@ async def sync_positions(db: AsyncSession) -> dict:
 
         if broker_qty > 0 and local_qty == 0:
             # Alpaca has it, local doesn't — create position
-            initial_stop = (broker_avg * Decimal("0.95")).quantize(Decimal("0.0001"))
+            initial_stop = initial_stop_price(broker_avg, min_stop_pct=floor_pct)
             pos = Position(
                 symbol=sym,
                 shares=broker_qty,

@@ -30,7 +30,12 @@ from .technicals import compute_technicals
 from .finnhub_data import fetch_analyst_consensus_sync
 from ..drawdown_gate import update_peak_and_check
 from ..correlation import find_high_correlations
-from ..risk_gates import check_cash_floor, check_holdings_cap, check_position_cap
+from ..risk_gates import (
+    DEFAULT_MAX_POSITION_PCT,
+    check_cash_floor,
+    check_holdings_cap,
+    check_position_cap,
+)
 from .telegram import send_telegram
 from .research import (
     WATCHLIST,
@@ -812,7 +817,7 @@ async def generate_recommendations(
     strategy_conc = strategy_json.get("concentration", {})
     call2_response, decision_raw, parsed = await call_decision(
         strategy, guidance, playbook.content, min_cash_pct, call2_user,
-        max_position_pct=strategy_conc.get("max_position_pct", 33),
+        max_position_pct=strategy_conc.get("max_position_pct", DEFAULT_MAX_POSITION_PCT),
         max_holdings=strategy_conc.get("max_holdings", 10),
         tracker=tracker,
     )
@@ -1125,7 +1130,7 @@ async def generate_recommendations(
                 existing_market_value=existing_value,
                 buy_notional=estimated_cost,
                 total_portfolio_value=total_value_for_floor,
-                max_position_pct=Decimal(str(strategy_conc.get("max_position_pct", 33))),
+                max_position_pct=Decimal(str(strategy_conc.get("max_position_pct", DEFAULT_MAX_POSITION_PCT))),
             )
             await record_gate_decision(
                 db,

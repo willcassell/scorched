@@ -65,5 +65,9 @@
   "drawdown_gate": {
     "enabled": true,
     "max_drawdown_pct": 8.0
+  },
+  "trailing_stop": {
+    "atr_multiplier": 2.0,
+    "floor_pct": 5.0
   }
 }

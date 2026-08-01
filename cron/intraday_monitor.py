@@ -241,6 +241,10 @@ def main():
     if not config.get("enabled", True):
         return
 
+    trailing_cfg = strategy.get("trailing_stop", {})
+    ts_atr_multiplier = trailing_cfg.get("atr_multiplier", 2.0)
+    ts_floor_pct = trailing_cfg.get("floor_pct", 5.0)
+
     cooldown_minutes = config.get("cooldown_minutes", 30)
     cooldowns = load_cooldowns()
 
@@ -296,6 +300,8 @@ def main():
                 current_price=float(current_price),
                 atr=float(atr),
                 entry_price=float(pos["avg_cost_basis"]),
+                atr_multiplier=ts_atr_multiplier,
+                min_stop_pct=ts_floor_pct,
             )
             # Only POST to the API if something changed (new high)
             needs_update = (
