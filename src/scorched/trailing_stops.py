@@ -158,8 +158,13 @@ def initial_stop_price(entry_price: Decimal, min_stop_pct: float = 5.0) -> Decim
     position's day-one stop is consistent with its ongoing trailing-stop
     floor. Default (5.0) is unchanged from the previous hardcoded
     ``price * Decimal("0.95")``.
+
+    Deliberately quantizes with the ambient decimal context's rounding mode
+    (ROUND_HALF_EVEN by default) rather than an explicit mode — the old
+    inline formula this replaces (``(execution_price *
+    Decimal("0.95")).quantize(Decimal("0.0001"))``) never passed a rounding
+    mode either, so an explicit ROUND_HALF_UP here would be a (if tiny)
+    behavior change at exact-tie values.
     """
     _q4 = Decimal("0.0001")
-    return (entry_price * (Decimal("1") - Decimal(str(min_stop_pct)) / Decimal("100"))).quantize(
-        _q4, ROUND_HALF_UP
-    )
+    return (entry_price * (Decimal("1") - Decimal(str(min_stop_pct)) / Decimal("100"))).quantize(_q4)

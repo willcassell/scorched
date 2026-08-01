@@ -17,6 +17,7 @@ from ..api_tracker import track_call
 from ..config import settings
 from ..prompts import load_prompt
 from ..retry import claude_call_with_retry
+from ..risk_gates import DEFAULT_MAX_POSITION_PCT
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +390,7 @@ async def call_decision(
     min_cash_pct: int,
     user_content: str,
     *,
-    max_position_pct: int = 33,
+    max_position_pct: int = DEFAULT_MAX_POSITION_PCT,
     max_holdings: int = 10,
     tracker=None,
 ):
