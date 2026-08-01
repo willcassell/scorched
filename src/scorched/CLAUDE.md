@@ -42,7 +42,7 @@ The declared strategy is **2–6 week swing/position trading** with two entry st
 | Condition | Position Size |
 |-----------|--------------|
 | Normal market (VIX <20, SPY uptrend) | up to 15% of portfolio (conviction-weighted; 15% is the experiment hard cap in `strategy.json`) |
-| Elevated volatility (VIX 20–30) | 10–20% of portfolio |
+| Elevated volatility (VIX 20–30) | up to 10% of portfolio (reduced conviction; still bounded by the 15% hard cap) |
 | Portfolio down >12% from starting capital | Half normal size until recovery |
 | Max simultaneous positions | 10 (hard cap — enforced by code) |
 | Cash floor | 10% of total portfolio at all times (hard minimum — enforced by code) |
@@ -138,8 +138,7 @@ Evaluate each held position against these triggers (any one = consider selling):
 
 | Exit Trigger | Action |
 |-------------|--------|
-| +15% gain within 2 weeks | Sell 50% (take partial, let rest run) |
-| +25% gain at any time | Sell remainder |
+| Trailing stop breached (HWM − 2×ATR, −5% floor) | Sell full position — this is the primary profit-taking exit. No fixed +15%/+25% profit targets and no partial sells (`partial_sell: never`); let winners run until the trailing stop ratchets down to them. |
 | -8% from entry | Sell full position (hard stop) |
 | 30 calendar days held, flat or down, no fresh catalyst | Sell full position (time stop) |
 | Original catalyst invalidated (thesis broken) | Sell immediately |
