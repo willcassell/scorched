@@ -261,11 +261,27 @@ def _db_session_response(recs):
              "created_at": "2026-01-01T00:00:00", "recommendations": recs}]
 
 
+def _patch_cb_passthrough(monkeypatch):
+    """Replace the rescue path's inline circuit breaker with a recording
+    pass-through. Returns the list of rec-lists it was called with, so tests
+    can assert the breaker was consulted without hitting live market data."""
+    calls = []
+
+    def _cb(recs):
+        calls.append(list(recs))
+        return recs, ""
+
+    monkeypatch.setattr(tradebot_phase2, "_apply_circuit_breaker", _cb)
+    return calls
+
+
 def test_missing_file_with_db_pending_executes_with_warning(_phase2_env, monkeypatch):
     """No Phase 1/1.5 file at all, but the DB has a pending buy for today's
     session (Phase 1's API call persisted it before the cron process died
-    before writing the JSON). Phase 2 must rescue and execute it, loudly."""
+    before writing the JSON). Phase 2 must rescue and execute it, loudly —
+    and must consult the circuit breaker inline (Phase 1.5 never saw these)."""
     sent = _phase2_env
+    cb_calls = _patch_cb_passthrough(monkeypatch)
     db_recs = [{"id": 42, "symbol": "AMZN", "action": "buy", "status": "pending",
                 "suggested_price": "230.00", "quantity": "10"}]
 
@@ -286,11 +302,12 @@ def test_missing_file_with_db_pending_executes_with_warning(_phase2_env, monkeyp
     tradebot_phase2.main()
 
     assert any("no usable Phase 1 file" in m and "no Phase 1 data found" in m for m in sent)
-    assert any("executing 1 DB-pending recs directly" in m for m in sent)
+    assert any("executing 1 DB-pending rec(s) (circuit breaker applied inline)" in m for m in sent)
+    assert cb_calls and [r["symbol"] for r in cb_calls[0]] == ["AMZN"]
     final = sent[-1]
     assert "PHASE 2 FILE/DB MISMATCH" in final
     assert "buy AMZN" in final
-    assert "ungated" in final
+    assert "circuit breaker applied inline" in final
     assert "AMZN" in final and "Trades Executed" in final
 
 
@@ -319,6 +336,7 @@ def test_date_mismatch_with_db_pending_executes_with_warning(_phase2_env, monkey
     """A stale ORIGINAL_FILE (from a prior session) is on disk, but the DB
     has a pending buy for today. The stale file must not block the rescue."""
     sent = _phase2_env
+    _patch_cb_passthrough(monkeypatch)
     stale_file = tmp_path / "original.json"
     stale_file.write_text(json.dumps({
         "date": "2020-01-01", "status": "complete", "recommendations": [], "symbols": [],
@@ -343,13 +361,117 @@ def test_date_mismatch_with_db_pending_executes_with_warning(_phase2_env, monkey
 
     tradebot_phase2.main()
 
-    assert any("no usable Phase 1 file" in m and "not today" in m for m in sent)
-    assert any("executing 1 DB-pending recs directly" in m for m in sent)
+    assert any("no usable Phase 1 file" in m and "stale (dated 2020-01-01)" in m for m in sent)
+    assert any("executing 1 DB-pending rec(s) (circuit breaker applied inline)" in m for m in sent)
     final = sent[-1]
     assert "PHASE 2 FILE/DB MISMATCH" in final
     assert "buy GS" in final
     # Stale file must be cleaned up, not left to confuse tomorrow's run.
     assert not stale_file.exists()
+
+
+def test_status_incomplete_with_db_pending_rescues_with_circuit_breaker(_phase2_env, monkeypatch, tmp_path):
+    """Phase 1 wrote a file but marked it errored (status != complete) while
+    the DB already holds today's pending rec. The rescue must run AND must
+    consult the circuit breaker inline."""
+    sent = _phase2_env
+    cb_calls = _patch_cb_passthrough(monkeypatch)
+    bad_file = tmp_path / "original.json"
+    bad_file.write_text(json.dumps({
+        "date": tradebot_phase2.now_et()[1], "status": "error",
+        "recommendations": [], "symbols": [],
+    }))
+    monkeypatch.setattr(tradebot_phase2, "ORIGINAL_FILE", str(bad_file))
+
+    db_recs = [{"id": 44, "symbol": "GS", "action": "buy", "status": "pending",
+                "suggested_price": "1090.00", "quantity": "9"}]
+    get_rules = [
+        ("recommendations?session_date=", _db_session_response(db_recs)),
+        ("broker/status", {"broker_mode": "paper"}),
+        ("current-prices", {"current_prices": {"GS": 1095.0}}),
+        ("opening-prices", {"opening_prices": {"GS": 1092.0}}),
+        ("/api/v1/portfolio", {"total_value": 100000.0, "all_time_return_pct": 1.2,
+                                "cash_balance": 5000.0, "positions": []}),
+    ]
+    post_rules = [
+        ("trades/confirm", {"trade_id": 557, "execution_price": "1096.20", "realized_gain": None}),
+    ]
+    monkeypatch.setattr(tradebot_phase2, "http_get", _make_http_get(get_rules))
+    monkeypatch.setattr(tradebot_phase2, "http_post", _make_http_post(post_rules))
+
+    tradebot_phase2.main()
+
+    assert any("no usable Phase 1 file" in m and "incomplete (status=error)" in m for m in sent)
+    assert cb_calls and [r["symbol"] for r in cb_calls[0]] == ["GS"]
+    final = sent[-1]
+    assert "buy GS" in final and "Trades Executed" in final
+
+
+def test_rescue_blocked_entirely_by_circuit_breaker_skips_execution(_phase2_env, monkeypatch):
+    """DB rescue finds pending buys but the inline circuit breaker blocks
+    them all — nothing may be submitted, and the skip must say why."""
+    sent = _phase2_env
+
+    def _cb_blocks_all(recs):
+        return [], "CIRCUIT BREAKER blocked during rescue: buy AMZN (SPY gap-down)\n"
+
+    monkeypatch.setattr(tradebot_phase2, "_apply_circuit_breaker", _cb_blocks_all)
+
+    db_recs = [{"id": 45, "symbol": "AMZN", "action": "buy", "status": "pending",
+                "suggested_price": "230.00", "quantity": "10"}]
+
+    def _no_post(path, payload, timeout=60):
+        raise AssertionError(f"nothing may be submitted when CB blocks the whole rescue: {path}")
+
+    monkeypatch.setattr(tradebot_phase2, "http_get", _make_http_get([
+        ("recommendations?session_date=", _db_session_response(db_recs)),
+    ]))
+    monkeypatch.setattr(tradebot_phase2, "http_post", _no_post)
+
+    tradebot_phase2.main()
+
+    assert any("none survived the circuit breaker" in m and "SPY gap-down" in m for m in sent)
+
+
+def test_stale_gated_file_does_not_mask_valid_original(_phase2_env, monkeypatch, tmp_path):
+    """Yesterday's GATED file + a valid same-day ORIGINAL: Phase 2 must use
+    the valid original (normal gated-file-absent semantics), NOT fall into
+    the DB rescue, and must not delete the good file before consuming it."""
+    sent = _phase2_env
+    today = tradebot_phase2.now_et()[1]
+    stale_gated = tmp_path / "gated.json"
+    stale_gated.write_text(json.dumps({
+        "date": "2020-01-01", "status": "complete", "recommendations": [], "symbols": [],
+    }))
+    valid_original = tmp_path / "original.json"
+    valid_original.write_text(json.dumps({
+        "date": today, "status": "complete",
+        "recommendations": [{"id": 46, "symbol": "AAPL", "action": "buy",
+                              "status": "pending", "suggested_price": "200.00", "quantity": "5"}],
+        "symbols": ["AAPL"],
+    }))
+    monkeypatch.setattr(tradebot_phase2, "GATED_FILE", str(stale_gated))
+    monkeypatch.setattr(tradebot_phase2, "ORIGINAL_FILE", str(valid_original))
+
+    get_rules = [
+        ("recommendations?session_date=", _db_session_response([])),
+        ("broker/status", {"broker_mode": "paper"}),
+        ("current-prices", {"current_prices": {"AAPL": 201.0}}),
+        ("opening-prices", {"opening_prices": {"AAPL": 200.5}}),
+        ("/api/v1/portfolio", {"total_value": 100000.0, "all_time_return_pct": 1.2,
+                                "cash_balance": 5000.0, "positions": []}),
+    ]
+    post_rules = [
+        ("trades/confirm", {"trade_id": 558, "execution_price": "201.60", "realized_gain": None}),
+    ]
+    monkeypatch.setattr(tradebot_phase2, "http_get", _make_http_get(get_rules))
+    monkeypatch.setattr(tradebot_phase2, "http_post", _make_http_post(post_rules))
+
+    tradebot_phase2.main()
+
+    assert not any("no usable Phase 1 file" in m for m in sent), "must not fall into DB rescue"
+    final = sent[-1]
+    assert "AAPL" in final and "Trades Executed" in final
 
 
 def test_fail_closed_merge_skip_alerts_via_telegram(_phase2_env, monkeypatch, tmp_path):
