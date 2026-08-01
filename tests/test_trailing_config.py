@@ -264,3 +264,17 @@ class TestStrategyJsonTrailingStopSection:
         live = json.loads((_REPO_ROOT / "strategy.json").read_text())
         assert live["trailing_stop"]["atr_multiplier"] == 2.0
         assert live["trailing_stop"]["floor_pct"] == 5.0
+
+
+class TestDefaultJsonMirrorsMechanicalEntry:
+    """Task 10: a missing/corrupt strategy.json must not silently disable the
+    code-enforced mechanical entry gate — the fallback must match live."""
+
+    def test_default_json_has_mechanical_entry_section_matching_live(self):
+        from scorched.services.strategy import DEFAULT_JSON
+
+        live = json.loads((_REPO_ROOT / "strategy.json").read_text())
+
+        assert "mechanical_entry" in DEFAULT_JSON
+        assert "mechanical_entry" in live
+        assert DEFAULT_JSON["mechanical_entry"] == live["mechanical_entry"]

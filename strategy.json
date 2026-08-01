@@ -22,6 +22,12 @@
     "min_candidate_mom_pct": 0.0
   },
   "reentry_cooldown_days": 3,
+  "mechanical_entry": {
+    "enabled": true,
+    "min_momentum_5d_pct": 0.0,
+    "min_rel_volume": 1.0,
+    "require_above_20dma": true
+  },
   "experiment": {
     "name": "B-momentum-discipline",
     "start_date": "2026-06-18",

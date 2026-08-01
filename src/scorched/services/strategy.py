@@ -178,6 +178,17 @@ DEFAULT_JSON = {
     # corrupt strategy.json must not silently disable this safety gate, so
     # it's mirrored here like trailing_stop/drawdown_gate above.
     "reentry_cooldown_days": 3,
+    # Mechanical entry gate (Task 10, 2026-08-01) — code-enforced minimums
+    # (5d momentum > 0, relative volume >= 1.0, price above 20dma) that
+    # every BUY must clear regardless of Claude's thesis. A missing/corrupt
+    # strategy.json must not silently disable this gate either, so it's
+    # mirrored here like the other safety sections above.
+    "mechanical_entry": {
+        "enabled": True,
+        "min_momentum_5d_pct": 0.0,
+        "min_rel_volume": 1.0,
+        "require_above_20dma": True,
+    },
 }
 
 

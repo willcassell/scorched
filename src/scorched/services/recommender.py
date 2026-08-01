@@ -496,6 +496,109 @@ async def check_reentry_cooldown(
         return True, f"reentry_cooldown check failed ({e}) — failing open"
 
 
+def check_mechanical_entry(
+    symbol: str, price_data: dict, technicals: dict, cfg: dict
+) -> tuple[bool, str | None]:
+    """Code-enforced mechanical entry minimums for every BUY (Task 10,
+    analyst_guidance.md hard rule #12).
+
+    Backtest finding (6/18, Experiment B): LLM-originated entries lose to a
+    mechanical breakout rule. This makes the three logical minimums named in
+    hard rule #12 non-negotiable in code — Claude's role narrows to
+    selecting/vetoing among names that already qualify, not to
+    exception-making on ones that don't.
+
+    Field mapping (there is no field literally named momentum_5d_pct /
+    rel_volume / above_20dma anywhere in the codebase — those are the
+    *logical* criteria; the real fields backing them are):
+      - momentum    -> price_data[symbol]["week_change_pct"] (the true
+        5-trading-day return, already computed in _fetch_price_data_sync).
+      - rel_volume  -> technicals[symbol]["volume"]["relative_volume"]
+        (calc_volume_profile's latest/avg-20d ratio). The 9:45 AM
+        partial-bar bug that produced rel=0.0x on nearly every symbol was
+        fixed in commit 997c2af (strips today's partial bar before
+        averaging) — verified clean against the live 2026-07-31 Phase-0
+        cache: 78/78 symbols had a real, non-zero value in a plausible
+        0.52x-3.42x range. No systematic gap found, so this criterion gets
+        no special-cased warn+pass — same fail-closed default as the other
+        two.
+      - above_20dma -> price_data[symbol]["current_price"] compared against
+        technicals[symbol]["bollinger"]["middle"] (calc_bollinger_bands' 20
+        -period SMA, reused rather than adding a redundant MA calc).
+
+    Missing an individual field blocks with "mechanical_data_missing" UNLESS
+    cfg["fail_open_on_missing"] is True (default False), in which case that
+    one criterion passes with a logged warning and the others are still
+    evaluated normally.
+
+    Returns (allowed, reason). reason is one of "mechanical_momentum" /
+    "mechanical_volume" / "mechanical_trend" / "mechanical_data_missing", or
+    None on pass.
+    """
+    if not cfg.get("enabled", True):
+        return True, None
+
+    fail_open = bool(cfg.get("fail_open_on_missing", False))
+    row = price_data.get(symbol) or {}
+    tech = technicals.get(symbol) or {}
+    volume = tech.get("volume") or {}
+    bollinger = tech.get("bollinger") or {}
+
+    # --- Criterion 1: 5-day momentum > floor (strict) ---
+    momentum = row.get("week_change_pct")
+    min_momentum = float(cfg.get("min_momentum_5d_pct", 0.0))
+    if momentum is None:
+        if not fail_open:
+            logger.warning(
+                "Mechanical gate REJECT %s: momentum (week_change_pct) "
+                "missing — failing closed", symbol,
+            )
+            return False, "mechanical_data_missing"
+        logger.warning(
+            "Mechanical gate: %s momentum missing — failing open "
+            "(fail_open_on_missing=True)", symbol,
+        )
+    elif momentum <= min_momentum:
+        return False, "mechanical_momentum"
+
+    # --- Criterion 2: relative volume >= floor (non-strict) ---
+    rel_volume = volume.get("relative_volume")
+    min_rel_volume = float(cfg.get("min_rel_volume", 1.0))
+    if rel_volume is None:
+        if not fail_open:
+            logger.warning(
+                "Mechanical gate REJECT %s: relative_volume missing — "
+                "failing closed", symbol,
+            )
+            return False, "mechanical_data_missing"
+        logger.warning(
+            "Mechanical gate: %s relative_volume missing — failing open "
+            "(fail_open_on_missing=True)", symbol,
+        )
+    elif rel_volume < min_rel_volume:
+        return False, "mechanical_volume"
+
+    # --- Criterion 3: price above 20-day MA (strict), if required ---
+    if cfg.get("require_above_20dma", True):
+        current_price = row.get("current_price")
+        ma20 = bollinger.get("middle")
+        if current_price is None or ma20 is None:
+            if not fail_open:
+                logger.warning(
+                    "Mechanical gate REJECT %s: 20dma data missing — "
+                    "failing closed", symbol,
+                )
+                return False, "mechanical_data_missing"
+            logger.warning(
+                "Mechanical gate: %s 20dma data missing — failing open "
+                "(fail_open_on_missing=True)", symbol,
+            )
+        elif current_price <= ma20:
+            return False, "mechanical_trend"
+
+    return True, None
+
+
 # The only regime condition assess_exposure's hardcoded logic actually
 # implements. There is no config DSL — see the warning below.
 _SUPPORTED_REGIME_CONDITION = "spy_above_20dma_and_no_drawdown_gate"
@@ -1503,6 +1606,50 @@ async def generate_recommendations(
                 )
                 await send_telegram(
                     f"TRADEBOT // Re-entry cooldown: {symbol} BUY skipped — {cooldown_reason}"
+                )
+                continue
+
+            # Mechanical entry gate (Task 10) — code-enforced hard rule #12.
+            # Backtest evidence (6/18): LLM-originated entries lose to a
+            # mechanical breakout rule. Every BUY must clear 5-day momentum,
+            # relative volume, and 20dma minimums in code before Claude's
+            # pick can go through. Last in the filter chain per the task
+            # brief (cash_floor -> position_cap -> holdings_cap -> sector_cap
+            # -> factor_alignment -> reentry_cooldown -> mechanical_entry).
+            mech_cfg = strategy_json.get("mechanical_entry", {})
+            mech_row = price_data.get(symbol) or {}
+            mech_tech = technicals.get(symbol) or {}
+            mech_volume = mech_tech.get("volume") or {}
+            mech_bollinger = mech_tech.get("bollinger") or {}
+            mech_passed, mech_reason = check_mechanical_entry(
+                symbol, price_data, technicals, mech_cfg
+            )
+            await record_gate_decision(
+                db,
+                use_caller_session=True,
+                session_id=session_row.id,
+                symbol=symbol,
+                action="buy",
+                phase=PHASE_FILTER,
+                gate="mechanical_entry",
+                passed=mech_passed,
+                reason=mech_reason,
+                details={
+                    "week_change_pct": mech_row.get("week_change_pct"),
+                    "relative_volume": mech_volume.get("relative_volume"),
+                    "current_price": mech_row.get("current_price"),
+                    "ma20": mech_bollinger.get("middle"),
+                    "min_momentum_5d_pct": mech_cfg.get("min_momentum_5d_pct", 0.0),
+                    "min_rel_volume": mech_cfg.get("min_rel_volume", 1.0),
+                    "require_above_20dma": mech_cfg.get("require_above_20dma", True),
+                },
+            )
+            if not mech_passed:
+                logger.warning(
+                    "Skipping %s buy — mechanical entry gate: %s", symbol, mech_reason,
+                )
+                await send_telegram(
+                    f"TRADEBOT // Mechanical entry gate: {symbol} BUY skipped — {mech_reason}"
                 )
                 continue
 
