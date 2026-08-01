@@ -433,17 +433,24 @@ async def check_reentry_cooldown(
     trading days ago is ALLOWED (strictly-greater-than passes) — only sells
     strictly more recent than that boundary block the buy.
 
-    Returns (allowed, reason). Fails OPEN (allowed=True) ONLY on a DB error,
-    which is logged at ERROR level — consistent with the project's
-    best-effort gate-recording convention (telemetry/read failures must never
-    block a trade that would otherwise clear), but distinct from the
-    fail-CLOSED posture used for missing market data in check_factor_alignment
-    / check_sector_exposure (a DB outage here isn't evidence of anything
-    about the candidate, whereas missing momentum/sector data is).
+    Returns (allowed, reason). Fails OPEN (allowed=True) on a DB error OR a
+    malformed `cooldown_days` (e.g. a hand-edited strategy.json with a string
+    `"3"`, `null`, or a list) — both are logged at ERROR level. Coercing
+    `cooldown_days` to `int` happens inside this same try/except: a
+    misconfigured value must never raise into the hot path and abort the
+    whole session's recommendation generation, consistent with the project's
+    best-effort gate-recording convention (telemetry/config failures must
+    never block a trade that would otherwise clear). This is distinct from
+    the fail-CLOSED posture used for missing market data in
+    check_factor_alignment / check_sector_exposure (a DB/config problem here
+    isn't evidence of anything about the candidate, whereas missing
+    momentum/sector data is).
     """
-    if cooldown_days <= 0:
-        return True, None
     try:
+        cooldown_days = int(cooldown_days)
+        if cooldown_days <= 0:
+            return True, None
+
         import pandas_market_calendars as mcal
         from datetime import timedelta
 
@@ -483,7 +490,8 @@ async def check_reentry_cooldown(
         return True, None
     except Exception as e:
         logger.error(
-            "reentry_cooldown check DB error for %s: %s — failing open", symbol, e
+            "reentry_cooldown check failed for %s (%s: %s) — failing open",
+            symbol, type(e).__name__, e,
         )
         return True, f"reentry_cooldown check failed ({e}) — failing open"
 

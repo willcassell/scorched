@@ -37,7 +37,10 @@ FIXED_TODAY = date(2026, 6, 22)
 #   ..., 2026-06-15, 2026-06-16, 2026-06-17, 2026-06-18, [gap: 6/19 holiday, 6/20-21 weekend], 2026-06-22
 DAYS_BACK_1 = date(2026, 6, 18)  # 1 NYSE trading day before FIXED_TODAY
 DAYS_BACK_3 = date(2026, 6, 16)  # exactly 3 NYSE trading days before FIXED_TODAY
-DAYS_BACK_5 = date(2026, 6, 11)  # 5 NYSE trading days before FIXED_TODAY
+DAYS_BACK_6 = date(2026, 6, 11)  # 6 NYSE trading days before FIXED_TODAY (Juneteenth gap
+                                 # pushes the calendar date further back than a naive
+                                 # "5 trading days" count would suggest — verified against
+                                 # pandas_market_calendars, not assumed)
 
 
 @pytest.fixture(autouse=True)
@@ -80,8 +83,10 @@ async def test_sell_exactly_three_trading_days_ago_allowed(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sell_five_trading_days_ago_allowed_with_three_day_cooldown(db_session):
-    await _seed_sell(db_session, "CVX", datetime.combine(DAYS_BACK_5, datetime.min.time()))
+async def test_sell_well_past_cooldown_allowed_with_three_day_cooldown(db_session):
+    """A sell well outside the 3-day cooldown (6 NYSE trading days back, per
+    the Juneteenth-gap arithmetic above) must be allowed regardless."""
+    await _seed_sell(db_session, "CVX", datetime.combine(DAYS_BACK_6, datetime.min.time()))
     allowed, reason = await check_reentry_cooldown(db_session, "CVX", cooldown_days=3)
     assert allowed is True
     assert reason is None
@@ -142,6 +147,54 @@ async def test_db_error_fails_open_and_logs(db_session, monkeypatch, caplog):
         allowed, reason = await check_reentry_cooldown(db_session, "CVX", cooldown_days=3)
     assert allowed is True
     assert any("reentry_cooldown" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_malformed_non_numeric_string_fails_open_and_logs(db_session, caplog):
+    """Fix round 1 (review finding): a hand-edited strategy.json could store
+    reentry_cooldown_days as garbage ("abc" — a non-numeric string, unlike
+    the numeric-string "3" case below which coerces cleanly). The
+    int(cooldown_days) coercion happens inside the same try/except as the DB
+    query, so a ValueError here must fail open + log ERROR, not raise and
+    abort the whole recommendation session."""
+    with caplog.at_level("ERROR"):
+        allowed, reason = await check_reentry_cooldown(db_session, "AAPL", "abc")
+    assert allowed is True
+    assert reason is not None
+    assert any("reentry_cooldown" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_malformed_cooldown_days_none_fails_open_and_logs(db_session, caplog):
+    """Same as above but for a `null`/None config value — int(None) raises
+    TypeError, which must be caught by the same fail-open path."""
+    with caplog.at_level("ERROR"):
+        allowed, reason = await check_reentry_cooldown(db_session, "AAPL", None)
+    assert allowed is True
+    assert reason is not None
+    assert any("reentry_cooldown" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_malformed_cooldown_days_list_fails_open_and_logs(db_session, caplog):
+    """A list (e.g. a copy-paste mistake in strategy.json) must also fail
+    open rather than raise — int([1, 2]) raises TypeError."""
+    with caplog.at_level("ERROR"):
+        allowed, reason = await check_reentry_cooldown(db_session, "AAPL", [1, 2])
+    assert allowed is True
+    assert reason is not None
+    assert any("reentry_cooldown" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_cooldown_days_as_numeric_string_coerces_correctly(db_session):
+    """A numeric string ("3") should coerce to int 3 and behave identically
+    to passing the int 3 directly — not just fail open blindly. Uses the
+    same 1-trading-day-ago sell fixture as test_sell_one_trading_day_ago_blocks."""
+    await _seed_sell(db_session, "CVX", datetime.combine(DAYS_BACK_1, datetime.min.time()))
+    allowed, reason = await check_reentry_cooldown(db_session, "CVX", "3")
+    assert allowed is False
+    assert reason is not None
 
 
 def test_gate_is_wired_into_the_buy_chain_after_factor_alignment():
