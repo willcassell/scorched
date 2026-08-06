@@ -15,7 +15,14 @@ def test_no_budget_tokens_anywhere():
 
 
 def test_opus5_pricing():
-    assert cost._PRICING["claude-opus-5"] == (5.0, 25.0, 5.0)
+    assert cost._PRICING["claude-opus-5"] == (5.0, 25.0, 25.0)
+
+
+def test_thinking_billed_at_output_rate():
+    """Thinking tokens are output tokens — never price them at the input rate."""
+    for model, (_in, out, think) in cost._PRICING.items():
+        assert think == out, f"{model}: thinking rate {think} != output rate {out}"
+    assert cost._DEFAULT_PRICING[2] == cost._DEFAULT_PRICING[1]
 
 
 def test_refusal_guard_raises():

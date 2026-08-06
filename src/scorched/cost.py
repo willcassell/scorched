@@ -13,14 +13,24 @@ from .models import TokenUsage
 DAILY_COST_CEILING_USD = Decimal("5.00")
 
 # (input_usd_per_mtok, output_usd_per_mtok, thinking_usd_per_mtok)
+#
+# Thinking tokens ARE output tokens — the API bills them at the output rate and
+# exposes no separate thinking price (there is no `thinking_tokens` usage field
+# either; our split is estimated from `output_tokens`). The third element must
+# therefore equal the second. It was set to the INPUT rate until 2026-08-05,
+# which under-reported every call that recorded a nonzero thinking split.
 _PRICING: dict[str, tuple[float, float, float]] = {
-    "claude-sonnet-4-5":          (3.0,  15.0,  3.0),
-    "claude-sonnet-4-6":          (3.0,  15.0,  3.0),
-    "claude-opus-4-6":            (15.0, 75.0,  15.0),
-    "claude-haiku-4-5-20251001":  (0.8,  4.0,   0.8),
-    "claude-opus-5":              (5.0,  25.0,  5.0),
+    "claude-sonnet-4-5":          (3.0,  15.0,  15.0),
+    "claude-sonnet-4-6":          (3.0,  15.0,  15.0),
+    "claude-sonnet-5":            (3.0,  15.0,  15.0),
+    "claude-opus-4-6":            (5.0,  25.0,  25.0),
+    "claude-opus-4-8":            (5.0,  25.0,  25.0),
+    "claude-haiku-4-5-20251001":  (1.0,  5.0,   5.0),
+    "claude-haiku-4-5":           (1.0,  5.0,   5.0),
+    "claude-opus-5":              (5.0,  25.0,  25.0),
+    "claude-fable-5":             (10.0, 50.0,  50.0),
 }
-_DEFAULT_PRICING = (5.0, 25.0, 5.0)
+_DEFAULT_PRICING = (5.0, 25.0, 25.0)
 
 
 def estimate_cost(
