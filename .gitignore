@@ -22,6 +22,9 @@ logs/
 # Docker data
 postgres_data/
 
+# Host-specific compose binds (addresses must not be committed)
+docker-compose.override.yml
+
 # Superpowers plugin state
 .superpowers/
 

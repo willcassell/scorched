@@ -18,8 +18,8 @@ services:
     build: .
     ports:
       - "127.0.0.1:${PORT:-8000}:8000"
-      # Tailscale IP — private network, not public internet
-      - "100.77.184.61:${PORT:-8000}:8000"
+      # Additional binds (e.g. a tailnet address) belong in docker-compose.override.yml,
+      # which is gitignored. See docker-compose.override.yml.example.
     env_file:
       - .env
     environment:
