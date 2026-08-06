@@ -1,0 +1,10 @@
+# Host-specific port binds. Copy to docker-compose.override.yml on the deploy host
+# and fill in the real address. Compose merges this automatically and appends to
+# the `ports` list, so the loopback bind in docker-compose.yml stays in place.
+#
+# The override file is gitignored — host addresses must not be committed.
+
+services:
+  tradebot:
+    ports:
+      - "TAILNET_IP_HERE:${PORT:-8000}:8000"

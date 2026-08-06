@@ -853,7 +853,7 @@ The page should be self-contained (single HTML file with all CSS and JS inline) 
 - [ ] **Step 2: Verify page loads**
 
 Run: `docker compose up -d --build --force-recreate tradebot`
-Then visit `http://100.77.184.61:8000/system` and verify it loads with placeholder data (the API may return empty results until the next trading day populates data).
+Then visit `http://<deploy-host>:8000/system` and verify it loads with placeholder data (the API may return empty results until the next trading day populates data).
 
 - [ ] **Step 3: Commit**
 

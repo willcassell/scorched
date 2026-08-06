@@ -599,7 +599,7 @@ File:
 
 - `docker-compose.yml:19-22`
 
-The app binds to a specific `100.77.184.61` address. That is brittle outside the current host.
+The app binds to a specific host address. That is brittle outside the current host.
 
 Recommendation: Make the bind IP an env var or profile. Default to localhost-only.
 
