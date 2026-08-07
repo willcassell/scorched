@@ -223,6 +223,50 @@ async def sync_positions(db: AsyncSession) -> dict:
             })
             logger.info("Sync: removed %s — %s shares (no Alpaca position)", sym, local_qty)
 
+        elif broker_qty < 0:
+            # Alpaca reports a SHORT. This strategy is long-only and
+            # AlpacaBroker.submit_sell() caps sell qty at the broker holding, so
+            # we never open one deliberately — it means either a broker-side data
+            # fault or an unmanaged exposure. Either way it is NOT something to
+            # mirror into the local DB: a negative Position would corrupt every
+            # downstream valuation and gate.
+            #
+            # Before 2026-08-07 this case fell through to the `else` branch below
+            # and executed `local.shares = ...` with `local = None`, raising
+            # AttributeError. That killed the position loop AND the cash
+            # reconciliation that follows it, so a single phantom short silently
+            # stopped all daily reconciliation (observed 2026-08-06: both the
+            # 10:45 and 14:00 syncs failed with HTTP 500).
+            logger.error(
+                "Sync: %s reports a SHORT on the broker (%s shares, local %s) — "
+                "skipping. Long-only strategy; resolve at the broker.",
+                sym, broker_qty, local_qty,
+            )
+            corrections.append({
+                "symbol": sym,
+                "action": "unmanaged_short",
+                "detail": (
+                    f"broker holds {broker_qty}sh SHORT (local {local_qty}sh) — "
+                    f"not mirrored locally; resolve at the broker"
+                ),
+            })
+
+        elif local is None:
+            # Defensive: broker_qty is positive and != local_qty, but there is no
+            # local row. The `broker_qty > 0 and local_qty == 0` branch above
+            # should have caught this; reaching here means an unexpected state.
+            # Skip rather than dereference None.
+            logger.error(
+                "Sync: %s has broker qty %s but no local position row and did not "
+                "match the create branch — skipping (unexpected state)",
+                sym, broker_qty,
+            )
+            corrections.append({
+                "symbol": sym,
+                "action": "skipped_unexpected_state",
+                "detail": f"broker {broker_qty}sh, no local row",
+            })
+
         else:
             # Both have it but qty differs — adjust local to match Alpaca
             old_qty = local_qty

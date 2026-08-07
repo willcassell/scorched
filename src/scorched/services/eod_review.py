@@ -132,6 +132,12 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
         from ..tz import market_today
         review_date = market_today()
 
+    # Equity snapshot first: it must land on every trading day, including days
+    # with no recommendation session (the early return below). record_snapshot()
+    # swallows its own errors, so this cannot break the review.
+    from .equity_history import record_snapshot
+    await record_snapshot(db, review_date)
+
     # Get today's session (may not exist if market was closed or no trades)
     session = (
         await db.execute(

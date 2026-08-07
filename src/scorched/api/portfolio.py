@@ -10,11 +10,14 @@ from ..database import get_db
 from ..models import Position, TradeHistory
 from ..schemas import (
     BenchmarkResponse,
+    EquityHistoryPoint,
+    EquityHistoryResponse,
     PortfolioResponse,
     PortfolioRiskResponse,
     TaxSummaryResponse,
     TradeHistoryItem,
 )
+from ..services import equity_history as equity_history_svc
 from ..services import portfolio as portfolio_svc
 from ..services import risk as risk_svc
 from .deps import require_owner_pin
@@ -51,6 +54,37 @@ async def get_benchmarks(db: AsyncSession = Depends(get_db)):
 @router.get("/tax-summary", response_model=TaxSummaryResponse)
 async def get_tax_summary(db: AsyncSession = Depends(get_db)):
     return await portfolio_svc.get_tax_summary(db)
+
+
+@router.get("/equity-history", response_model=EquityHistoryResponse)
+async def get_equity_history(
+    days: int = Query(90, ge=1, le=3650),
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily equity snapshots, oldest first.
+
+    Written by Phase 3 EOD. `invested_pct` is the series to look at for the
+    exposure question — the `portfolio` table itself is updated in place and
+    keeps no history.
+    """
+    rows = await equity_history_svc.get_history(db, days=days)
+    points = [
+        EquityHistoryPoint(
+            **{c: getattr(r, c) for c in (
+                "snapshot_date", "total_value", "cash_balance", "positions_value",
+                "invested_pct", "unrealized_gain", "realized_pnl_to_date",
+                "position_count", "starting_capital", "broker_equity",
+            )},
+            return_pct=(
+                ((r.total_value - r.starting_capital) / r.starting_capital * 100)
+                .quantize(Decimal("0.01"))
+                if r.starting_capital
+                else Decimal("0")
+            ),
+        )
+        for r in rows
+    ]
+    return EquityHistoryResponse(points=points, count=len(points))
 
 
 @router.get("/risk", response_model=PortfolioRiskResponse)

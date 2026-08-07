@@ -216,3 +216,38 @@ class ApiCallLog(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     symbol: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
+
+
+class EquityHistory(Base):
+    """Daily point-in-time snapshot of portfolio equity.
+
+    The `portfolio` table is a single row updated in place, so it carries no
+    history — before this table existed there was no way to answer "what was
+    our invested % / equity on date X" without replaying `trade_history`, which
+    is unreliable (see .handovers/2026-08-06-performance-review.md §2).
+
+    One row per NYSE trading day, written by Phase 3 EOD. `snapshot_date` is
+    unique so re-running Phase 3 updates the day's row rather than duplicating.
+    `broker_equity` is nullable: it is only populated in alpaca_* broker modes,
+    and is best-effort (a broker fetch failure must not block the snapshot).
+    """
+    __tablename__ = "equity_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
+    total_value: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
+    cash_balance: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
+    positions_value: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
+    # Redundant with positions_value / total_value, but stored so the exposure
+    # question can be answered with a plain SELECT and never drifts from the
+    # definition used by services/recommender.assess_exposure().
+    invested_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+    unrealized_gain: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
+    realized_pnl_to_date: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
+    position_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    starting_capital: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
+    broker_equity: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now(), nullable=False
+    )

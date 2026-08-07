@@ -149,6 +149,27 @@ class PortfolioRiskResponse(BaseModel):
     cvar_dollars: float        # average dollar loss conditional on VaR breach
 
 
+class EquityHistoryPoint(BaseModel):
+    snapshot_date: date
+    total_value: Decimal
+    cash_balance: Decimal
+    positions_value: Decimal
+    invested_pct: Decimal
+    unrealized_gain: Decimal
+    realized_pnl_to_date: Decimal
+    position_count: int
+    starting_capital: Decimal
+    broker_equity: Decimal | None = None
+    return_pct: Decimal          # vs starting_capital, at this snapshot
+
+    model_config = {"from_attributes": True}
+
+
+class EquityHistoryResponse(BaseModel):
+    points: list[EquityHistoryPoint]
+    count: int
+
+
 # ── Benchmarks ─────────────────────────────────────────────────────────────────
 
 class BenchmarkItem(BaseModel):
