@@ -66,6 +66,9 @@ async def get_equity_history(
     Written by Phase 3 EOD. `invested_pct` is the series to look at for the
     exposure question — the `portfolio` table itself is updated in place and
     keeps no history.
+
+    `days` caps the number of **rows** returned, not the calendar span: rows only
+    exist for NYSE trading days, so `days=90` covers roughly 126 calendar days.
     """
     rows = await equity_history_svc.get_history(db, days=days)
     points = [

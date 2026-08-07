@@ -131,3 +131,70 @@ async def test_get_history_days_limit_keeps_most_recent(db_session, _prices):
 
     rows = await get_history(db_session, days=2)
     assert [r.snapshot_date for r in rows] == [date(2026, 8, 6), date(2026, 8, 7)]
+
+
+# ── Phase 3 wiring ─────────────────────────────────────────────────────────────
+# record_snapshot() reads LIVE portfolio state, so it must only ever be stamped
+# with today's date. run_eod_review() accepts ?date=, and snapshot_date is
+# unique-with-upsert, so back-dating would silently overwrite a real historical
+# row with current values.
+
+@pytest.mark.asyncio
+async def test_eod_review_writes_snapshot_for_today(db_session, _prices):
+    """The snapshot fires from run_eod_review even when there is no session
+    (it sits above the no-session early return, so quiet days still get a row)."""
+    from scorched.services.eod_review import run_eod_review
+
+    today = date(2026, 8, 7)
+    with patch("scorched.services.eod_review.market_today", return_value=today), \
+         patch("scorched.tz.market_today", return_value=today):
+        result = await run_eod_review(db_session, today)
+
+    assert result["status"] == "skipped"  # no recommendation session seeded
+    rows = (await db_session.execute(select(EquityHistory))).scalars().all()
+    assert [r.snapshot_date for r in rows] == [today], (
+        "snapshot must be written before the no-session early return"
+    )
+
+
+@pytest.mark.asyncio
+async def test_eod_review_past_date_writes_no_snapshot(db_session, _prices):
+    """A back-dated review must not stamp today's portfolio onto a past date."""
+    from scorched.services.eod_review import run_eod_review
+
+    with patch("scorched.services.eod_review.market_today", return_value=date(2026, 8, 7)):
+        await run_eod_review(db_session, date(2026, 8, 1))
+
+    rows = (await db_session.execute(select(EquityHistory))).scalars().all()
+    assert rows == [], "back-dated EOD review must not write an equity snapshot"
+
+
+@pytest.mark.asyncio
+async def test_eod_review_past_date_does_not_overwrite_existing_row(db_session, _prices):
+    """The damaging case: a legitimate historical row must survive a re-run."""
+    from scorched.services.eod_review import run_eod_review
+
+    original = await record_snapshot(db_session, date(2026, 8, 1))
+    original_total = original.total_value
+
+    # Portfolio moves after that snapshot was taken
+    db_session.add(
+        Position(
+            symbol="MSFT",
+            shares=Decimal("1"),
+            avg_cost_basis=Decimal("100.00"),
+            first_purchase_date=date(2026, 8, 1),
+        )
+    )
+    await db_session.commit()
+
+    with patch("scorched.services.eod_review.market_today", return_value=date(2026, 8, 7)):
+        await run_eod_review(db_session, date(2026, 8, 1))
+
+    row = (
+        await db_session.execute(
+            select(EquityHistory).where(EquityHistory.snapshot_date == date(2026, 8, 1))
+        )
+    ).scalars().first()
+    assert row.total_value == original_total, "historical snapshot was overwritten"
+    assert row.position_count == 0

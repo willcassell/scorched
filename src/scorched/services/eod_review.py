@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cost import record_usage
+from ..tz import market_today
 from ..models import Position, RecommendationSession, TradeHistory, TradeRecommendation
 from .claude_client import MODEL, call_eod_review as _call_eod_review, call_position_review as _call_position_review
 from .playbook import _check_playbook_drift, _persist_rejected_playbook, get_playbook
@@ -129,14 +130,26 @@ async def run_eod_review(db: AsyncSession, review_date: date | None = None) -> d
     and updates the playbook. Returns a summary dict.
     """
     if review_date is None:
-        from ..tz import market_today
         review_date = market_today()
 
     # Equity snapshot first: it must land on every trading day, including days
     # with no recommendation session (the early return below). record_snapshot()
     # swallows its own errors, so this cannot break the review.
+    #
+    # Only for TODAY. record_snapshot() reads live portfolio state, so handing it
+    # a past `review_date` (this endpoint accepts ?date=) would stamp today's
+    # values onto that date — and since snapshot_date is unique-with-upsert, that
+    # silently overwrites a legitimate historical row. A back-dated re-run of the
+    # review is legitimate; back-dating the equity series is not.
     from .equity_history import record_snapshot
-    await record_snapshot(db, review_date)
+
+    if review_date == market_today():
+        await record_snapshot(db, review_date)
+    else:
+        logger.info(
+            "EOD review for past date %s — skipping equity snapshot (would overwrite "
+            "that day's row with current portfolio state)", review_date,
+        )
 
     # Get today's session (may not exist if market was closed or no trades)
     session = (
