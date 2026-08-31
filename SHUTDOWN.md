@@ -160,6 +160,31 @@ images, so the `tradebot-tradebot` image survives too.
 Belt and braces regardless: the full `pg_dump` in `/home/ubuntu/tradebot-archive/` is outside
 Docker entirely and does not depend on the volume surviving.
 
+## `BASH_ENV` left active — deliberate, don't "tidy" it
+
+The crontab still carries an active `BASH_ENV=/home/ubuntu/.tradebot_cron_env` line. This is
+intentional and should stay.
+
+**Why it stays:** the restart recipe below only strips the `#DISABLED ` prefix from the 9 job
+lines. If `BASH_ENV` were also commented out, those jobs would come back up with no Telegram
+credentials and fail in a confusing, non-obvious way. Leaving it active keeps the restart path
+a one-liner.
+
+**What it exposes:** the file is mode 0600 and contains only `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`, and `MCPORTER_CONFIG`. It does **not** hold the Anthropic or Alpaca keys —
+those live in `/home/ubuntu/tradebot/.env`, which cron never sourced (`SETTINGS_PIN` was moved
+there on 2026-04-20). Nothing in this file grants trading or LLM access.
+
+**Known, pre-existing, flagged not fixed:** `BASH_ENV` is sourced by *every* non-interactive
+bash cron job, so the two surviving jobs (chezmoi sync 03:30, Docker prune Sun 04:00) each
+source this file on every run. Neither references any variable it defines, so this is inert —
+and it predates the shutdown rather than being introduced by it. Left alone as an owner
+decision rather than silently changed.
+
+**Note also:** shutting down the bot turned off the *caller*, not the *capability*. The Alpaca
+paper credentials remain valid and the account is ACTIVE — nothing here was revoked or rotated.
+That is fine for a paper account; it is worth knowing before reusing those keys elsewhere.
+
 ## Restart
 
 Nothing is destroyed. To bring it back:
