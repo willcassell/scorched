@@ -1,5 +1,26 @@
 # Scorched — Claude Code Context
 
+> ## ⛔ RETIRED — SHUT DOWN 2026-08-31
+>
+> **This system is not running.** All 9 tradebot cron jobs are disabled, the Docker stack is
+> down, and the dashboard is offline. Experiment C was retired ~8 weeks early by owner decision
+> after `evaluate_experiment.py` returned RETIRE on both kill criteria.
+>
+> **Final result:** +1.95% (Alpaca, broker of record) over six months, against SPY +10.75% and
+> SPMO +22.16%. 50.8% win rate, profit factor 0.887. Trade-attributable P&L was ~flat (+$5.68);
+> the headline +2% is mostly a 2026-04-18 reconciliation correction, not trading skill.
+>
+> **Two positions remain open and UNMONITORED** in the Alpaca paper account: MA (24) and
+> PFE (500). Paper money, no financial risk, but their trailing stops will not fire.
+>
+> - Full record: [`SHUTDOWN.md`](SHUTDOWN.md) (also in `.handovers/2026-08-31-shutdown.md`, local-only)
+> - Data archive: `/home/ubuntu/tradebot-archive/` (pg_dump + CSVs + logs, outside git)
+> - Crontab backup: `/home/ubuntu/crontab.backup.2026-08-31-shutdown`
+>
+> Everything below describes the system **as it was when running**, and is retained as
+> reference. Restart instructions are in the handover — re-run `/broker/sync` and reset the
+> `experiment` block in `strategy.json` before trusting anything.
+
 ## Commands
 
 ```bash
