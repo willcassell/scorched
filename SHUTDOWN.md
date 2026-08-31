@@ -146,6 +146,20 @@ Recorded so the next attempt doesn't relearn it:
   reliability — reconciliation, idempotency, drift guards, telemetry — and those largely worked.
   None of it produced edge. Infrastructure quality was never the binding constraint.
 
+## Volume-retention check (verified, no action needed)
+
+The weekly Docker prune (`/home/ubuntu/bin/docker-weekly-prune.sh`, Sundays 04:00) is still
+active and now runs against a stack whose volume is unreferenced — worth checking, because an
+unused DB volume is exactly what a prune would eat.
+
+It is safe. The script uses `docker volume prune -f`, not `-af`. On Docker 29.7.2 that removes
+**anonymous volumes only**; `tradebot_postgres_data` is a *named* volume carrying
+`com.docker.compose.*` labels and is not eligible. `image prune -f` likewise skips tagged
+images, so the `tradebot-tradebot` image survives too.
+
+Belt and braces regardless: the full `pg_dump` in `/home/ubuntu/tradebot-archive/` is outside
+Docker entirely and does not depend on the volume surviving.
+
 ## Restart
 
 Nothing is destroyed. To bring it back:
